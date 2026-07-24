@@ -17,10 +17,22 @@ pub(super) async fn notify_user(
     if app_has_focus() || !load_notifications_enabled(&state.store).await {
         return Ok(());
     }
+    // The done/attention agent events are broadcast to every window, so every
+    // window calls this command for every session. Only the window whose active
+    // project owns the session may notify and arm click-to-open — otherwise
+    // each unrelated window queues this session and navigates to it on its next
+    // focus, hijacking windows that were viewing other sessions, and N windows
+    // show N duplicate notifications.
+    let project_id = state.store.frame_project_id(&session_id).await.ok().flatten();
+    if let Some(project_id) = &project_id {
+        if state.active(window.label()).id != *project_id {
+            return Ok(());
+        }
+    }
     // Arm click-to-open before showing: on this window's next focus it jumps to
     // the session. Skipped if the session's project can't be resolved (the
     // notification still shows, just without navigation).
-    if let Ok(Some(project_id)) = state.store.frame_project_id(&session_id).await {
+    if let Some(project_id) = project_id {
         pending_notify_targets().lock().unwrap().insert(
             window.label().to_string(),
             serde_json::json!({ "projectId": project_id, "sessionId": session_id }),
