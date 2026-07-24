@@ -23,7 +23,12 @@ pub(super) async fn notify_user(
     // each unrelated window queues this session and navigates to it on its next
     // focus, hijacking windows that were viewing other sessions, and N windows
     // show N duplicate notifications.
-    let project_id = state.store.frame_project_id(&session_id).await.ok().flatten();
+    let project_id = state
+        .store
+        .frame_project_id(&session_id)
+        .await
+        .ok()
+        .flatten();
     if let Some(project_id) = &project_id {
         if state.active(window.label()).id != *project_id {
             return Ok(());
