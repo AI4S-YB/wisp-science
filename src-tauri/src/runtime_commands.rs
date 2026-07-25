@@ -164,25 +164,6 @@ pub(super) async fn list_runs(
 }
 
 #[tauri::command]
-pub(super) async fn get_run(
-    state: State<'_, AppState>,
-    window: tauri::WebviewWindow,
-    run_id: String,
-) -> Result<wisp_store::RunRecord, String> {
-    let ap = state.active(window.label());
-    let run = state
-        .store
-        .get_run(&run_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Run not found".to_string())?;
-    if run.project_id != ap.id {
-        return Err("Run does not belong to the active project".into());
-    }
-    Ok(run)
-}
-
-#[tauri::command]
 pub(super) async fn cancel_run(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,

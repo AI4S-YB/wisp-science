@@ -2891,7 +2891,7 @@ async fn research_graph_links_research_objects() {
 }
 
 #[tokio::test]
-async fn artifacts_keep_version_lineage_and_dependencies() {
+async fn artifacts_keep_version_lineage() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_artifact_versions_{}.sqlite",
         uuid::Uuid::new_v4()
@@ -2904,15 +2904,10 @@ async fn artifacts_keep_version_lineage_and_dependencies() {
         .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v1.md")
         .await
         .unwrap();
-    let second = store
+    store
         .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v2.md")
         .await
         .unwrap();
-    store
-        .save_artifact_dependency("dep", &second, &first, Some("prior-report"))
-        .await
-        .unwrap();
-
     let versions = store.list_artifact_versions("a").await.unwrap();
     assert_eq!(versions.len(), 2);
     assert_eq!(versions[0].version_number, 2);

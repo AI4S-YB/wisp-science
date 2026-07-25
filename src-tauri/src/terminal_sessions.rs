@@ -454,14 +454,6 @@ pub fn attach_terminal(
 }
 
 #[tauri::command]
-pub fn get_terminal(
-    terminals: State<'_, TerminalManager>,
-    session_id: String,
-) -> Result<TerminalSessionSummary, String> {
-    Ok(terminals.get(&session_id)?.summary())
-}
-
-#[tauri::command]
 pub fn write_terminal(
     terminals: State<'_, TerminalManager>,
     session_id: String,
