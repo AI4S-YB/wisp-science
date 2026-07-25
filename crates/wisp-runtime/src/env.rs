@@ -59,30 +59,43 @@ impl PythonEnv {
 
     /// Ensure a venv exists under `app_data/python/.venv`, create with `uv venv`,
     /// and install MCP/kernel deps from the bundled requirements file when needed.
+    ///
+    /// Blocks on a wheel download that can run for minutes on a slow link — only
+    /// call it from the background bootstrap, never from a request path. Use
+    /// [`Self::ensure_venv`] there.
     pub fn ensure(app_data: &Path) -> Result<Self> {
-        let venv = Self::managed(app_data).venv;
-        let python = if cfg!(target_os = "windows") {
-            venv.join("Scripts").join("python.exe")
-        } else {
-            venv.join("bin").join("python")
-        };
+        let env = Self::ensure_venv(app_data)?;
         let uv = Self::find_uv()
             .ok_or_else(|| anyhow!("uv not found on PATH; install uv or set UV_PATH"))?;
-        if !python.exists() {
-            std::fs::create_dir_all(venv.parent().unwrap_or(Path::new(".")))?;
-            let mut cmd = Command::new(&uv);
-            cmd.arg("venv").arg(&venv);
-            wisp_tools::process::hide_console(&mut cmd);
-            let out = cmd.output()?;
-            if !out.status.success() {
-                return Err(anyhow!(
-                    "uv venv failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                ));
-            }
+        Self::install_deps(&uv, &env.python(), &env.venv)?;
+        Ok(env)
+    }
+
+    /// Create the venv only, skipping the dependency install.
+    ///
+    /// ponytail: request paths (tool wiring, MCP bridge) need the interpreter
+    /// path, not the wheels. `uv venv` is local and fast; the deps land later
+    /// via the startup bootstrap's `ensure`. Anything that truly needs a
+    /// third-party package fails fast on import instead of stalling the turn.
+    pub fn ensure_venv(app_data: &Path) -> Result<Self> {
+        let env = Self::managed(app_data);
+        if env.python().exists() {
+            return Ok(env);
         }
-        Self::install_deps(&uv, &python, &venv)?;
-        Ok(Self { venv })
+        let uv = Self::find_uv()
+            .ok_or_else(|| anyhow!("uv not found on PATH; install uv or set UV_PATH"))?;
+        std::fs::create_dir_all(env.venv.parent().unwrap_or(Path::new(".")))?;
+        let mut cmd = Command::new(&uv);
+        cmd.arg("venv").arg(&env.venv);
+        wisp_tools::process::hide_console(&mut cmd);
+        let out = cmd.output()?;
+        if !out.status.success() {
+            return Err(anyhow!(
+                "uv venv failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        Ok(env)
     }
 
     fn install_deps(uv: &Path, python: &Path, venv: &Path) -> Result<()> {
@@ -145,5 +158,24 @@ pub fn resolve_bundled_script(path: &str) -> PathBuf {
         Some("kernel_worker.R") => bundled_r_worker_path().unwrap_or(p),
         Some("mock_mcp_server.py") => bundled_mock_mcp_path().unwrap_or(p),
         _ => p,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ensure_venv` must never shell out to `uv pip install` — it runs on the
+    /// chat send path (#477). A bogus `uv` path proves no install was attempted.
+    #[test]
+    fn install_deps_short_circuits_on_marker() {
+        let venv = std::env::temp_dir().join(format!("wisp-env-{}", std::process::id()));
+        std::fs::create_dir_all(&venv).unwrap();
+        std::fs::write(venv.join(".wisp_deps_ok"), b"ok").unwrap();
+        let nope = Path::new("/nonexistent/uv");
+        assert!(PythonEnv::install_deps(nope, Path::new("/nonexistent/python"), &venv).is_ok());
+        std::fs::remove_file(venv.join(".wisp_deps_ok")).unwrap();
+        assert!(PythonEnv::install_deps(nope, Path::new("/nonexistent/python"), &venv).is_err());
+        let _ = std::fs::remove_dir_all(&venv);
     }
 }

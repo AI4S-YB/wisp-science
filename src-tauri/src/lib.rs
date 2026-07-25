@@ -3260,7 +3260,9 @@ async fn wire_runtimes_and_mcp(
     });
     let needs_python_env = runtime_granted("python") || bio_granted;
     let py_env = if needs_python_env {
-        match wisp_runtime::PythonEnv::ensure(app_data) {
+        // Venv only: `ensure` would block the turn on a multi-minute wheel
+        // download (#477). The startup bootstrap installs deps in background.
+        match wisp_runtime::PythonEnv::ensure_venv(app_data) {
             Ok(env) => Some(env),
             Err(e) => {
                 result.errors.push(format!("Python environment: {e}"));

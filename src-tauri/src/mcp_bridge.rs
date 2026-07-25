@@ -473,18 +473,24 @@ impl BridgeServer {
                     .map(|tool| (tool.clone(), domain.slug.clone()))
             })
             .collect::<HashMap<_, _>>();
-        let Ok(env) = wisp_runtime::PythonEnv::ensure(&self.cfg.app_data) else {
+        // Venv only (#477); if the deps are still installing the launch below
+        // fails fast on a missing import instead of stalling the turn.
+        let Ok(env) = wisp_runtime::PythonEnv::ensure_venv(&self.cfg.app_data) else {
             return;
         };
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
-        let Ok(client) = wisp_mcp::McpClient::launch_bio_tools(
+        let client = match wisp_mcp::McpClient::launch_bio_tools(
             &env.python(),
             &pkg,
             &crate::models::service_env(),
         )
         .await
-        else {
-            return;
+        {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::warn!("bio-tools MCP unavailable (deps still installing?): {e}");
+                return;
+            }
         };
         let client = Arc::new(client);
         let Ok(tools) = client.tools_list().await else {
