@@ -2229,6 +2229,76 @@ pub(super) fn RuntimeCard(
     }
 }
 
+/// Artifacts a run produced, as `(artifact id, filename)`.
+///
+/// ponytail: read off the research graph's `produced` edges rather than through
+/// a new `list_run_artifacts` command. `Store::save_run_artifact_link` writes
+/// the `run_artifacts` row and this edge in the same call, so the two carry the
+/// same set — and `get_research_graph` is already a registered command. Add the
+/// dedicated command when a run card needs a column `run_artifacts` has and the
+/// graph doesn't (the link `role`, or per-artifact size).
+pub(super) fn run_artifact_links(graph: &ResearchGraph, run_id: &str) -> Vec<(String, String)> {
+    let source = format!("run:{run_id}");
+    let titles: HashMap<&str, &str> = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node.title.as_str()))
+        .collect();
+    graph
+        .edges
+        .iter()
+        .filter(|edge| edge.source_id == source && edge.relation == "produced")
+        .filter_map(|edge| {
+            let id = edge.target_id.strip_prefix("artifact:")?;
+            let title = titles
+                .get(edge.target_id.as_str())
+                .map(|title| (*title).to_string())
+                .unwrap_or_else(|| id.to_string());
+            Some((id.to_string(), title))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod run_artifact_link_tests {
+    use super::*;
+
+    fn edge(source: &str, target: &str, relation: &str) -> ResearchEdge {
+        ResearchEdge {
+            source_id: source.into(),
+            target_id: target.into(),
+            relation: relation.into(),
+        }
+    }
+
+    #[test]
+    fn keeps_only_this_run_s_produced_artifacts() {
+        let graph = ResearchGraph {
+            nodes: vec![ResearchNode {
+                id: "artifact:a1".into(),
+                kind: "artifact".into(),
+                title: "table.tsv".into(),
+                ref_id: Some("a1".into()),
+            }],
+            edges: vec![
+                edge("run:r1", "artifact:a1", "produced"),
+                // Another run's output, and a non-production relation.
+                edge("run:r2", "artifact:a2", "produced"),
+                edge("run:r1", "decision:d1", "informs"),
+            ],
+        };
+        assert_eq!(
+            run_artifact_links(&graph, "r1"),
+            vec![("a1".to_string(), "table.tsv".to_string())]
+        );
+        // An artifact whose node was not returned still opens, under its id.
+        assert_eq!(
+            run_artifact_links(&graph, "r2"),
+            vec![("a2".to_string(), "a2".to_string())]
+        );
+    }
+}
+
 pub(super) fn run_title(run: &RunRecord) -> String {
     if !run.title.trim().is_empty() {
         run.title.clone()
@@ -2365,6 +2435,8 @@ pub(super) fn ContextDetailsOverlay(
     contexts: RwSignal<Vec<ExecutionContext>>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
     runs: RwSignal<Vec<RunRecord>>,
+    research_graph: RwSignal<ResearchGraph>,
+    modal_artifact: RwSignal<Option<ModalArtifact>>,
     active_project: RwSignal<Option<ProjectInfo>>,
     projects: RwSignal<Vec<ProjectSummary>>,
     runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
@@ -2372,6 +2444,13 @@ pub(super) fn ContextDetailsOverlay(
     locale: RwSignal<Locale>,
     selection_popup: RwSignal<Option<(String, Option<String>, i32, i32)>>,
 ) -> impl IntoView {
+    // Run→artifact links live on the graph's `produced` edges, so the Runs view
+    // needs a fresh graph each time it opens.
+    create_effect(move |_| {
+        if matches!(modal.get(), Some((_, ContextModalKind::Runs))) {
+            crate::research::refresh_research_graph(research_graph);
+        }
+    });
     create_effect(move |_| {
         let active = modal.get();
         let pinned = runtime_environment_pinned.get();
@@ -2516,7 +2595,10 @@ pub(super) fn ContextDetailsOverlay(
                                                     <button type="button" class="icon-btn control-refresh"
                                                         title=t(locale.get(), "runs.refresh")
                                                         aria-label=t(locale.get(), "runs.refresh")
-                                                        on:click=move |_| refresh_runs(runs, locale)>{compose_icon("sync")}</button>
+                                                        on:click=move |_| {
+                                                            refresh_runs(runs, locale);
+                                                            crate::research::refresh_research_graph(research_graph);
+                                                        }>{compose_icon("sync")}</button>
                                                 </div>
                                             </div>
                                             {if rows.is_empty() {
@@ -2542,6 +2624,7 @@ pub(super) fn ContextDetailsOverlay(
                                                 Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
                                                 None => format!("{} · {}", run.context_id, run.kind),
                                             };
+                                            let produced = run_artifact_links(&research_graph.get(), &run.id);
                                             view! {
                                                 <div class="run-card">
                                                     <div class="run-card-head">
@@ -2583,6 +2666,29 @@ pub(super) fn ContextDetailsOverlay(
                                                             <summary>{t(locale.get(), "runs.output")}</summary>
                                                             <pre>{output}</pre>
                                                         </details>
+                                                    })}
+                                                    {(!produced.is_empty()).then(|| view! {
+                                                        <div class="run-artifacts">
+                                                            <span class="run-artifacts-label">{t(locale.get(), "runs.artifacts")}</span>
+                                                            {produced.into_iter().map(|(artifact_id, name)| {
+                                                                // `artifact:<id>` is the preview spelling that reads the
+                                                                // registered row, so a harvested output opens without
+                                                                // needing its path to still resolve under the workspace.
+                                                                let kind = file_kind(&name).unwrap_or("text").to_string();
+                                                                let target = (format!("artifact:{artifact_id}"), name.clone(), kind);
+                                                                view! {
+                                                                    <button type="button" class="run-artifact"
+                                                                        on:click=move |_| {
+                                                                            // The viewer renders below this overlay, so leaving
+                                                                            // the Runs modal open would just cover the file.
+                                                                            modal.set(None);
+                                                                            modal_artifact.set(Some(target.clone()));
+                                                                        }>
+                                                                        {name}
+                                                                    </button>
+                                                                }
+                                                            }).collect_view()}
+                                                        </div>
                                                     })}
                                                 </div>
                                             }
@@ -6257,8 +6363,17 @@ fn artifact_file_identity(path: &str, project_root: &str) -> String {
 /// Current artifact projection for the right-hand panel. The full scan is kept
 /// for transcript cards and provenance, while this view shows only the latest
 /// live reference for each physical workspace file.
+///
+/// `registered` are the rows `list_artifacts` returns for the session — files
+/// that harvest, delegation, the MCP bridge and uploads wrote straight to the
+/// database. Nothing mentions them in chat text, so the transcript scan above
+/// cannot see them; they are merged in here, deduplicated against it by file
+/// identity. They deliberately skip the `missing_paths` filter: that guard
+/// exists for paths *scraped* out of prose, and it would also drop every
+/// registered remote (`ssh://`) reference, which has no local file to stat.
 pub(super) fn current_artifacts(
     artifacts: &[Artifact],
+    registered: &[ArtifactInfo],
     project_root: &str,
     missing_paths: &HashSet<String>,
 ) -> Vec<Artifact> {
@@ -6283,6 +6398,27 @@ pub(super) fn current_artifacts(
         current.push(artifact.clone());
     }
     current.reverse();
+    for info in registered {
+        if !seen_files.insert(artifact_file_identity(&info.path, project_root)) {
+            continue;
+        }
+        let kind = file_kind(&info.path)
+            .or_else(|| file_kind(&info.name))
+            .unwrap_or("file");
+        current.push(Artifact {
+            id: info.id.clone(),
+            name: info.name.clone(),
+            kind,
+            data: PreviewData::File {
+                path: info.path.clone(),
+                kind: kind.to_string(),
+            },
+            // No transcript message produced these, so they never render as an
+            // inline card under one (`artifacts_for_item` matches on this).
+            source_item: usize::MAX,
+            superseded: false,
+        });
+    }
     current
 }
 
@@ -6427,7 +6563,7 @@ mod artifact_scan_tests {
         let all = fresh(&items, Locale::En);
         assert_eq!(all.len(), 4);
 
-        let current = current_artifacts(&all, r"E:\cross-species-root", &HashSet::<String>::new());
+        let current = current_artifacts(&all, &[], r"E:\cross-species-root", &HashSet::new());
         assert_eq!(current.len(), 1);
         assert_eq!(current[0].name, "sample_statistics.png");
         assert!(matches!(
@@ -6435,6 +6571,60 @@ mod artifact_scan_tests {
             PreviewData::File { path, .. }
                 if path == r"E:\cross-species-root\sample_statistics.png"
         ));
+    }
+
+    fn registered(id: &str, name: &str, path: &str) -> ArtifactInfo {
+        ArtifactInfo {
+            id: id.into(),
+            name: name.into(),
+            kind: "table".into(),
+            path: path.into(),
+            ts: 0,
+            project_id: None,
+            project_name: None,
+            session_id: None,
+            session_title: None,
+            size_bytes: None,
+            origin: None,
+        }
+    }
+
+    /// Harvested run outputs and uploads only exist as database rows. They have
+    /// to reach the panel, but an upload is *also* named in the user turn, and
+    /// the two spellings of its path (relative vs. absolute) must not produce
+    /// two tiles.
+    #[test]
+    fn registered_artifacts_join_the_panel_without_duplicating_the_transcript() {
+        let items = vec![ChatItem::User("Uploaded files: uploads/counts.csv".into())];
+        let all = fresh(&items, Locale::En);
+        assert_eq!(all.len(), 1);
+
+        let current = current_artifacts(
+            &all,
+            &[
+                registered("db1", "counts.csv", "/work/proj/uploads/counts.csv"),
+                registered("db2", "deseq2.tsv", "/work/proj/results/deseq2.tsv"),
+            ],
+            "/work/proj",
+            &HashSet::new(),
+        );
+        let names: Vec<&str> = current.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["counts.csv", "deseq2.tsv"]);
+        assert_eq!(current[1].kind, "csv");
+    }
+
+    /// A remote reference has no local file, so the missing-file filter that
+    /// guards path-scraped artifacts must not reach it.
+    #[test]
+    fn registered_remote_reference_survives_the_missing_file_filter() {
+        let current = current_artifacts(
+            &[],
+            &[registered("db3", "out.bam", "ssh://cpu1/scratch/out.bam")],
+            "/work/proj",
+            &HashSet::from(["ssh://cpu1/scratch/out.bam".to_string()]),
+        );
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].kind, "file");
     }
 }
 
