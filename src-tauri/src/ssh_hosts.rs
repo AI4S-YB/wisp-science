@@ -640,7 +640,10 @@ Use `set_runtime_interpreter` when the user provides a different Python or R exe
 on the registered environment. Always use `run_in_context`, `python`, `r`, \
 `configure_ssh_trust`, or `transfer_between_contexts` with \
 the matching `context_id` so Wisp uses the configured alias/user/port/identity \
-exactly. Free-form shell `ssh`/`scp` is disabled. If SSH authentication or host-key \
+exactly. Free-form shell `ssh`/`scp` is disabled, and so is reaching the same host through \
+an SSH client library (`paramiko`, `fabric`, `ssh2`, …) from `python`/`r`/shell: that bypasses \
+the user's saved credentials and this policy, so never offer it as a fallback. \
+If SSH authentication or host-key \
 verification fails: STOP, report it once, and ask the user to fix the saved credentials \
 or trust and Probe again — do not invent `ssh -i`, ports, or `StrictHostKeyChecking` \
 options. Do not retry a rejected login because repeated authentication attempts can ban \
