@@ -659,3 +659,14 @@
 .highlight-text { flex: 1; min-width: 0; text-align: left; background: none; border: none; margin: 0; padding: 2px 0 2px 10px; border-left: 3px solid var(--clay); color: var(--text); font: inherit; font-size: 13px; line-height: 1.55; cursor: pointer; white-space: pre-wrap; word-break: break-word; }
 .highlight-text:hover { color: var(--clay-strong); }
 .highlight-actions { display: flex; flex-direction: column; gap: 2px; }
+
+/* Research graph tab: nodes grouped by kind, each printing its outgoing links. */
+.rp-graph { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg-elev); }
+.graph-node + .graph-node { margin-top: 8px; }
+.graph-node-title { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.45; word-break: break-word; }
+.graph-node-ref { margin-top: 3px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); word-break: break-all; }
+.graph-node-links { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
+.graph-node-links li { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--text-muted); min-width: 0; }
+.graph-rel { flex: 0 0 auto; padding: 1px 6px; border-radius: 999px; background: var(--clay-soft); color: var(--clay-strong); font-size: 11px; font-weight: 600; }
+.graph-rel::after { content: " →"; }
+.graph-target { min-width: 0; word-break: break-word; }

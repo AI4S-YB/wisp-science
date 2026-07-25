@@ -9,6 +9,7 @@ mod notebook;
 mod overlays;
 mod pet;
 mod project_landing;
+mod research;
 mod settings_view;
 mod sidebar;
 mod text;
@@ -38,6 +39,7 @@ use notebook::{collect_notebook_cells, NotebookCache, NotebookView};
 use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay};
 use pet::{PetDesktop, PetOverlay};
 use project_landing::{ProjectLanding, ProjectLandingState};
+use research::{refresh_research_graph, ResearchGraphPane};
 use serde_wasm_bindgen::to_value;
 use settings_view::{DeleteConfirm, SettingsView, SettingsViewState};
 use sidebar::{Sidebar, SidebarState};
@@ -1109,6 +1111,9 @@ fn App() -> impl IntoView {
     let right_tab_add_menu_open = create_rw_signal(false);
     let rp_tab_drag = create_rw_signal(None::<RightTab>);
     let rp_tab_drop = create_rw_signal(None::<RightTab>);
+    // Project-scoped, and the agent writes to it mid-turn — refetched when the
+    // tab is opened rather than kept live.
+    let research_graph = create_rw_signal(ResearchGraph::default());
     create_effect(move |_| {
         side_chat_items.with(|items| items.len());
         if !show_right.get() || right_tab.get() != RightTab::SideChat {
@@ -8873,6 +8878,7 @@ fn App() -> impl IntoView {
                             let notebook_n = notebook_cells.get().len();
                             let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                             let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
+                            let graph_n = research_graph.get().nodes.len();
                             open_right_tabs.get().into_iter().map(|tab| {
                                 let label = match tab {
                                     RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
@@ -8882,6 +8888,7 @@ fn App() -> impl IntoView {
                                     RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                     RightTab::File => t(loc, "right.file").into(),
                                     RightTab::Hosts => t(loc, "contexts.title").into(),
+                                    RightTab::Graph => tab_count(loc, "right.graph", graph_n),
                                     RightTab::SideChat => t(loc, "sidechat.title").into(),
                                 };
                                 let is_active = active == tab;
@@ -8954,6 +8961,9 @@ fn App() -> impl IntoView {
                                                     RightTab::Agents => {
                                                         refresh_agent_workflows(agent_panel)
                                                     }
+                                                    RightTab::Graph => {
+                                                        refresh_research_graph(research_graph)
+                                                    }
                                                     _ => {}
                                                 }
                                             }>{label}</button>
@@ -8983,6 +8993,7 @@ fn App() -> impl IntoView {
                                     let notebook_n = notebook_cells.get().len();
                                     let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                                     let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
+                                    let graph_n = research_graph.get().nodes.len();
                                     ALL_RIGHT_TABS.iter().copied().map(|tab| {
                                         let label = match tab {
                                             RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
@@ -8992,6 +9003,7 @@ fn App() -> impl IntoView {
                                             RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                             RightTab::File => t(loc, "right.file").into(),
                                             RightTab::Hosts => t(loc, "contexts.title").into(),
+                                            RightTab::Graph => tab_count(loc, "right.graph", graph_n),
                                             RightTab::SideChat => t(loc, "sidechat.title").into(),
                                         };
                                         let is_open = open.contains(&tab);
@@ -9017,6 +9029,9 @@ fn App() -> impl IntoView {
                                                         }
                                                         RightTab::Agents => {
                                                             refresh_agent_workflows(agent_panel)
+                                                        }
+                                                        RightTab::Graph => {
+                                                            refresh_research_graph(research_graph)
                                                         }
                                                         _ => {}
                                                     }
@@ -9258,6 +9273,11 @@ fn App() -> impl IntoView {
                                     active_session=active_session.read_only()
                                     library_items=library_items.read_only()
                                     on_library_changed=refresh_library_items />
+                            }.into_view()
+                        }
+                        RightTab::Graph => {
+                            view! {
+                                <ResearchGraphPane locale=locale.get() graph=research_graph.get() />
                             }.into_view()
                         }
                         RightTab::Highlights => {
