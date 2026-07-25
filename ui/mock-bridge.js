@@ -379,6 +379,28 @@
               { id: "a1", name: "report.csv", kind: "text/csv", path: project.root + "/report.csv", ts: 1719880000, project_id: "default", project_name: project.name, session_id: "s1", session_title: "查找文献, FX-cell", size_bytes: 4096, origin: "output" },
             ].filter((a) => !q || a.name.toLowerCase().includes(q));
           }
+          // Registered in the DB, never mentioned in chat text — the rows the
+          // transcript scan cannot see (harvest / delegation / MCP bridge).
+          case "list_artifacts":
+            return [
+              { id: "h1", name: "deseq2_results.tsv", kind: "table", path: project.root + "/results/deseq2_results.tsv", ts: 1719870000 },
+              { id: "h2", name: "volcano_plot.png", kind: "figure", path: project.root + "/results/volcano_plot.png", ts: 1719870100 },
+              { id: "h3", name: "out.bam", kind: "data", path: "ssh://cpu1/scratch/out.bam", ts: 1719870200 },
+            ];
+          case "list_runs":
+            return [
+              {
+                id: "r1", project_id: "default", frame_id: "s1", context_id: "local",
+                title: "DESeq2 differential expression", kind: "script", status: "succeeded",
+                command: "Rscript 02-deseq2.R", script_path: null,
+                input_refs_json: "[]", output_specs_json: "[]",
+                created_at: 1719869000, started_at: 1719869100, ended_at: 1719870200, exit_code: 0,
+                stdout_tail: "converged in 4 iterations\n2381 genes at padj < 0.05",
+                stderr_tail: null, remote_workdir: null, remote_handle_json: null,
+                timeout_secs: null, last_polled_at: 1719870200, last_poll_error: null,
+                progress_json: "", env_snapshot_json: "{}",
+              },
+            ];
           case "list_ssh_hosts":
             return [{ alias: "cpu1", user: "researcher", port: 22, identity_file: null, notes: "Mock CPU host" }];
           case "list_execution_contexts":
@@ -413,6 +435,10 @@
             ];
           case "read_file":
             return mockFile(argValue(args, "path"));
+          case "read_artifact": {
+            const names = { h1: "deseq2_results.tsv", h2: "volcano_plot.png", h3: "out.bam" };
+            return mockFile(names[String(argValue(args, "id") ?? "")] ?? "report.csv");
+          }
           case "upload_file": {
             const filename = String(args?.filename ?? "upload.png");
             return {
@@ -597,10 +623,16 @@
                 { id: "d1", project_id: "p1", kind: "decision", title: "Use DESeq2 over edgeR for the DE call", ref_id: null, metadata_json: "{}", created_at: 0, updated_at: 0 },
                 { id: "p1", project_id: "p1", kind: "paper", title: "Love et al. 2014, Moderated estimation of fold change", ref_id: "10.1186/s13059-014-0550-8", metadata_json: "{}", created_at: 0, updated_at: 0 },
                 { id: "a1", project_id: "p1", kind: "data_asset", title: "counts.tsv", ref_id: "data/counts.tsv", metadata_json: "{}", created_at: 0, updated_at: 0 },
+                // run:/artifact: nodes + "produced" edges are what a run card reads.
+                { id: "run:r1", project_id: "p1", kind: "run", title: "DESeq2 differential expression", ref_id: "r1", metadata_json: "{}", created_at: 0, updated_at: 0 },
+                { id: "artifact:h1", project_id: "p1", kind: "artifact", title: "deseq2_results.tsv", ref_id: "h1", metadata_json: "{}", created_at: 0, updated_at: 0 },
+                { id: "artifact:h2", project_id: "p1", kind: "artifact", title: "volcano_plot.png", ref_id: "h2", metadata_json: "{}", created_at: 0, updated_at: 0 },
               ],
               edges: [
                 { id: "e1", project_id: "p1", source_id: "d1", target_id: "p1", relation: "cites", metadata_json: "{}", created_at: 0 },
                 { id: "e2", project_id: "p1", source_id: "d1", target_id: "a1", relation: "applies to", metadata_json: "{}", created_at: 0 },
+                { id: "run-artifact:r1:h1", project_id: "p1", source_id: "run:r1", target_id: "artifact:h1", relation: "produced", metadata_json: "{}", created_at: 0 },
+                { id: "run-artifact:r1:h2", project_id: "p1", source_id: "run:r1", target_id: "artifact:h2", relation: "produced", metadata_json: "{}", created_at: 0 },
               ],
             };
           case "star_library_text": {
