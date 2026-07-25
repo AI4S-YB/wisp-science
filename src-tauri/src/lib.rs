@@ -6062,6 +6062,8 @@ pub fn run() {
             approval_commands::revoke_all_approval_grants,
             settings_commands::get_settings,
             settings_commands::set_settings,
+            settings_commands::get_storage_usage,
+            settings_commands::get_token_usage,
             settings_commands::set_api_key,
             settings_commands::credential_status,
             settings_commands::set_credential,

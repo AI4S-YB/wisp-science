@@ -1,8 +1,9 @@
 use crate::app_support::{
     allow_drop, build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row,
-    context_capability_summary, drag_session_id, focus_element_soon, join_tags, js_error_text,
-    new_acp_form, new_model_form, profile_to_form, reviewer_backend_key, reviewer_backend_label,
-    reviewer_missing_acp_profile_id, set_reviewer_backend, settings_section_label,
+    context_capability_summary, drag_session_id, focus_element_soon, format_relative_time,
+    join_tags, js_error_text, new_acp_form, new_model_form, profile_to_form, reviewer_backend_key,
+    reviewer_backend_label, reviewer_missing_acp_profile_id, set_reviewer_backend,
+    settings_section_label,
     settings_subpage_label, skill_matches_filter, start_session_drag, CRED_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked, is_mac, is_windows};
@@ -48,6 +49,17 @@ impl DeleteConfirm {
 
 fn trust_alias(context_id: &str) -> &str {
     context_id.strip_prefix("ssh:").unwrap_or(context_id)
+}
+
+/// i18n label for a `get_storage_usage` entry key.
+fn storage_entry_label_key(key: &str) -> &'static str {
+    match key {
+        "database" => "settings.storage.database",
+        "python" => "settings.storage.python",
+        "plugins" => "settings.storage.plugins",
+        "workspace" => "settings.storage.workspace",
+        _ => "settings.storage.other",
+    }
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -425,6 +437,34 @@ pub(super) fn SettingsView(
             });
         }
     });
+    // Storage / Usage panes fetch on every open; stale data stays visible
+    // while the refresh (a blocking directory scan for storage) runs.
+    let storage_usage = create_rw_signal(None::<StorageUsage>);
+    let token_usage = create_rw_signal(None::<Vec<SessionTokenUsage>>);
+    create_effect(move |_| {
+        if show_settings.get() && settings_section.get() == "storage" {
+            spawn_local(async move {
+                if let Ok(value) = invoke_checked("get_storage_usage", JsValue::UNDEFINED).await {
+                    if let Ok(usage) = serde_wasm_bindgen::from_value::<StorageUsage>(value) {
+                        storage_usage.set(Some(usage));
+                    }
+                }
+            });
+        }
+    });
+    create_effect(move |_| {
+        if show_settings.get() && settings_section.get() == "usage" {
+            spawn_local(async move {
+                if let Ok(value) = invoke_checked("get_token_usage", JsValue::UNDEFINED).await {
+                    if let Ok(rows) =
+                        serde_wasm_bindgen::from_value::<Vec<SessionTokenUsage>>(value)
+                    {
+                        token_usage.set(Some(rows));
+                    }
+                }
+            });
+        }
+    });
     create_effect(move |_| {
         if joining.get() {
             focus_element_soon("sync-device-code");
@@ -515,6 +555,12 @@ pub(super) fn SettingsView(
                     <button class:active=move || settings_section.get()=="environments"
                         on:click=move |_| go_settings_section.call("environments".into())>
                         {move || t(locale.get(), "settings.nav.environments")}</button>
+                    <button class:active=move || settings_section.get()=="storage"
+                        on:click=move |_| go_settings_section.call("storage".into())>
+                        {move || t(locale.get(), "settings.nav.storage")}</button>
+                    <button class:active=move || settings_section.get()=="usage"
+                        on:click=move |_| go_settings_section.call("usage".into())>
+                        {move || t(locale.get(), "settings.nav.usage")}</button>
                 </div>
                 <div class="settings-nav-group">
                     <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.capabilities")}</span>
@@ -1001,6 +1047,125 @@ pub(super) fn SettingsView(
                                     on:click=join_project>{move || t(locale.get(), "projects.sync.join_action")}</button>
                             </div>
                         </div>
+                    </div>
+                })}
+                {move || (settings_section.get() == "storage").then(|| view! {
+                    <div class="settings-pane">
+                        <div class="settings-form-grid">
+                            <div class="span-2 appearance-config-row">
+                                <div>
+                                    <strong>{move || t(locale.get(), "settings.storage.data_dir")}</strong>
+                                    <span>{move || t(locale.get(), "settings.storage.data_dir_hint")}</span>
+                                </div>
+                            </div>
+                            {move || match storage_usage.get() {
+                                None => view! {
+                                    <div class="span-2 settings-field-hint">
+                                        {move || t(locale.get(), "settings.storage.loading")}
+                                    </div>
+                                }.into_view(),
+                                Some(usage) => {
+                                    let total = usage.total_bytes.max(1);
+                                    let loc = locale.get();
+                                    view! {
+                                        <div class="span-2 storage-block">
+                                            <code class="storage-path">{usage.data_dir.clone()}</code>
+                                            {(!usage.workspace_dirs.is_empty()).then(|| view! {
+                                                <span class="settings-field-hint">
+                                                    {tf(loc, "settings.storage.workspace_hint",
+                                                        &[("dirs", &usage.workspace_dirs.join(" · "))])}
+                                                </span>
+                                            })}
+                                            <div class="storage-bar">
+                                                {usage.entries.iter().filter(|entry| entry.bytes > 0).map(|entry| {
+                                                    let pct = entry.bytes as f64 / total as f64 * 100.0;
+                                                    view! {
+                                                        <span class=format!("storage-seg storage-seg-{}", entry.key)
+                                                            style:width=format!("{pct:.2}%")
+                                                            title=format!("{} {}", t(loc, storage_entry_label_key(&entry.key)), format_bytes(entry.bytes))>
+                                                        </span>
+                                                    }
+                                                }).collect_view()}
+                                            </div>
+                                            <div class="storage-legend">
+                                                {usage.entries.iter().map(|entry| view! {
+                                                    <div class="storage-legend-row">
+                                                        <span class=format!("storage-dot storage-seg-{}", entry.key) aria-hidden="true"></span>
+                                                        <span class="storage-legend-label">{t(loc, storage_entry_label_key(&entry.key))}</span>
+                                                        <span class="storage-legend-bytes">{format_bytes(entry.bytes)}</span>
+                                                    </div>
+                                                }).collect_view()}
+                                                <div class="storage-legend-row storage-legend-total">
+                                                    <span class="storage-dot" aria-hidden="true"></span>
+                                                    <span class="storage-legend-label">{t(loc, "settings.storage.total")}</span>
+                                                    <span class="storage-legend-bytes">{format_bytes(usage.total_bytes)}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    }.into_view()
+                                }
+                            }}
+                        </div>
+                    </div>
+                })}
+                {move || (settings_section.get() == "usage").then(|| view! {
+                    <div class="settings-pane">
+                        {move || match token_usage.get() {
+                            None => view! {
+                                <div class="settings-field-hint">
+                                    {move || t(locale.get(), "settings.storage.loading")}
+                                </div>
+                            }.into_view(),
+                            Some(rows) if rows.is_empty() => view! {
+                                <div class="settings-field-hint">
+                                    {move || t(locale.get(), "settings.usage.empty")}
+                                </div>
+                            }.into_view(),
+                            Some(rows) => {
+                                let loc = locale.get();
+                                let totals = rows.iter().fold((0i64, 0i64, 0i64, 0i64), |acc, row| {
+                                    (acc.0 + row.input, acc.1 + row.output, acc.2 + row.reasoning, acc.3 + row.cached)
+                                });
+                                let tokens = |n: i64| crate::fmt_tokens(n.max(0) as u64);
+                                view! {
+                                    <p class="settings-field-hint">{t(loc, "settings.usage.hint")}</p>
+                                    <div class="usage-summary">
+                                        {[
+                                            ("settings.usage.input", totals.0),
+                                            ("settings.usage.output", totals.1),
+                                            ("settings.usage.reasoning", totals.2),
+                                            ("settings.usage.cached", totals.3),
+                                        ].into_iter().map(|(key, value)| view! {
+                                            <div class="usage-tile">
+                                                <span class="usage-tile-value">{tokens(value)}</span>
+                                                <span class="usage-tile-label">{t(loc, key)}</span>
+                                            </div>
+                                        }).collect_view()}
+                                    </div>
+                                    <div class="usage-table">
+                                        <div class="usage-row usage-row-head">
+                                            <span>{t(loc, "settings.usage.session")}</span>
+                                            <span class="usage-num">{t(loc, "settings.usage.input")}</span>
+                                            <span class="usage-num">{t(loc, "settings.usage.output")}</span>
+                                            <span class="usage-num">{t(loc, "settings.usage.reasoning")}</span>
+                                            <span class="usage-num">{t(loc, "settings.usage.cached")}</span>
+                                        </div>
+                                        {rows.iter().map(|row| view! {
+                                            <div class="usage-row">
+                                                <span class="usage-session">
+                                                    <span class="usage-session-title">{row.title.clone()}</span>
+                                                    <span class="usage-session-when">{format_relative_time(row.updated_at, loc)}</span>
+                                                </span>
+                                                <span class="usage-num">{tokens(row.input)}</span>
+                                                <span class="usage-num">{tokens(row.output)}</span>
+                                                <span class="usage-num">{tokens(row.reasoning)}</span>
+                                                <span class="usage-num">{tokens(row.cached)}</span>
+                                            </div>
+                                        }).collect_view()}
+                                    </div>
+                                }.into_view()
+                            }
+                        }}
                     </div>
                 })}
                 {move || (settings_section.get() == "appearance").then(|| view! {

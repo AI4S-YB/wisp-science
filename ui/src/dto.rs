@@ -515,6 +515,37 @@ pub(crate) struct SshHost {
     pub(crate) password: Option<String>,
 }
 
+/// Mirrors the `get_storage_usage` payload built in
+/// src-tauri/src/settings_commands.rs — align field by field on both sides.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(crate) struct StorageEntry {
+    pub(crate) key: String,
+    pub(crate) bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(crate) struct StorageUsage {
+    pub(crate) data_dir: String,
+    #[serde(default)]
+    pub(crate) workspace_dirs: Vec<String>,
+    #[serde(default)]
+    pub(crate) entries: Vec<StorageEntry>,
+    pub(crate) total_bytes: u64,
+}
+
+/// Mirrors `SessionTokenUsage` in crates/wisp-store/src/sessions.rs — align
+/// field by field on both sides.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(crate) struct SessionTokenUsage {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) updated_at: i64,
+    pub(crate) input: i64,
+    pub(crate) output: i64,
+    pub(crate) reasoning: i64,
+    pub(crate) cached: i64,
+}
+
 /// Mirrors `SshTrustEdge` in src-tauri/src/run_context/transfer.rs — align
 /// field by field on both sides.
 #[derive(Clone, Debug, Deserialize, PartialEq)]

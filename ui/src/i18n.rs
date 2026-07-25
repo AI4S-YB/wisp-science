@@ -808,6 +808,29 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.nav.credentials") => Some("Credentials"),
         (Locale::En, "settings.nav.permissions") => Some("Permissions"),
         (Locale::En, "settings.nav.environments") => Some("Environments"),
+        (Locale::En, "settings.nav.storage") => Some("Storage"),
+        (Locale::En, "settings.nav.usage") => Some("Usage"),
+        (Locale::En, "settings.storage.data_dir") => Some("Data location"),
+        (Locale::En, "settings.storage.data_dir_hint") => {
+            Some("Where wisp-science keeps its database, Python environment and plugins on this machine")
+        }
+        (Locale::En, "settings.storage.workspace_hint") => Some("Workspace: {dirs}"),
+        (Locale::En, "settings.storage.loading") => Some("Calculating…"),
+        (Locale::En, "settings.storage.database") => Some("Database (sessions & tool results)"),
+        (Locale::En, "settings.storage.python") => Some("Python environment"),
+        (Locale::En, "settings.storage.plugins") => Some("Plugins"),
+        (Locale::En, "settings.storage.workspace") => Some("Workspace files"),
+        (Locale::En, "settings.storage.other") => Some("Other"),
+        (Locale::En, "settings.storage.total") => Some("Total"),
+        (Locale::En, "settings.usage.hint") => {
+            Some("Tokens recorded per session — sub-agent turns count toward their session.")
+        }
+        (Locale::En, "settings.usage.empty") => Some("No token usage recorded yet."),
+        (Locale::En, "settings.usage.session") => Some("Session"),
+        (Locale::En, "settings.usage.input") => Some("Input"),
+        (Locale::En, "settings.usage.output") => Some("Output"),
+        (Locale::En, "settings.usage.reasoning") => Some("Reasoning"),
+        (Locale::En, "settings.usage.cached") => Some("Cached"),
         (Locale::En, "environments.hint") => Some("Manage, probe, and configure local or remote environments here. Choose remote compute separately for each conversation from the Compute menu."),
         (Locale::En, "environments.empty") => Some("No environments are available."),
         (Locale::En, "environments.remove") => Some("Remove server"),
@@ -2177,6 +2200,29 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.nav.credentials") => Some("凭据"),
         (Locale::Zh, "settings.nav.permissions") => Some("权限"),
         (Locale::Zh, "settings.nav.environments") => Some("环境"),
+        (Locale::Zh, "settings.nav.storage") => Some("存储"),
+        (Locale::Zh, "settings.nav.usage") => Some("用量"),
+        (Locale::Zh, "settings.storage.data_dir") => Some("数据目录"),
+        (Locale::Zh, "settings.storage.data_dir_hint") => {
+            Some("wisp-science 在本机保存数据库、Python 环境和插件的位置")
+        }
+        (Locale::Zh, "settings.storage.workspace_hint") => Some("工作区：{dirs}"),
+        (Locale::Zh, "settings.storage.loading") => Some("计算中…"),
+        (Locale::Zh, "settings.storage.database") => Some("数据库（会话与工具结果）"),
+        (Locale::Zh, "settings.storage.python") => Some("Python 环境"),
+        (Locale::Zh, "settings.storage.plugins") => Some("插件"),
+        (Locale::Zh, "settings.storage.workspace") => Some("工作区文件"),
+        (Locale::Zh, "settings.storage.other") => Some("其他"),
+        (Locale::Zh, "settings.storage.total") => Some("总计"),
+        (Locale::Zh, "settings.usage.hint") => {
+            Some("按会话记录的 token 用量——子代理轮次计入所属会话。")
+        }
+        (Locale::Zh, "settings.usage.empty") => Some("还没有记录任何 token 用量。"),
+        (Locale::Zh, "settings.usage.session") => Some("会话"),
+        (Locale::Zh, "settings.usage.input") => Some("输入"),
+        (Locale::Zh, "settings.usage.output") => Some("输出"),
+        (Locale::Zh, "settings.usage.reasoning") => Some("思考"),
+        (Locale::Zh, "settings.usage.cached") => Some("缓存"),
         (Locale::Zh, "environments.hint") => Some("在这里管理、探测并配置本地或远程环境。远程计算资源请在每个会话的「计算」菜单中单独选择。"),
         (Locale::Zh, "environments.empty") => Some("暂无可用环境。"),
         (Locale::Zh, "environments.remove") => Some("移除服务器"),
