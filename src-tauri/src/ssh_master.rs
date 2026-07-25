@@ -84,12 +84,17 @@ fn frame(payload: &SshPayload, nonce: &str) -> String {
     }
 }
 
+/// How long a dying master gets to exit and flush its stderr before we give up
+/// on quoting OpenSSH's own diagnostic.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 struct Master {
     // Held for kill_on_drop: dropping a Master tears the connection down.
-    _child: Child,
+    child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
     stderr_buf: Arc<StdMutex<Vec<u8>>>,
+    stderr_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Master {
@@ -121,7 +126,7 @@ impl Master {
             .ok_or_else(|| "failed to open ssh master stderr".to_string())?;
         let stderr_buf = Arc::new(StdMutex::new(Vec::new()));
         let buf = stderr_buf.clone();
-        tokio::spawn(async move {
+        let stderr_task = tokio::spawn(async move {
             let mut chunk = [0_u8; 4096];
             while let Ok(read) = stderr.read(&mut chunk).await {
                 if read == 0 {
@@ -136,10 +141,11 @@ impl Master {
             }
         });
         Ok(Self {
-            _child: child,
+            child,
             stdin,
             stdout,
             stderr_buf,
+            stderr_task: Some(stderr_task),
         })
     }
 
@@ -150,12 +156,28 @@ impl Master {
             .to_string()
     }
 
-    fn transport_error(&self, action: &str, detail: String) -> String {
+    /// A failing `ssh` writes its diagnostic ("Permission denied (publickey)",
+    /// "Host key verification failed", …) to stderr and exits; we notice the
+    /// stdout EOF first, so reporting immediately loses the only line that says
+    /// what went wrong — and hides auth failures from `ssh_guard`. Wait for the
+    /// child and its stderr reader before formatting.
+    async fn transport_error(&mut self, action: &str, detail: String) -> String {
+        let status = match tokio::time::timeout(DRAIN_TIMEOUT, self.child.wait()).await {
+            Ok(Ok(status)) => status.code(),
+            _ => None,
+        };
+        if let Some(task) = self.stderr_task.take() {
+            let _ = tokio::time::timeout(DRAIN_TIMEOUT, task).await;
+        }
         let stderr = self.take_stderr();
+        let exit = match status {
+            Some(code) => format!(" (ssh exited with status {code})"),
+            None => String::new(),
+        };
         if stderr.is_empty() {
-            format!("ssh master {action}: {detail}")
+            format!("ssh master {action}: {detail}{exit}")
         } else {
-            format!("ssh master {action}: {detail}: {stderr}")
+            format!("ssh master {action}: {detail}{exit}: {stderr}")
         }
     }
 
@@ -163,14 +185,16 @@ impl Master {
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let marker = exit_marker(&nonce);
         let marker = marker.as_bytes();
-        self.stdin
+        if let Err(e) = self
+            .stdin
             .write_all(frame(payload, &nonce).as_bytes())
             .await
-            .map_err(|e| self.transport_error("write failed", e.to_string()))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|e| self.transport_error("write failed", e.to_string()))?;
+        {
+            return Err(self.transport_error("write failed", e.to_string()).await);
+        }
+        if let Err(e) = self.stdin.flush().await {
+            return Err(self.transport_error("write failed", e.to_string()).await);
+        }
         let mut buf: Vec<u8> = Vec::new();
         let mut chunk = [0_u8; 8192];
         loop {
@@ -196,13 +220,14 @@ impl Master {
                     "ssh command output exceeded {MAX_RPC_OUTPUT_BYTES} bytes"
                 ));
             }
-            let read = self
-                .stdout
-                .read(&mut chunk)
-                .await
-                .map_err(|e| self.transport_error("read failed", e.to_string()))?;
+            let read = match self.stdout.read(&mut chunk).await {
+                Ok(read) => read,
+                Err(e) => return Err(self.transport_error("read failed", e.to_string()).await),
+            };
             if read == 0 {
-                return Err(self.transport_error("connection closed", "unexpected EOF".into()));
+                return Err(self
+                    .transport_error("connection closed", "unexpected EOF".into())
+                    .await);
             }
             buf.extend_from_slice(&chunk[..read]);
         }
@@ -329,6 +354,32 @@ mod tests {
         let framed = frame(&SshPayload::Script(script.into()), "abc");
         assert!(framed.starts_with("sh -s <<'__WISP_MASTER_abc__X' 2>&1\n"));
         assert!(framed.contains("\n__WISP_MASTER_abc__X\nprintf"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dying_master_reports_stderr_and_exit_status() {
+        // Stands in for `ssh` refusing to connect: a diagnostic on stderr, then
+        // exit. The error must quote it instead of a bare "unexpected EOF".
+        let mut master = Master::spawn(
+            "sh",
+            &[
+                "-c".into(),
+                "echo 'Permission denied (publickey).' >&2; exit 255".into(),
+            ],
+            &[],
+        )
+        .unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            master.rpc(&SshPayload::Command("true".into())),
+        )
+        .await
+        .expect("rpc timed out")
+        .err()
+        .expect("master exited, rpc must fail");
+        assert!(error.contains("Permission denied (publickey)"), "{error}");
+        assert!(error.contains("status 255"), "{error}");
     }
 
     #[cfg(unix)]
