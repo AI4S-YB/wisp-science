@@ -367,8 +367,6 @@ Assistant 对话形式打开。打开时会把内置的 `assets_*.tar.gz` 解压
   Implementer / Verifier / Updater 工作流。
 - 产物管理，以及 UI 中的内嵌 Mol* 三维结构查看器。
 - `RoutedProvider` 基于 LLM 评分选择层级（基于关键词的选择已接入）。
-- 将 `skills/` 和 `mcp-servers/` 打包到 Tauri 安装程序，使发布包无需源码树
-  即可完整运行。
 
 ## Star History
 

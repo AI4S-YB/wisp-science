@@ -521,8 +521,6 @@ If you use wisp-science in your research, please cite:
   bounded automatic Reviewer pass shipped today.
 - Artifact management + inline Mol* 3D structure viewer in the UI.
 - `RoutedProvider` LLM-score tier selection (keyword tier is already wired).
-- Bundling `skills/` and `mcp-servers/` into the Tauri installer so releases
-  are fully self-contained without the source tree.
 
 ## Star History
 
