@@ -1462,6 +1462,31 @@ pub(crate) struct OnboardingState {
     pub(crate) has_api_key: bool,
 }
 
+/// Mirrors `wisp_store::ResearchNode`. `kind` stays a plain string because the
+/// backend enum serializes to snake_case and the pane only ever groups on it.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResearchNode {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) title: String,
+    pub(crate) ref_id: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResearchEdge {
+    pub(crate) source_id: String,
+    pub(crate) target_id: String,
+    pub(crate) relation: String,
+}
+
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ResearchGraph {
+    #[serde(default)]
+    pub(crate) nodes: Vec<ResearchNode>,
+    #[serde(default)]
+    pub(crate) edges: Vec<ResearchEdge>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightTab {
     Artifacts,
@@ -1471,6 +1496,7 @@ pub(crate) enum RightTab {
     File,
     Provenance,
     Hosts,
+    Graph,
     SideChat,
 }
 

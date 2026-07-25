@@ -461,6 +461,17 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "agents.risk.external") => Some("external"),
         (Locale::En, "right.notebook") => Some("Notebook"),
         (Locale::En, "right.notebook_n") => Some("Notebook ({n})"),
+        (Locale::En, "right.graph") => Some("Research graph"),
+        (Locale::En, "right.graph_n") => Some("Research graph ({n})"),
+        (Locale::En, "graph.kind.decision") => Some("Decisions"),
+        (Locale::En, "graph.kind.paper") => Some("Papers"),
+        (Locale::En, "graph.kind.data_asset") => Some("Data assets"),
+        (Locale::En, "graph.kind.run") => Some("Runs"),
+        (Locale::En, "graph.kind.artifact") => Some("Artifacts"),
+        (Locale::En, "graph.empty.title") => Some("Nothing recorded yet"),
+        (Locale::En, "graph.empty.body") => {
+            Some("Decisions, papers and data assets the agent records for this project show up here.")
+        }
         (Locale::En, "right.file") => Some("Files"),
         (Locale::En, "right.provenance") => Some("Provenance"),
         (Locale::En, "right.provenance_n") => Some("Provenance ({n})"),
@@ -1814,6 +1825,17 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "agents.risk.external") => Some("外部服务"),
         (Locale::Zh, "right.notebook") => Some("Notebook"),
         (Locale::Zh, "right.notebook_n") => Some("Notebook ({n})"),
+        (Locale::Zh, "right.graph") => Some("研究图谱"),
+        (Locale::Zh, "right.graph_n") => Some("研究图谱 ({n})"),
+        (Locale::Zh, "graph.kind.decision") => Some("决策"),
+        (Locale::Zh, "graph.kind.paper") => Some("文献"),
+        (Locale::Zh, "graph.kind.data_asset") => Some("数据资产"),
+        (Locale::Zh, "graph.kind.run") => Some("运行"),
+        (Locale::Zh, "graph.kind.artifact") => Some("产物"),
+        (Locale::Zh, "graph.empty.title") => Some("还没有记录"),
+        (Locale::Zh, "graph.empty.body") => {
+            Some("模型在这个项目里记录的决策、文献和数据资产会出现在这里。")
+        }
         (Locale::Zh, "right.file") => Some("文件"),
         (Locale::Zh, "right.provenance") => Some("溯源"),
         (Locale::Zh, "right.provenance_n") => Some("溯源 ({n})"),

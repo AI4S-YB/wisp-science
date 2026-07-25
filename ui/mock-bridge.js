@@ -591,6 +591,18 @@
             return null;
           case "list_library_items":
             return libraryItems;
+          case "get_research_graph":
+            return {
+              nodes: [
+                { id: "d1", project_id: "p1", kind: "decision", title: "Use DESeq2 over edgeR for the DE call", ref_id: null, metadata_json: "{}", created_at: 0, updated_at: 0 },
+                { id: "p1", project_id: "p1", kind: "paper", title: "Love et al. 2014, Moderated estimation of fold change", ref_id: "10.1186/s13059-014-0550-8", metadata_json: "{}", created_at: 0, updated_at: 0 },
+                { id: "a1", project_id: "p1", kind: "data_asset", title: "counts.tsv", ref_id: "data/counts.tsv", metadata_json: "{}", created_at: 0, updated_at: 0 },
+              ],
+              edges: [
+                { id: "e1", project_id: "p1", source_id: "d1", target_id: "p1", relation: "cites", metadata_json: "{}", created_at: 0 },
+                { id: "e2", project_id: "p1", source_id: "d1", target_id: "a1", relation: "applies to", metadata_json: "{}", created_at: 0 },
+              ],
+            };
           case "star_library_text": {
             const text = String(args?.text ?? "");
             const existing = libraryItems.find(
