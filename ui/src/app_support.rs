@@ -8280,6 +8280,36 @@ pub(super) fn AttachmentThumbnail(path: String, alt: String) -> impl IntoView {
     }
 }
 
+/// Tile face for an in-thread artifact card: a real thumbnail for image
+/// artifacts, the kind badge for everything else. The badge is the base layer
+/// rather than an alternative branch, so an image whose bytes never arrive (or
+/// fail to decode) falls back to exactly the badge card these tiles replaced.
+#[component]
+fn ArtifactThumb(path: Option<String>, kind: &'static str) -> impl IntoView {
+    let locale = use_locale();
+    let source = create_rw_signal(None::<String>);
+    if let Some(path) = path.filter(|_| kind == "image") {
+        // `load_file_content`, not `read_file`: artifact paths also come in the
+        // artifact:/version:/ssh:// spellings the previews accept.
+        let loc = locale.get_untracked();
+        spawn_local(async move {
+            if let Ok(file) = load_file_content(&path, loc).await {
+                if let Some(base64) = file.base64 {
+                    source.set(Some(format!("data:{};base64,{base64}", file.mime)));
+                }
+            }
+        });
+    }
+    view! {
+        <span class="message-artifact-thumb">
+            <span class=format!("rp-badge {kind}")>{kind}</span>
+            {move || source.get().map(|src| view! {
+                <img src=src alt="" on:error=move |_| source.set(None) />
+            })}
+        </span>
+    }
+}
+
 /// Queue (#433): an operation on a parked follow-up, raised from its bubble and
 /// handled by the parent (which owns the transcript signals + invoke).
 #[derive(Clone)]
@@ -8597,23 +8627,34 @@ pub(super) fn AssistantMessage(
         .enumerate()
         .filter(|(_, artifact)| artifact.source_item == source_item)
         .map(|(index, artifact)| {
+            let path = match &artifact.data {
+                PreviewData::File { path, .. } => Some(path.clone()),
+                _ => None,
+            };
             (
                 index,
                 artifact.name.clone(),
                 artifact.kind,
                 artifact.superseded,
+                path,
             )
         })
         .collect::<Vec<_>>();
     let generated_count = generated.len();
-    let generated_cards = generated.into_iter().map(|(index, name, kind, superseded)| {
+    // Anything past this is folded behind "+N more". Kept in step with the
+    // `nth-child(n+9)` rule in chat.css that does the hiding.
+    let generated_overflow = generated_count.saturating_sub(8);
+    let generated_expanded = create_rw_signal(false);
+    let generated_collapsed = move || generated_overflow > 0 && !generated_expanded.get();
+    let generated_cards = generated.into_iter().map(|(index, name, kind, superseded, path)| {
         let on_artifact = on_artifact.clone();
         view! {
             <button type="button" class="message-artifact-card" class:superseded=superseded
                 disabled=superseded
                 data-artifact-name=name.clone()
+                title=name.clone()
                 on:click=move |_| on_artifact.call(index)>
-                <span class=format!("rp-badge {kind}")>{kind}</span>
+                <ArtifactThumb path=path kind=kind />
                 <span class="message-artifact-name">{name}</span>
                 {superseded.then(|| view! { <span class="message-artifact-status">{move || t(locale.get(), "artifact.updated")}</span> })}
             </button>
@@ -8643,7 +8684,16 @@ pub(super) fn AssistantMessage(
             {(generated_count > 0).then(|| view! {
                 <div class="message-artifacts">
                     <div class="message-artifacts-label">{format!("Generated · {generated_count}")}</div>
-                    <div class="message-artifact-cards">{generated_cards}</div>
+                    <div class="message-artifact-cards"
+                        class:collapsed=generated_collapsed>
+                        {generated_cards}
+                        {move || generated_collapsed().then(|| view! {
+                            <button type="button" class="message-artifact-more"
+                                on:click=move |_| generated_expanded.set(true)>
+                                {tf(locale.get(), "artifact.more_count", &[("n", &generated_overflow.to_string())])}
+                            </button>
+                        })}
+                    </div>
                 </div>
             })}
             <div class="msg-actions">

@@ -103,7 +103,7 @@
   function mockFile(path) {
     const name = String(path ?? "report.csv");
     const ext = name.split(".").pop().toLowerCase();
-    if (ext === "png") {
+    if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) {
       // Labeled grid so region-crop accuracy is verifiable by eye.
       const cells = [];
       for (let r = 0; r < 6; r++) {
@@ -271,7 +271,7 @@
                 { role: "tool", text: "12 hits written to report.csv", tool_name: "python", ok: true },
                 {
                   role: "assistant",
-                  text: "## FX-cell literature\n\n| gene | score |\n| --- | --- |\n| FX-cell | 0.91 |\n\nThe score follows $s = \\frac{1}{1 + e^{-x}}$ and GPT-style \\(a_i^2 + b_i^2\\) too.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$\n\nSee `report.csv` or {{artifact:00000001}}.\n\n```python\nimport pandas as pd\ndf = pd.read_csv('report.csv')\nprint(df.head())\n```",
+                  text: "## FX-cell literature\n\n| gene | score |\n| --- | --- |\n| FX-cell | 0.91 |\n\nThe score follows $s = \\frac{1}{1 + e^{-x}}$ and GPT-style \\(a_i^2 + b_i^2\\) too.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$\n\nSee `report.csv` or {{artifact:00000001}}.\n\nFigures and tables:\n\n- `results/volcano_plot.png`\n- `results/heatmap.png`\n- `results/umap.png`\n- `results/pca.svg`\n- `results/qc_violin.jpg`\n- `results/marker_dotplot.png`\n- `results/deseq2_results.tsv`\n- `results/gsea.pdf`\n- `results/summary.md`\n- `results/counts.csv`\n\n```python\nimport pandas as pd\ndf = pd.read_csv('report.csv')\nprint(df.head())\n```",
                   tool_name: null,
                   ok: null,
                 },
