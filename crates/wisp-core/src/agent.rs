@@ -341,12 +341,12 @@ async fn agent_loop_inner(
                     Some(vision) => match describe_image(vision, img, &name, &args).await {
                         Ok(text) => (Content::text(text.clone()), text, true),
                         Err(e) => {
-                            let text = format!("view_image error: vision model failed: {e}");
+                            let text = format!("{name} error: vision model failed: {e}");
                             (Content::text(text.clone()), text, false)
                         }
                     },
                     None => {
-                        let text = "view_image error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.".to_string();
+                        let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
                         (Content::text(text.clone()), text, false)
                     }
                 }

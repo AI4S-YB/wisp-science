@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: "Use this skill to drive the user's real, persistent Chrome/Chromium session — open pages, read them, click, fill and submit forms, navigate, switch tabs, or scrape content that needs the user's existing cookies and login state. Triggers when the user asks to do something in their browser, log into a site and act inside it, fill out a web form, click through a flow, or extract data from a page that requires being signed in. Tools: browser_setup (check/connect the extension), web_open_tab (open a URL), web_scan (read visible content + actionable elements with ready-made selectors), web_execute_js (click/type/navigate, or a JSON command for tabs/CDP). Not for the built-in read-only web fetch — this is for interacting with a live browser."
+description: "Use this skill to drive the user's real, persistent Chrome/Chromium session — open pages, read them, click, fill and submit forms, navigate, switch tabs, or scrape content that needs the user's existing cookies and login state. Triggers when the user asks to do something in their browser, log into a site and act inside it, fill out a web form, click through a flow, or extract data from a page that requires being signed in. Tools: browser_setup (check/connect the extension), web_open_tab (open a URL), web_scan (read visible content + actionable elements with ready-made selectors), web_execute_js (click/type/navigate, or a JSON command for tabs/CDP), web_screenshot (see what the tab is showing — layout, charts, canvas, QR codes). Not for the built-in read-only web fetch — this is for interacting with a live browser."
 fold_cue: "instead_of=guessing-selectors use=web_scan first — it returns a unique CSS selector and rect for every actionable element; never invent selectors"
 ---
 
@@ -49,12 +49,22 @@ until the popup shows *Connected to Wisp*. Never invent the path.
 | Switch to & focus a tab (so the user sees it) | `{"cmd":"tabs","method":"switch","tabId":<id>}` |
 | List tabs | `{"cmd":"tabs"}` (or just `web_scan tabs_only`) |
 | Trusted click when `.click()` is ignored | `{"cmd":"cdp","method":"Input.dispatchMouseEvent","params":{"type":"mousePressed","x":<x>,"y":<y>,"button":"left","clickCount":1}}` then the same with `"type":"mouseReleased"` — use the element's `rect` centre from `web_scan` |
-| Screenshot | `{"cmd":"cdp","method":"Page.captureScreenshot","params":{"format":"png"}}` |
 
 Prefer plain JS. Reach for `cmd:cdp` only when a page blocks synthetic
-events or you truly need trusted input. **Screenshots return base64 that
-floods context and is truncated at ~200k chars — prefer `web_scan`'s
-structured output; screenshot only when structure isn't enough.**
+events or you truly need trusted input.
+
+## Seeing the page — `web_screenshot`
+
+`web_scan` gives text and elements; **`web_screenshot`** gives sight. Use it
+when structure isn't enough: rendered layout, a chart or diagram, a
+canvas/WebGL page, a QR code, a PDF or image viewer, or a page that looks
+broken. It captures the **visible viewport** of the tab — to see below the
+fold, scroll first (`web_execute_js` `scrollTo(0, 1200)`) and capture again.
+Pass `question` to say what to read out of it, e.g.
+`{"question":"is the login QR code visible and not expired?"}`.
+
+It goes through the configured vision model, so `web_scan` stays the cheaper
+default — screenshot when you need eyes, not for every step.
 
 ## Stop conditions (do not automate through these)
 

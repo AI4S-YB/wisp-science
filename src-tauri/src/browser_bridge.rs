@@ -27,7 +27,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
 use uuid::Uuid;
 use wisp_llm::ToolSchema;
-use wisp_tools::{Approval, Tool, ToolEnv, ToolResult};
+use wisp_tools::{Approval, ImageData, Tool, ToolEnv, ToolResult};
 
 const BRIDGE_ADDR: &str = "127.0.0.1:18765";
 const EXTENSION_ORIGIN: &str = "chrome-extension://gnkjgagleagkgdlkkcianolobfdoocnp";
@@ -35,6 +35,9 @@ const DEFAULT_TIMEOUT_MS: u64 = 15_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const MAX_SCRIPT_BYTES: usize = 64 * 1024;
 const MAX_RESULT_CHARS: usize = 200_000;
+/// Base64 payload ceiling for one screenshot, matching the shared image path's
+/// 5 MB decoded limit (base64 inflates by 4/3).
+const MAX_SCREENSHOT_B64: usize = 7 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BrowserTab {
@@ -845,6 +848,94 @@ impl Tool for WebOpenTabTool {
     }
 }
 
+pub struct WebScreenshotTool {
+    bridge: Arc<BrowserBridge>,
+}
+
+impl WebScreenshotTool {
+    pub fn new(bridge: Arc<BrowserBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for WebScreenshotTool {
+    fn name(&self) -> &str {
+        "web_screenshot"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            self.name(),
+            "Look at what a tab in the user's real Chrome/Chromium session is showing. Use it when web_scan's text and element snapshot is not enough: rendered layout, a chart or diagram, a canvas/WebGL page, a QR code, a PDF or image viewer, or a page that looks wrong and needs eyes. Captures the visible viewport of the tab; to reach content below the fold, scroll with web_execute_js first and capture again. Pass 'question' to say what should be read out of the screenshot.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "switch_tab_id": { "type": ["integer", "string"], "description": "Tab id returned by web_scan; selects that tab for this and later calls" },
+                    "question": { "type": "string", "description": "What to look for in the screenshot, e.g. 'is the login QR code visible and not expired?'" }
+                }
+            }),
+        )
+    }
+
+    fn minimum_approval(&self) -> Approval {
+        Approval::Ask
+    }
+
+    fn preview(&self, args: &Value) -> String {
+        args.get("switch_tab_id")
+            .map(|tab| format!("screenshot real-browser tab {tab}"))
+            .unwrap_or_else(|| "screenshot selected real-browser tab".into())
+    }
+
+    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+        let tab_id = match tab_id_arg(args) {
+            Ok(tab_id) => tab_id,
+            Err(error) => return ToolResult::fail(error),
+        };
+        // ponytail: reuses the extension's existing CDP path, so no new
+        // permission and no extension change. JPEG q80 keeps a viewport well
+        // under the image limit and still resolves QR codes and small text.
+        let code = json!({
+            "cmd": "cdp",
+            "method": "Page.captureScreenshot",
+            "params": { "format": "jpeg", "quality": 80 }
+        })
+        .to_string();
+        let execution = match self
+            .bridge
+            .execute(tab_id, &code, Duration::from_millis(DEFAULT_TIMEOUT_MS))
+            .await
+        {
+            Ok(execution) => execution,
+            Err(error) => return ToolResult::fail(error),
+        };
+        let Some(data) = execution
+            .value
+            .get("data")
+            .and_then(Value::as_str)
+            .filter(|data| !data.is_empty())
+        else {
+            return ToolResult::fail("browser screenshot returned no image data");
+        };
+        if data.len() > MAX_SCREENSHOT_B64 {
+            return ToolResult::fail(format!(
+                "browser screenshot is too large ({} bytes of base64); reduce the browser window size and retry",
+                data.len()
+            ));
+        }
+        ToolResult::image(ImageData {
+            mime: "image/jpeg".into(),
+            data_url: format!("data:image/jpeg;base64,{data}"),
+            label: format!(
+                "Screenshot of real browser tab {} ({} KB)",
+                execution.tab_id,
+                data.len() / 1024
+            ),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -892,7 +983,11 @@ mod tests {
             Approval::Ask
         );
         assert_eq!(
-            WebExecuteJsTool::new(bridge).minimum_approval(),
+            WebExecuteJsTool::new(bridge.clone()).minimum_approval(),
+            Approval::Ask
+        );
+        assert_eq!(
+            WebScreenshotTool::new(bridge).minimum_approval(),
             Approval::Ask
         );
     }
