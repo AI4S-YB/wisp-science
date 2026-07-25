@@ -2591,7 +2591,7 @@ test("PDF artifacts render inside the app without a browser PDF plugin", async (
   // Single-page viewer: one page is rendered at a time, navigated with controls.
   await expect(modal.locator('.rp-pdf[data-page-count="2"][data-current-page="1"]')).toBeVisible();
   await expect.poll(() => lastInvokeArgs(page, "read_file_bytes"))
-    .toMatchObject({ path: "paper.pdf", maxBytes: 32 * 1024 * 1024 });
+    .toMatchObject({ path: "paper.pdf", maxBytes: 100 * 1024 * 1024 });
   const renderedPage = modal.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]');
   await expect(renderedPage).toBeVisible();
   await expect(modal.locator(".rp-pdf-page")).toHaveCount(1);
