@@ -47,16 +47,18 @@ impl Store {
     }
 
     /// All projects, newest-updated first, each with its session count
-    /// (root frames that have at least one user turn — matches `list_sessions`).
+    /// (root frames that have at least one user turn — matches `list_sessions`)
+    /// and artifact count.
     pub async fn list_projects(
         &self,
-    ) -> Result<Vec<(String, String, String, i64, i64, i64, String)>> {
+    ) -> Result<Vec<(String, String, String, i64, i64, i64, String, i64)>> {
         let rows = sqlx::query(
             "SELECT p.id AS id, COALESCE(p.name,'') AS name, COALESCE(p.workspace_dir,'') AS ws, \
                     p.created_at AS created_at, p.updated_at AS updated_at, \
                     COALESCE(p.description,'') AS description, \
                     (SELECT COUNT(*) FROM frames f WHERE f.project_id = p.id AND f.parent_frame_id = f.id \
-                       AND EXISTS (SELECT 1 FROM messages m WHERE m.frame_id = f.id AND m.role='user')) AS sessions \
+                       AND EXISTS (SELECT 1 FROM messages m WHERE m.frame_id = f.id AND m.role='user')) AS sessions, \
+                    (SELECT COUNT(*) FROM artifacts a WHERE a.project_id = p.id) AS artifacts \
              FROM projects p ORDER BY p.updated_at DESC, p.rowid DESC",
         )
         .fetch_all(&self.pool).await?;
@@ -70,6 +72,7 @@ impl Store {
                 r.try_get("updated_at")?,
                 r.try_get("sessions")?,
                 r.try_get("description")?,
+                r.try_get("artifacts")?,
             ));
         }
         Ok(out)

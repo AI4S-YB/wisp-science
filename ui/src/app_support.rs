@@ -9580,6 +9580,7 @@ pub(super) fn ProjectsScreen(
                             let id_sync_disabled = p.id.clone();
                             let id_code = p.id.clone();
                             let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
+                            let artifacts_meta = tf(loc, "projects.artifacts_n", &[("n", &p.artifact_count.to_string())]);
                             let active = p.running_count + p.needs_you_count;
                             let dot_class = if p.running_count > 0 { "running" } else { "ready" };
                             let when = format_relative_time(p.updated_at, loc);
@@ -9609,6 +9610,7 @@ pub(super) fn ProjectsScreen(
                                         </div>
                                         <div class="pc-meta-row">
                                             <span class="pc-meta">{meta}</span>
+                                            <span class="pc-meta">{artifacts_meta}</span>
                                             {(!when.is_empty()).then(|| view! { <span class="pc-when">{when.clone()}</span> })}
                                             {sync_label.clone().map(|label| view! { <span class="pc-sync-state">{label}</span> })}
                                         </div>

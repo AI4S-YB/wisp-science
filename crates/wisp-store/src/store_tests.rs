@@ -1354,14 +1354,22 @@ async fn project_crud_and_listing() {
         .await
         .unwrap();
 
+    // one artifact under "a", none under "b"
+    store
+        .save_artifact("art1", "a", "f1", "r.csv", "text/csv", "/tmp/r.csv")
+        .await
+        .unwrap();
+
     let projs = store.list_projects().await.unwrap();
     assert_eq!(projs.len(), 2);
     // ordered by updated_at desc; "b" created last so it sorts first
     assert_eq!(projs[0].0, "b");
     let a = projs.iter().find(|p| p.0 == "a").unwrap();
     assert_eq!(a.5, 1, "project a has one session");
+    assert_eq!(a.7, 1, "project a has one artifact");
     let b = projs.iter().find(|p| p.0 == "b").unwrap();
     assert_eq!(b.5, 0, "project b has no sessions");
+    assert_eq!(b.7, 0, "project b has no artifacts");
 
     // recent sessions span projects
     store.create_frame("f2", "b", "OPERON", "m").await.unwrap();
