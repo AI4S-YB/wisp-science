@@ -515,6 +515,28 @@ pub(crate) struct SshHost {
     pub(crate) password: Option<String>,
 }
 
+/// Mirrors `SshTrustEdge` in src-tauri/src/run_context/transfer.rs — align
+/// field by field on both sides.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(crate) struct SshTrustEdge {
+    pub(crate) source_context_id: String,
+    pub(crate) destination_context_id: String,
+    pub(crate) destination_target: String,
+    #[serde(default)]
+    pub(crate) destination_port: Option<u16>,
+    #[serde(default)]
+    pub(crate) key_path: Option<String>,
+    pub(crate) managed: bool,
+    pub(crate) verified_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct RevokeTrustResponse {
+    pub(crate) edges: Vec<SshTrustEdge>,
+    #[serde(default)]
+    pub(crate) cleanup_error: Option<String>,
+}
+
 #[derive(Clone)]
 pub(crate) enum ComposerAttachment {
     Uploading {

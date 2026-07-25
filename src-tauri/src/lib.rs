@@ -5981,6 +5981,8 @@ pub fn run() {
             ssh_hosts::test_ssh_connection,
             ssh_hosts::remove_ssh_host,
             ssh_hosts::import_ssh_config_hosts,
+            ssh_hosts::list_ssh_trust_edges,
+            ssh_hosts::revoke_ssh_trust_edge,
             wsl_contexts::list_wsl_distros,
             wsl_contexts::import_wsl_contexts,
             terminal_sessions::open_terminal,

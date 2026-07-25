@@ -25,6 +25,7 @@ use remote::{
 #[cfg(test)]
 use remote::{parse_input_progress, remote_poll_delay_secs};
 pub use tools::{CancelRunTool, GetRunTool, MonitorRunTool, RunInContextTool};
+pub(crate) use transfer::{load_trust_edges, revoke_trust_edge, RevokeTrustResponse, SshTrustEdge};
 pub use transfer::{ConfigureSshTrustTool, TransferBetweenContextsTool};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

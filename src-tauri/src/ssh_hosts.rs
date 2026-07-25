@@ -1020,6 +1020,31 @@ pub async fn list_ssh_hosts(state: State<'_, crate::AppState>) -> Result<Vec<Ssh
         .collect())
 }
 
+/// Trust edges are created by the agent's `configure_ssh_trust` tool; these
+/// two commands are the user's window into them: see every persisted edge and
+/// revoke one (record removal plus best-effort managed-key cleanup).
+#[tauri::command]
+pub async fn list_ssh_trust_edges(
+    state: State<'_, crate::AppState>,
+) -> Result<Vec<crate::run_context::SshTrustEdge>, String> {
+    Ok(crate::run_context::load_trust_edges(&state.store).await)
+}
+
+#[tauri::command]
+pub async fn revoke_ssh_trust_edge(
+    state: State<'_, crate::AppState>,
+    source_context_id: String,
+    destination_context_id: String,
+) -> Result<crate::run_context::RevokeTrustResponse, String> {
+    crate::run_context::revoke_trust_edge(
+        &state.store,
+        &state.run_manager,
+        &source_context_id,
+        &destination_context_id,
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn list_session_execution_context_ids(
     state: State<'_, crate::AppState>,
