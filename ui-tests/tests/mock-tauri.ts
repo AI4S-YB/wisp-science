@@ -166,9 +166,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const sessionDelegationEnabled: Record<string, boolean> = {};
   const sessionAgentCompletion: Record<string, { policy: "inline" | "background"; auto_resume: boolean }> = {};
   let lastDelegationSessionId = "s-current";
-  // Mutable workspace fixtures let live FileChanged events prove that open
+  // Mutable workspace fixture lets live FileChanged events prove that open
   // previews re-read content written by an agent tool.
-  const workspaceMd: Record<string, string> = {};
   let workspaceR = 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n';
   (window as any).__setMockWorkspaceR = (value: string) => { workspaceR = String(value); };
   let workspaceEntries = [
@@ -1918,7 +1917,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               return { path, mime: "image/png", text: null, base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII=" };
             }
             if (path.toLowerCase().endsWith(".md")) {
-              return { path, mime: "text/markdown", text: workspaceMd[path] ?? "# Draft manuscript\n\nOriginal body paragraph.\n", base64: null };
+              return { path, mime: "text/markdown", text: "# Draft manuscript\n\nOriginal body paragraph.\n", base64: null };
             }
             if (path.toLowerCase().includes(".json")) {
               return { path, mime: "application/json", text: '{"model":{"name":"wisp","enabled":true}}', base64: null };
@@ -1983,12 +1982,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             const src = String(arg("sourcePath") ?? "");
             const stem = (src.split(/[\\/]/).pop() ?? "notes").replace(/\.[^.]+$/, "") || "notes";
             return `reviews/${stem}.md`;
-          }
-          case "write_file": {
-            // Persist so a follow-up read_file returns the edited body (proves the
-            // inline editor's save + reload cycle end-to-end).
-            workspaceMd[String(arg("path") ?? "")] = String(arg("content") ?? "");
-            return null;
           }
           case "export_session":
             return "/mock/export.zip";

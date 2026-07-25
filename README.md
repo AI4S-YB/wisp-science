@@ -519,7 +519,6 @@ If you use wisp-science in your research, please cite:
 - `FlashThinking` — phase-aware structured thinking-framework injection.
 - `loop_engine` — deeper Implementer / Verifier / Updater workflows beyond the
   bounded automatic Reviewer pass shipped today.
-- Artifact management + inline Mol* 3D structure viewer in the UI.
 - `RoutedProvider` LLM-score tier selection (keyword tier is already wired).
 
 ## Star History

@@ -122,7 +122,6 @@ fn wsl_available() -> bool {
         .is_ok()
 }
 
-#[tauri::command]
 pub async fn list_wsl_distros() -> Result<Vec<WslDistro>, String> {
     #[cfg(target_os = "windows")]
     {

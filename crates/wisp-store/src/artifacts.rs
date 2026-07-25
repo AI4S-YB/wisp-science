@@ -146,33 +146,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn save_artifact_dependency(
-        &self,
-        id: &str,
-        artifact_version_id: &str,
-        depends_on_version_id: &str,
-        reference_name: Option<&str>,
-    ) -> Result<()> {
-        if artifact_version_id == depends_on_version_id {
-            anyhow::bail!("An artifact version cannot depend on itself");
-        }
-        sqlx::query(
-            "INSERT INTO artifact_dependencies(\
-                id,artifact_version_id,depends_on_version_id,reference_name,created_at\
-             ) VALUES(?,?,?,?,?) \
-             ON CONFLICT(artifact_version_id,depends_on_version_id) DO UPDATE SET \
-                reference_name=excluded.reference_name",
-        )
-        .bind(id)
-        .bind(artifact_version_id)
-        .bind(depends_on_version_id)
-        .bind(reference_name)
-        .bind(chrono::Utc::now().timestamp())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     /// Artifacts for one conversation frame, newest first.
     pub async fn list_artifacts(
         &self,

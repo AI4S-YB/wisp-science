@@ -985,24 +985,6 @@ pub(super) fn append_review_note_at(
     Ok(rel)
 }
 
-/// Overwrite a text file inside the project root with edited content. Used by
-/// the preview's inline editor for Markdown/plain-text files. Rejects paths
-/// outside the root via the shared validator; the parent directory must exist.
-pub(super) fn write_file_at(root: &Path, path: &str, content: &str) -> Result<(), String> {
-    let real = wisp_tools::safety::validate_file_path(root, path)?;
-    std::fs::write(&real, content).map_err(|e| format!("could not write file: {e}"))
-}
-
-#[tauri::command]
-pub(super) fn write_file(
-    state: State<'_, AppState>,
-    window: WebviewWindow,
-    path: String,
-    content: String,
-) -> Result<(), String> {
-    write_file_at(&state.active(window.label()).root, &path, &content)
-}
-
 #[tauri::command]
 pub(super) fn append_review_note(
     state: State<'_, AppState>,
@@ -1481,25 +1463,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    #[test]
-    fn write_file_overwrites_within_root_and_blocks_escape() {
-        let base = std::env::temp_dir().join(format!(
-            "wisp_write_file_test_{}_{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::write(base.join("notes.md"), b"# old\n").unwrap();
-
-        write_file_at(&base, "notes.md", "# new\n\nedited body\n").unwrap();
-        assert_eq!(
-            std::fs::read_to_string(base.join("notes.md")).unwrap(),
-            "# new\n\nedited body\n"
-        );
-
-        // Escaping the root is refused.
-        assert!(write_file_at(&base, "../escape.md", "nope").is_err());
-
-        let _ = std::fs::remove_dir_all(&base);
-    }
 }
