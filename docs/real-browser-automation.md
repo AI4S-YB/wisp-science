@@ -91,6 +91,12 @@ These settings must be changed manually because internal settings pages such as
 - `web_execute_js`: execute JavaScript in the selected real tab. It also accepts
   a JSON `{ "cmd": "cdp", ... }` request for a single Chrome DevTools Protocol
   method when trusted browser input or another CDP-only action is required.
+- `web_screenshot`: capture the visible viewport of the selected real tab as a
+  JPEG and read it with the configured vision model, for rendered layout,
+  charts, canvas/WebGL pages, QR codes, or a page that looks wrong. It captures
+  the viewport only; scroll with `web_execute_js` to reach content below the
+  fold. It needs a vision-capable model configured in
+  **Settings → Models**, like `view_image`.
 
 Both tools always require at least one Wisp approval. The approval can be
 granted once, for the session, for the project, or globally through the existing
