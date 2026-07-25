@@ -5232,6 +5232,16 @@ test("an SVG star saves a Notebook cell in the global library", async ({ page })
   await expect(page.locator('.library-card[data-library-kind="code"]')).toContainText("wisp-science / Current analysis");
 });
 
+test("the command palette opens the global library", async ({ page }) => {
+  await enterApp(page);
+  await page.keyboard.press("Control+p");
+  const input = page.locator("#action-palette-input");
+  await input.fill("library");
+  await expect(page.locator(".action-palette-row").first()).toContainText("Open library");
+  await input.press("Enter");
+  await expect(page.getByTestId("library-screen")).toBeVisible();
+});
+
 test("a starred figure keeps its image and generating code", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("make a volcano plot volcano.png");
