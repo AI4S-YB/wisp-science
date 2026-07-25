@@ -641,9 +641,9 @@
           case "get_research_graph":
             return {
               nodes: [
-                { id: "d1", project_id: "p1", kind: "decision", title: "Use DESeq2 over edgeR for the DE call", ref_id: null, metadata_json: "{}", created_at: 0, updated_at: 0 },
-                { id: "p1", project_id: "p1", kind: "paper", title: "Love et al. 2014, Moderated estimation of fold change", ref_id: "10.1186/s13059-014-0550-8", metadata_json: "{}", created_at: 0, updated_at: 0 },
-                { id: "a1", project_id: "p1", kind: "data_asset", title: "counts.tsv", ref_id: "data/counts.tsv", metadata_json: "{}", created_at: 0, updated_at: 0 },
+                { id: "d1", project_id: "p1", kind: "decision", title: "Use DESeq2 over edgeR for the DE call", ref_id: null, metadata_json: JSON.stringify({ rationale: "Shrinkage estimator handles the 3-replicate design better", alternatives: "edgeR, limma-voom" }), created_at: 0, updated_at: 0 },
+                { id: "p1", project_id: "p1", kind: "paper", title: "Love et al. 2014, Moderated estimation of fold change", ref_id: "10.1186/s13059-014-0550-8", metadata_json: JSON.stringify({ journal: "Genome Biology", year: 2014 }), created_at: 0, updated_at: 0 },
+                { id: "a1", project_id: "p1", kind: "data_asset", title: "counts.tsv", ref_id: "data/counts.tsv", metadata_json: JSON.stringify({ rows: 24567, columns: 9 }), created_at: 0, updated_at: 0 },
                 // run:/artifact: nodes + "produced" edges are what a run card reads.
                 { id: "run:r1", project_id: "p1", kind: "run", title: "DESeq2 differential expression", ref_id: "r1", metadata_json: "{}", created_at: 0, updated_at: 0 },
                 { id: "artifact:h1", project_id: "p1", kind: "artifact", title: "deseq2_results.tsv", ref_id: "h1", metadata_json: "{}", created_at: 0, updated_at: 0 },

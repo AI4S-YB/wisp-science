@@ -1486,12 +1486,14 @@ pub(crate) struct OnboardingState {
 
 /// Mirrors `wisp_store::ResearchNode`. `kind` stays a plain string because the
 /// backend enum serializes to snake_case and the pane only ever groups on it.
+/// `metadata_json` arrives as the store's raw JSON string, not an object.
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResearchNode {
     pub(crate) id: String,
     pub(crate) kind: String,
     pub(crate) title: String,
     pub(crate) ref_id: Option<String>,
+    pub(crate) metadata_json: String,
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -1499,6 +1501,9 @@ pub(crate) struct ResearchEdge {
     pub(crate) source_id: String,
     pub(crate) target_id: String,
     pub(crate) relation: String,
+    // Carried through so the wire shape matches the store; nothing renders it yet.
+    #[allow(dead_code)]
+    pub(crate) metadata_json: String,
 }
 
 #[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]

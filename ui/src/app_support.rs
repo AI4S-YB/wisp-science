@@ -2268,6 +2268,7 @@ mod run_artifact_link_tests {
             source_id: source.into(),
             target_id: target.into(),
             relation: relation.into(),
+            metadata_json: "{}".into(),
         }
     }
 
@@ -2279,6 +2280,7 @@ mod run_artifact_link_tests {
                 kind: "artifact".into(),
                 title: "table.tsv".into(),
                 ref_id: Some("a1".into()),
+                metadata_json: "{}".into(),
             }],
             edges: vec![
                 edge("run:r1", "artifact:a1", "produced"),
