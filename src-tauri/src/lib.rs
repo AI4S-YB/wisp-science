@@ -71,11 +71,11 @@ mod terminal_sessions;
 mod workspace_manifest;
 mod wsl_contexts;
 
-use artifact_commands::{register_artifact, save_workspace_file_by_kind, upload_file};
+use artifact_commands::{register_artifact, upload_file};
 use file_browser::{
     append_review_note, create_directory, create_file, delete_entry, list_dir, list_remote_dir,
     read_file, read_file_at, read_file_bytes, read_file_bytes_at, read_remote_file,
-    read_remote_file_bytes, rename_entry, search_files, write_file, FileContent,
+    read_remote_file_bytes, rename_entry, search_files, FileContent,
 };
 use session_export::{capture_env, export_session, get_artifact_provenance};
 #[cfg(test)]
@@ -5983,11 +5983,9 @@ pub fn run() {
             ssh_hosts::import_ssh_config_hosts,
             ssh_hosts::list_ssh_trust_edges,
             ssh_hosts::revoke_ssh_trust_edge,
-            wsl_contexts::list_wsl_distros,
             wsl_contexts::import_wsl_contexts,
             terminal_sessions::open_terminal,
             terminal_sessions::attach_terminal,
-            terminal_sessions::get_terminal,
             terminal_sessions::write_terminal,
             terminal_sessions::resize_terminal,
             terminal_sessions::terminate_terminal,
@@ -6003,7 +6001,6 @@ pub fn run() {
             runtime_commands::stop_runtime,
             runtime_commands::restart_runtime,
             runtime_commands::list_runs,
-            runtime_commands::get_run,
             runtime_commands::cancel_run,
             project_commands::get_research_graph,
             session_commands::delete_session,
@@ -6093,7 +6090,6 @@ pub fn run() {
             search_files,
             read_file,
             read_file_bytes,
-            write_file,
             append_review_note,
             artifact_commands::list_artifacts,
             artifact_commands::search_artifacts,
@@ -6106,7 +6102,6 @@ pub fn run() {
             session_commands::set_viewed_session,
             upload_file,
             register_artifact,
-            save_workspace_file_by_kind,
             get_artifact_provenance,
             library_commands::list_library_items,
             library_commands::star_library_code,

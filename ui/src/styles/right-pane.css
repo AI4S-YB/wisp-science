@@ -93,6 +93,10 @@
 .run-output { margin-top:7px; font-size:11.5px; color:var(--text-muted); }
 .run-output summary { cursor:pointer; }
 .run-output pre { max-height:180px; margin:6px 0 0; padding:8px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-sunken); color:var(--text); font:11px/1.45 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.run-artifacts { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:7px; }
+.run-artifacts-label { font-size:11px; color:var(--text-faint); }
+.run-artifact { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 8px; border:1px solid var(--border); border-radius:999px; background:var(--bg-elev); color:var(--text); font:11.5px/1.5 var(--font-mono); cursor:pointer; }
+.run-artifact:hover { border-color:var(--clay-strong); color:var(--clay-strong); }
 .context-error { margin-top:6px; font-size:11.5px; color:var(--err); white-space:pre-wrap; }
 .context-status, .run-status { flex:0 0 auto; border-radius:999px; padding:2px 7px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; background:var(--bg-sunken); color:var(--text-faint); }
 .context-status.ok, .run-status.succeeded { background:hsl(152 35% 32% / 0.12); color:hsl(152 35% 32%); }

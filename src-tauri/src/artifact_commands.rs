@@ -1,5 +1,5 @@
 use super::*;
-use super::{ensure_active_frame, workspace_manifest, ActiveProject, AppState, ArtifactInfo};
+use super::{ensure_active_frame, ActiveProject, AppState, ArtifactInfo};
 use crate::file_browser::mime_for_path;
 use base64::Engine;
 use tauri::State;
@@ -137,25 +137,6 @@ pub(super) async fn register_artifact(
     let ap = state.active(window.label());
     let _project_activity = state.begin_project_activity(&ap.id)?;
     register_artifact_at(&state, window.label(), &ap, path, content_type).await
-}
-
-#[tauri::command]
-pub(super) async fn save_workspace_file_by_kind(
-    state: State<'_, AppState>,
-    window: tauri::WebviewWindow,
-    kind: workspace_manifest::WorkspaceFileKind,
-    filename: String,
-    content: String,
-) -> Result<String, String> {
-    let ap = state.active(window.label());
-    let _project_activity = state.begin_project_activity(&ap.id)?;
-    let path =
-        workspace_manifest::save_workspace_file(&ap.root, kind, &filename, content.as_bytes())?;
-    Ok(path
-        .strip_prefix(&ap.root)
-        .unwrap_or(&path)
-        .to_string_lossy()
-        .replace('\\', "/"))
 }
 
 #[cfg(test)]

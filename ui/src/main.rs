@@ -1088,13 +1088,33 @@ fn App() -> impl IntoView {
             }
         });
     });
+    // Artifacts the backend registered in the database rather than mentioned in
+    // chat — harvested run outputs, delegated-agent results, MCP-bridge writes,
+    // uploads. The transcript scan above is blind to all of them, so the panel
+    // asks `list_artifacts` for the session too. Refetched when the session
+    // changes and at each turn boundary, which is when new rows appear.
+    let db_artifacts = create_rw_signal::<Vec<ArtifactInfo>>(vec![]);
+    create_effect(move |_| {
+        let _ = busy.get();
+        let Some(session_id) = active_session.get() else {
+            db_artifacts.set(vec![]);
+            return;
+        };
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "sessionId": session_id })).unwrap();
+            let value = invoke("list_artifacts", arg).await;
+            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ArtifactInfo>>(value) {
+                db_artifacts.set(rows);
+            }
+        });
+    });
     let artifacts = create_memo(move |_| {
         let miss = missing_paths.get();
         let root = project_info
             .get()
             .map(|project| project.root)
             .unwrap_or_default();
-        current_artifacts(&artifacts_all.get(), &root, &miss)
+        current_artifacts(&artifacts_all.get(), &db_artifacts.get(), &root, &miss)
     });
     let notebook_cache = Rc::new(RefCell::new(NotebookCache::new()));
     let notebook_cells = create_memo(move |_| {
@@ -10695,7 +10715,8 @@ fn App() -> impl IntoView {
             runtime_environment_pinned=runtime_environment_pinned
             runtime_environment_position=runtime_environment_position
             contexts=execution_contexts runtimes=runtime_infos
-            runs=run_records active_project=project_info projects=proj_list
+            runs=run_records research_graph=research_graph modal_artifact=modal_artifact
+            active_project=project_info projects=proj_list
             runtime_interpreter_form=runtime_interpreter_form object_states=runtime_object_states
             locale=locale selection_popup=selection_popup
         />
