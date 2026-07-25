@@ -1110,6 +1110,8 @@ pub(crate) struct ProjectSummary {
     #[serde(default)]
     pub(crate) session_count: i64,
     #[serde(default)]
+    pub(crate) artifact_count: i64,
+    #[serde(default)]
     pub(crate) updated_at: i64,
     #[serde(default)]
     pub(crate) running_count: i64,

@@ -761,6 +761,7 @@ struct ProjectSummary {
     description: String,
     workspace_dir: String,
     session_count: i64,
+    artifact_count: i64,
     updated_at: i64,
     running_count: i64,
     needs_you_count: i64,
@@ -771,7 +772,7 @@ struct ProjectSummary {
 async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
     let running = state.running_turns.lock().await.clone();
     let awaiting = state.awaiting_confirm.lock().unwrap().clone();
-    let Some((id, name, ws, _c, upd, cnt, desc)) = state
+    let Some((id, name, ws, _c, upd, cnt, desc, art)) = state
         .store
         .list_projects()
         .await
@@ -784,6 +785,7 @@ async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
             description: String::new(),
             workspace_dir: String::new(),
             session_count: 0,
+            artifact_count: 0,
             updated_at: 0,
             running_count: 0,
             needs_you_count: 0,
@@ -803,6 +805,7 @@ async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
         description: desc,
         workspace_dir: ws,
         session_count: cnt,
+        artifact_count: art,
         updated_at: upd,
         running_count,
         needs_you_count,
