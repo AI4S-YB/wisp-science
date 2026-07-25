@@ -367,7 +367,9 @@ async function previewBytes(payload) {
   if (payload.b64) return base64Bytes(payload.b64);
   const path = String(payload.path || "");
   if (!path) throw new Error("Preview path is empty");
-  const maxBytes = Math.min(Number(payload.maxBytes) || 32 * 1024 * 1024, 32 * 1024 * 1024);
+  // 100 MB matches the backend's local preview ceiling (and the upload cap);
+  // the backend clamps remote reads to 32 MB on its own.
+  const maxBytes = Math.min(Number(payload.maxBytes) || 32 * 1024 * 1024, 100 * 1024 * 1024);
 
   let command = "read_file_bytes";
   let args = { path, maxBytes };

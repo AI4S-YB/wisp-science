@@ -43,6 +43,8 @@ same-file = { workspace = true }
 portable-pty = { workspace = true }
 async-trait = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# TIFF -> PNG transcode for OOXML preview media (browsers cannot decode TIFF).
+image = { version = "0.25", default-features = false, features = ["tiff", "png"] }
 which = "7"
 walkdir = { workspace = true }
 wisp-core = { workspace = true }
