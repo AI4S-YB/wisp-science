@@ -7,8 +7,11 @@ use tauri::{ipc::Response, State, WebviewWindow};
 
 const REMOTE_DIR_PROTOCOL: &[u8] = b"WISP_REMOTE_DIR_V1\0";
 const REMOTE_FILE_PROTOCOL: &[u8] = b"WISP_REMOTE_FILE_V1\0";
-/// Same ceiling as local previews: `read_file` caps at 32 MB.
+/// Remote previews stay capped at 32 MB: the bytes cross an SSH connection.
 const REMOTE_FILE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+/// Local previews match the 100 MB upload cap — a 38 MB journal PDF is routine
+/// and pdf.js renders one page at a time, so memory stays bounded (#485).
+const LOCAL_FILE_MAX_BYTES: u64 = 100 * 1024 * 1024;
 const DEFAULT_FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const OOXML_MAX_ENTRIES: usize = 4096;
 const OOXML_MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
@@ -141,7 +144,7 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
 fn preview_byte_cap(max_bytes: Option<u64>) -> u64 {
     max_bytes
         .unwrap_or(DEFAULT_FILE_MAX_BYTES)
-        .min(REMOTE_FILE_MAX_BYTES)
+        .min(LOCAL_FILE_MAX_BYTES)
 }
 
 fn is_ooxml_path(path: &Path) -> bool {
@@ -268,6 +271,87 @@ pub(super) fn validate_ooxml_archive(bytes: &[u8]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn is_tiff_media_entry(name: &str) -> bool {
+    let lower = name.replace('\\', "/").to_ascii_lowercase();
+    lower.contains("/media/") && (lower.ends_with(".tif") || lower.ends_with(".tiff"))
+}
+
+/// Browsers cannot decode TIFF, so a DOCX whose embedded figures are TIFF
+/// previews as text with blank image boxes. Rewrite the archive in memory:
+/// TIFF media parts are transcoded to PNG under the same entry name (`<img>`
+/// sniffs magic bytes, not extensions) and the content-type map is pointed at
+/// image/png. Any failure returns the original bytes — a missing figure beats
+/// a failed preview. Runs only on archives that actually contain TIFF media.
+pub(super) fn transcode_ooxml_tiff_media(bytes: Vec<u8>) -> Vec<u8> {
+    let has_tiff = zip::ZipArchive::new(Cursor::new(&bytes))
+        .is_ok_and(|archive| archive.file_names().any(is_tiff_media_entry));
+    if !has_tiff {
+        return bytes;
+    }
+    match transcode_ooxml_tiff_media_inner(&bytes) {
+        Ok(rewritten) => rewritten,
+        Err(_) => bytes,
+    }
+}
+
+fn transcode_ooxml_tiff_media_inner(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::with_capacity(bytes.len())));
+    let options = zip::write::SimpleFileOptions::default();
+    for index in 0..archive.len() {
+        let name = archive
+            .by_index_raw(index)
+            .map_err(|error| error.to_string())?
+            .name()
+            .to_string();
+        if is_tiff_media_entry(&name) {
+            let mut tiff = Vec::new();
+            archive
+                .by_index(index)
+                .map_err(|error| error.to_string())?
+                .read_to_end(&mut tiff)
+                .map_err(|error| error.to_string())?;
+            match tiff_to_png(&tiff) {
+                Ok(png) => {
+                    out.start_file(name, options).map_err(|e| e.to_string())?;
+                    std::io::Write::write_all(&mut out, &png).map_err(|e| e.to_string())?;
+                }
+                // Undecodable TIFF (exotic colorspace/compression): keep the
+                // original part so the rest of the document still previews.
+                Err(_) => {
+                    let raw = archive.by_index_raw(index).map_err(|e| e.to_string())?;
+                    out.raw_copy_file(raw).map_err(|e| e.to_string())?;
+                }
+            }
+        } else if name == "[Content_Types].xml" {
+            let mut xml = String::new();
+            archive
+                .by_index(index)
+                .map_err(|error| error.to_string())?
+                .read_to_string(&mut xml)
+                .map_err(|error| error.to_string())?;
+            let patched = xml.replace("image/tiff", "image/png");
+            out.start_file(name, options).map_err(|e| e.to_string())?;
+            std::io::Write::write_all(&mut out, patched.as_bytes()).map_err(|e| e.to_string())?;
+        } else {
+            let raw = archive.by_index_raw(index).map_err(|e| e.to_string())?;
+            out.raw_copy_file(raw).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(out.finish().map_err(|e| e.to_string())?.into_inner())
+}
+
+fn tiff_to_png(tiff: &[u8]) -> Result<Vec<u8>, String> {
+    let decoded = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff)
+        .map_err(|error| error.to_string())?;
+    let mut png = Vec::new();
+    decoded
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|error| error.to_string())?;
+    Ok(png)
 }
 
 fn is_text_mime(mime: &str) -> bool {
@@ -731,7 +815,7 @@ fn read_remote_file_bytes_with_runner(
     runner: &mut dyn RemoteRunner,
 ) -> Result<Vec<u8>, String> {
     crate::ssh_hosts::require_managed_ssh_ready(context)?;
-    let cap = preview_byte_cap(max_bytes);
+    let cap = preview_byte_cap(max_bytes).min(REMOTE_FILE_MAX_BYTES);
     let command = build_remote_file_command(context, path, cap)?;
     let output = match runner.run(&command) {
         Ok(output) => output,
@@ -758,12 +842,13 @@ fn read_remote_file_bytes_with_runner(
         return Err(error);
     }
     crate::ssh_guard::record_success(&context.id);
-    let bytes = protocol_payload(&output.stdout, REMOTE_FILE_PROTOCOL)?.to_vec();
+    let mut bytes = protocol_payload(&output.stdout, REMOTE_FILE_PROTOCOL)?.to_vec();
     if bytes.len() as u64 > cap {
         return Err(format!("remote file exceeds {cap} byte limit"));
     }
     if is_ooxml_path(Path::new(path)) {
         validate_ooxml_archive(&bytes)?;
+        bytes = transcode_ooxml_tiff_media(bytes);
     }
     Ok(bytes)
 }
@@ -874,9 +959,10 @@ pub(super) fn read_file_bytes_at(
     if len > cap {
         return Err(format!("file exceeds {cap} byte limit"));
     }
-    let bytes = std::fs::read(&real).map_err(|e| format!("{e}"))?;
+    let mut bytes = std::fs::read(&real).map_err(|e| format!("{e}"))?;
     if is_ooxml_path(&real) {
         validate_ooxml_archive(&bytes)?;
+        bytes = transcode_ooxml_tiff_media(bytes);
     }
     Ok(bytes)
 }
@@ -1247,6 +1333,67 @@ mod tests {
             .unwrap_err()
             .contains("invalid OOXML archive"));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn ooxml_tiff_media_transcodes_to_png() {
+        let mut tiff = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([255, 0, 0])))
+            .write_to(&mut Cursor::new(&mut tiff), image::ImageFormat::Tiff)
+            .unwrap();
+        let bytes = test_ooxml(&[
+            (
+                "[Content_Types].xml",
+                br#"<Types><Default Extension="tiff" ContentType="image/tiff"/></Types>"#,
+            ),
+            ("word/document.xml", b"<document/>"),
+            ("word/media/image1.tiff", &tiff),
+        ]);
+        let rewritten = transcode_ooxml_tiff_media(bytes.clone());
+        assert_ne!(rewritten, bytes);
+        let mut archive = zip::ZipArchive::new(Cursor::new(&rewritten)).unwrap();
+        let mut media = Vec::new();
+        archive
+            .by_name("word/media/image1.tiff")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert!(media.starts_with(b"\x89PNG"));
+        let mut types = String::new();
+        archive
+            .by_name("[Content_Types].xml")
+            .unwrap()
+            .read_to_string(&mut types)
+            .unwrap();
+        assert!(types.contains("image/png"));
+        assert!(!types.contains("image/tiff"));
+        let mut doc = Vec::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_end(&mut doc)
+            .unwrap();
+        assert_eq!(doc, b"<document/>");
+    }
+
+    #[test]
+    fn ooxml_without_tiff_media_passes_through_untouched() {
+        let plain = test_ooxml(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("word/media/image1.png", b"\x89PNGnot-really"),
+        ]);
+        assert_eq!(transcode_ooxml_tiff_media(plain.clone()), plain);
+        // A TIFF that fails to decode keeps its original bytes.
+        let broken = test_ooxml(&[("word/media/image1.tiff", b"II*\0garbage")]);
+        let rewritten = transcode_ooxml_tiff_media(broken);
+        let mut archive = zip::ZipArchive::new(Cursor::new(&rewritten)).unwrap();
+        let mut media = Vec::new();
+        archive
+            .by_name("word/media/image1.tiff")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, b"II*\0garbage");
     }
 
     #[test]

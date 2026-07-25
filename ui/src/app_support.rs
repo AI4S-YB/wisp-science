@@ -7423,9 +7423,11 @@ pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
             // string -> decoded ArrayBuffer copies in the WebView.
             if matches!(kind.as_str(), "pdf" | "docx" | "xlsx" | "pptx") {
                 let payload = match kind.as_str() {
+                    // 100 MB: journal PDFs with embedded figures routinely pass
+                    // 32 MB; pdf.js renders page-at-a-time so memory is bounded.
                     "pdf" => serde_json::json!({
                         "path": path,
-                        "maxBytes": 32 * 1024 * 1024,
+                        "maxBytes": 100 * 1024 * 1024,
                         "loading": t(loc, "loading"),
                         "error": t(loc, "preview.pdf_error"),
                         "pageLabel": t(loc, "preview.pdf_page"),
