@@ -6132,6 +6132,7 @@ fn App() -> impl IntoView {
             "search" => command_palette_open.set(true),
             "commands" => action_palette_open.set(true),
             "projects" => show_projects.set(true),
+            "library" => show_library.update(|show| *show = !*show),
             "settings" => {
                 show_settings.set(true);
                 settings_section.set("models".into());

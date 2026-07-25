@@ -9964,6 +9964,13 @@ pub(super) fn ActionPalette(
                 "",
             ),
             (
+                "library",
+                "star",
+                "command.library",
+                navigate.clone(),
+                "",
+            ),
+            (
                 "toggle-sidebar",
                 "panel",
                 "command.toggle_sidebar",
