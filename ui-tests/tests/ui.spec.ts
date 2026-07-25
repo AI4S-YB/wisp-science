@@ -5263,6 +5263,85 @@ test("a starred figure keeps its image and generating code", async ({ page }) =>
   await expect(page.locator('.library-card[data-library-kind="figure"]')).toHaveCount(0);
 });
 
+test("a starred code item edits into a new version and re-runs from the composer (#474)", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("STEPSDEMO");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Notebook (2)", exact: true }).click();
+  await page.locator(".notebook-cell").first().getByRole("button", { name: "Add to library" }).click();
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.locator('.library-card[data-library-kind="code"] .library-card-main').click();
+  const detail = page.locator(".library-detail");
+  await expect(detail.locator(".library-code-head h3")).toHaveText("v1");
+
+  await detail.getByRole("button", { name: "Edit code" }).click();
+  await detail.locator(".library-edit-area").fill("zcat counts.txt.gz | head -20");
+  await detail.getByRole("button", { name: "Save as new version" }).click();
+
+  // The edit appends v2; v1 keeps the starred snapshot verbatim.
+  await expect(detail.locator(".library-code-head h3")).toHaveText("v2");
+  await expect(detail.locator(".rp-code")).toContainText("head -20");
+  await detail.locator(".library-versions button", { hasText: "Original" }).click();
+  await expect(detail.locator(".library-code-head h3")).toHaveText("v1");
+  await expect(detail.locator(".rp-code")).toContainText("zcat counts.txt.gz");
+  await expect(detail.locator(".rp-code")).not.toContainText("head -20");
+
+  // "Insert into chat" pre-fills the composer with the chosen version — the
+  // request carries the item id + version number and is never auto-sent.
+  await detail.locator(".library-versions button", { hasText: "v2" }).click();
+  await detail.getByRole("button", { name: "Insert into chat" }).click();
+  await expect(page.getByTestId("library-screen")).toHaveCount(0);
+  await expect(composer(page)).toHaveValue(/v2/);
+  await expect(composer(page)).toHaveValue(/library item library-1/);
+  await expect(composer(page)).toHaveValue(/head -20/);
+});
+
+test("a starred figure's generating code is editable as a new version (#474)", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make a volcano plot volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
+  const modal = page.locator(".artifact-modal");
+  await modal.getByRole("button", { name: "Add to library" }).click();
+  await modal.getByRole("button", { name: "Close panel" }).click();
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.locator('.library-card[data-library-kind="figure"] .library-card-main').click();
+  const code = page.locator(".library-generating-code");
+  await code.getByRole("button", { name: "Edit code" }).click();
+  await code.locator(".library-edit-area").fill("plt.savefig('volcano.svg')");
+  await code.getByRole("button", { name: "Save as new version" }).click();
+
+  await expect(code.locator(".library-code-head h3")).toHaveText("v2");
+  await expect(code.locator(".rp-code")).toContainText("volcano.svg");
+  // The starred image itself is untouched by a code edit.
+  await expect(page.locator(".library-detail .library-figure img")).toBeVisible();
+  await code.locator(".library-versions button", { hasText: "Original" }).click();
+  await expect(code.locator(".rp-code")).toContainText("import matplotlib");
+});
+
+test("the artifact modal edits provenance code into a composer re-run (#474)", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make a volcano plot volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
+  const modal = page.locator(".artifact-modal");
+  await page.locator(".am-tab", { hasText: "Code" }).click();
+  await modal.getByRole("button", { name: "Edit code and re-run" }).click();
+  await modal.locator(".am-edit-area").fill("plt.savefig('volcano.png', dpi=300)");
+  await modal.getByRole("button", { name: "Insert into chat" }).click();
+
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+  await expect(composer(page)).toHaveValue(/dpi=300/);
+  await expect(composer(page)).toHaveValue(/volcano\.png/);
+});
+
 test("the selection popup saves a highlight into the right pane and library", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("STEPSDEMO");

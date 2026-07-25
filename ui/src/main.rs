@@ -6367,6 +6367,12 @@ fn App() -> impl IntoView {
                 on_close=Callback::new(move |_| show_library.set(false))
                 on_open_source=palette_open_session
                 on_changed=refresh_library_items
+                on_insert=Callback::new(move |text: String| {
+                    input.set(text);
+                    show_library.set(false);
+                    focus_composer();
+                })
+                can_insert=Signal::derive(move || !show_projects.get())
             />
         })}
         {move || ssh_connectivity_modal.get().map(|modal| {

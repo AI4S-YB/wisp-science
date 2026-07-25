@@ -671,6 +671,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     { id: "art-markdown", name: "analysis-report.md", kind: "text/markdown", path: "analysis-report.md", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
   ];
   let libraryItems: any[] = [];
+  const libraryVersions: Record<string, any[]> = {};
 
   (window as any).__TAURI__ = {
     core: {
@@ -765,9 +766,44 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             if (!item) throw new Error("Library item not found");
             return item;
           }
+          case "list_library_item_versions": {
+            const item = libraryItems.find((entry) => entry.id === arg("id"));
+            if (!item) return [];
+            const original = {
+              id: item.id,
+              item_id: item.id,
+              version_number: 1,
+              parent_version_id: null,
+              language: item.language,
+              code: item.code,
+              origin: "original",
+              created_at: item.created_at,
+            };
+            return [original, ...(libraryVersions[item.id] ?? [])];
+          }
+          case "update_library_code": {
+            const item = libraryItems.find((entry) => entry.id === arg("id"));
+            if (!item) throw new Error("Library item not found");
+            if (item.kind === "text") throw new Error("Text excerpts cannot be edited");
+            const edits = (libraryVersions[item.id] ??= []);
+            const head = edits[edits.length - 1];
+            const version = {
+              id: `library-version-${item.id}-${edits.length + 2}`,
+              item_id: item.id,
+              version_number: (head?.version_number ?? 1) + 1,
+              parent_version_id: head?.id ?? item.id,
+              language: arg("language") ?? head?.language ?? item.language,
+              code: String(arg("code") ?? ""),
+              origin: "edit",
+              created_at: Math.floor(Date.now() / 1000),
+            };
+            edits.push(version);
+            return version;
+          }
           case "delete_library_item": {
             const before = libraryItems.length;
             libraryItems = libraryItems.filter((entry) => entry.id !== arg("id"));
+            delete libraryVersions[String(arg("id"))];
             return libraryItems.length !== before;
           }
           case "list_demos":
