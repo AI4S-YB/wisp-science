@@ -300,6 +300,8 @@
   background: var(--bg-panel); border: 0; padding: 10px 15px;
   border-radius: 18px 18px 6px 18px; box-shadow: inset 0 0 0 1px var(--border);
 }
+/* 长消息默认截断（截断在 Rust 侧做，避免 line-clamp 在 padding 区漏出半行） */
+.msg.user .body-toggle { align-self: flex-end; margin-top: -4px; opacity: 1; }
 .msg.user.queued .role { color: var(--clay); }
 .msg.user.queued .body { border-style: dashed; color: var(--text-muted); background: color-mix(in srgb, var(--bg-panel) 70%, var(--clay) 6%); }
 .msg.user.outline-target .body { box-shadow: inset 0 0 0 1px var(--clay), 0 0 0 3px var(--clay-soft); }

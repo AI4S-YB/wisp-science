@@ -8208,6 +8208,17 @@ pub(super) fn UserMessage(
         || !presentation.projects.is_empty()
         || !presentation.skills.is_empty();
     let has_body = !body.is_empty();
+    // 长消息先折叠，"展开全部"再看全文
+    let is_long = body.lines().count() > 12 || body.chars().count() > 600;
+    let (expanded, set_expanded) = create_signal(false);
+    let body_short = is_long.then(|| {
+        let head = body.lines().take(12).collect::<Vec<_>>().join("\n");
+        let head = match head.char_indices().nth(600) {
+            Some((cut, _)) => head[..cut].to_string(),
+            None => head,
+        };
+        format!("{}…", head.trim_end())
+    });
     let image_cards = images
         .into_iter()
         .map(|path| {
@@ -8274,7 +8285,19 @@ pub(super) fn UserMessage(
             {has_images.then(|| view! { <div class="user-attachment-images">{image_cards}</div> })}
             {has_files.then(|| view! { <div class="user-attachment-files">{file_cards}</div> })}
             {has_context.then(|| view! { <div class="user-context-cards">{context_cards}</div> })}
-            {has_body.then(|| view! { <div class="body">{body}</div> })}
+            {has_body.then(|| view! {
+                <div class="body">{move || match (&body_short, expanded.get()) {
+                    (Some(short), false) => short.clone(),
+                    _ => body.clone(),
+                }}</div>
+            })}
+            {(has_body && is_long).then(|| view! {
+                <button
+                    type="button"
+                    class="msg-btn body-toggle"
+                    on:click=move |_| set_expanded.update(|v| *v = !*v)
+                >{move || t(locale.get(), if expanded.get() { "msg.show_less" } else { "msg.show_all" })}</button>
+            })}
             <div class="msg-actions">
                 <button
                     type="button"
