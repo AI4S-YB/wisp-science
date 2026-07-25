@@ -14,7 +14,7 @@ const TRUST_EDGES_SETTING: &str = "ssh_trust_edges_v1";
 const PUBLIC_KEY_MARKER: &str = "__WISP_PUBLIC_KEY__:";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SshTrustEdge {
+pub(crate) struct SshTrustEdge {
     source_context_id: String,
     destination_context_id: String,
     destination_target: String,
@@ -488,7 +488,7 @@ fn verify_trust_payload(
     )
 }
 
-async fn load_trust_edges(store: &wisp_store::Store) -> Vec<SshTrustEdge> {
+pub(crate) async fn load_trust_edges(store: &wisp_store::Store) -> Vec<SshTrustEdge> {
     store
         .get_setting(TRUST_EDGES_SETTING)
         .await
@@ -512,6 +512,155 @@ async fn save_trust_edge(store: &wisp_store::Store, edge: SshTrustEdge) -> Resul
         )
         .await
         .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RevokeTrustResponse {
+    edges: Vec<SshTrustEdge>,
+    cleanup_error: Option<String>,
+}
+
+pub(crate) async fn revoke_trust_edge(
+    store: &wisp_store::Store,
+    manager: &RunManager,
+    source_context_id: &str,
+    destination_context_id: &str,
+) -> Result<RevokeTrustResponse, String> {
+    let mut edges = load_trust_edges(store).await;
+    let Some(index) = edges.iter().position(|edge| {
+        edge.source_context_id == source_context_id
+            && edge.destination_context_id == destination_context_id
+    }) else {
+        return Ok(RevokeTrustResponse {
+            edges,
+            cleanup_error: None,
+        });
+    };
+    let edge = edges.remove(index);
+    store
+        .set_setting(
+            TRUST_EDGES_SETTING,
+            &serde_json::to_string(&edges).map_err(|error| error.to_string())?,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    // The record is what authorizes the app's direct route, so it goes first;
+    // removing the installed key material is best effort — an unreachable or
+    // already-deleted host must never block revocation. Failures are reported
+    // back to the user, not treated as fatal.
+    let cleanup_error = if edge.managed {
+        remove_managed_key(store, manager.runner.as_ref(), &edge)
+            .await
+            .err()
+    } else {
+        None
+    };
+    Ok(RevokeTrustResponse {
+        edges,
+        cleanup_error,
+    })
+}
+
+fn context_alias(context_id: &str) -> &str {
+    context_id.strip_prefix("ssh:").unwrap_or(context_id)
+}
+
+async fn ssh_connection_for(
+    store: &wisp_store::Store,
+    context_id: &str,
+) -> Result<crate::ssh_hosts::SshConnection, String> {
+    let context = store
+        .get_execution_context(context_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("execution context no longer exists: {context_id}"))?;
+    crate::ssh_hosts::SshConnection::from_execution_context(&context)
+}
+
+async fn best_effort_ssh(
+    runner: &dyn super::RunCommandRunner,
+    connection: &crate::ssh_hosts::SshConnection,
+    label: &str,
+    payload: String,
+    errors: &mut Vec<String>,
+) {
+    let result = match ssh_script_command(connection, label, payload) {
+        Ok(command) => {
+            checked_output(label, runner.run(command, REMOTE_RPC_TIMEOUT).await).map(|_| ())
+        }
+        Err(error) => Err(error),
+    };
+    if let Err(error) = result {
+        errors.push(error);
+    }
+}
+
+async fn remove_managed_key(
+    store: &wisp_store::Store,
+    runner: &dyn super::RunCommandRunner,
+    edge: &SshTrustEdge,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let source = ssh_connection_for(store, &edge.source_context_id).await;
+    let source_alias = source
+        .as_ref()
+        .map(|connection| connection.alias.clone())
+        .unwrap_or_else(|_| context_alias(&edge.source_context_id).to_string());
+    match ssh_connection_for(store, &edge.destination_context_id).await {
+        Ok(connection) => {
+            let marker = format!("wisp:{source_alias}:{}", connection.alias);
+            best_effort_ssh(
+                runner,
+                &connection,
+                "remove destination transfer key",
+                remove_public_key_payload(&marker),
+                &mut errors,
+            )
+            .await;
+        }
+        Err(error) => errors.push(format!("destination: {error}")),
+    }
+    if let Some(key_path) = edge.key_path.as_deref() {
+        match &source {
+            Ok(connection) => {
+                best_effort_ssh(
+                    runner,
+                    connection,
+                    "remove source transfer key",
+                    remove_key_file_payload(key_path),
+                    &mut errors,
+                )
+                .await;
+            }
+            Err(error) => errors.push(format!("source: {error}")),
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Reverse of `install_public_key_payload`: drop the authorized_keys line
+/// carrying our marker, leaving every other key untouched.
+fn remove_public_key_payload(marker: &str) -> String {
+    let marker = shell_single_quote(&format!(" {marker}"));
+    format!(
+        r#"set -eu
+auth="$HOME/.ssh/authorized_keys"
+if [ -f "$auth" ]; then
+  tmp="$auth.wisp.$$"
+  grep -Fv -- {marker} "$auth" > "$tmp" || true
+  chmod 600 "$tmp"
+  mv "$tmp" "$auth"
+fi
+"#
+    )
+}
+
+fn remove_key_file_payload(key_path: &str) -> String {
+    format!("set -eu\nrm -f \"$HOME/{key_path}\" \"$HOME/{key_path}.pub\"\n")
 }
 
 fn validate_remote_path(label: &str, path: &str) -> Result<(), String> {
@@ -1595,6 +1744,125 @@ mod tests {
         assert!(verify.contains("$HOME/.ssh/wisp-b-ed25519"));
         drop(commands);
         assert_eq!(load_trust_edges(&store).await, vec![edge]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn revoke_removes_the_record_and_cleans_managed_keys_best_effort() {
+        let (root, store) = test_store().await;
+        let managed = SshTrustEdge {
+            source_context_id: "ssh:a".into(),
+            destination_context_id: "ssh:b".into(),
+            destination_target: "bob@b.example".into(),
+            destination_port: None,
+            key_path: Some(".ssh/wisp-b-ed25519".into()),
+            managed: true,
+            verified_at: 1,
+        };
+        let verified = SshTrustEdge {
+            source_context_id: "ssh:b".into(),
+            destination_context_id: "ssh:a".into(),
+            destination_target: "alice@a.example".into(),
+            destination_port: None,
+            key_path: None,
+            managed: false,
+            verified_at: 2,
+        };
+        save_trust_edge(&store, managed.clone()).await.unwrap();
+        save_trust_edge(&store, verified.clone()).await.unwrap();
+
+        let ok = || {
+            Ok(RunCommandOutput {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        };
+        let runner = Arc::new(RecordingRunner {
+            outputs: StdMutex::new(vec![ok(), ok()].into()),
+            commands: StdMutex::new(Vec::new()),
+        });
+        let manager = RunManager::with_runner(runner.clone());
+
+        let response = revoke_trust_edge(&store, &manager, "ssh:a", "ssh:b")
+            .await
+            .unwrap();
+        assert_eq!(response.edges, vec![verified.clone()]);
+        assert_eq!(response.cleanup_error, None);
+        assert_eq!(load_trust_edges(&store).await, vec![verified.clone()]);
+        {
+            let commands = runner.commands.lock().unwrap();
+            assert_eq!(
+                commands
+                    .iter()
+                    .map(|command| command.script.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "remove destination transfer key",
+                    "remove source transfer key"
+                ]
+            );
+            let destination = commands[0].stdin.as_deref().unwrap();
+            assert!(destination.contains("grep -Fv -- ' wisp:a:b'"));
+            assert!(destination.contains("authorized_keys"));
+            let source = commands[1].stdin.as_deref().unwrap();
+            assert!(source.contains("rm -f \"$HOME/.ssh/wisp-b-ed25519\""));
+        }
+
+        // Unmanaged edge: record-only removal, no SSH round-trips.
+        let response = revoke_trust_edge(&store, &manager, "ssh:b", "ssh:a")
+            .await
+            .unwrap();
+        assert!(response.edges.is_empty());
+        assert_eq!(response.cleanup_error, None);
+        assert!(load_trust_edges(&store).await.is_empty());
+        assert_eq!(runner.commands.lock().unwrap().len(), 2);
+
+        // Unknown pair: idempotent no-op.
+        let response = revoke_trust_edge(&store, &manager, "ssh:a", "ssh:b")
+            .await
+            .unwrap();
+        assert!(response.edges.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn revoke_still_removes_the_record_when_cleanup_fails() {
+        let (root, store) = test_store().await;
+        let edge = SshTrustEdge {
+            source_context_id: "ssh:a".into(),
+            destination_context_id: "ssh:gone".into(),
+            destination_target: "bob@gone.example".into(),
+            destination_port: None,
+            key_path: Some(".ssh/wisp-gone-ed25519".into()),
+            managed: true,
+            verified_at: 1,
+        };
+        save_trust_edge(&store, edge).await.unwrap();
+        let runner = Arc::new(RecordingRunner {
+            outputs: StdMutex::new(
+                vec![Ok(RunCommandOutput {
+                    exit_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })]
+                .into(),
+            ),
+            commands: StdMutex::new(Vec::new()),
+        });
+        let manager = RunManager::with_runner(runner.clone());
+        let response = revoke_trust_edge(&store, &manager, "ssh:a", "ssh:gone")
+            .await
+            .unwrap();
+        assert!(response.edges.is_empty());
+        assert!(load_trust_edges(&store).await.is_empty());
+        // Destination context is gone → reported, while the source key file
+        // cleanup still ran.
+        let error = response.cleanup_error.unwrap();
+        assert!(error.contains("destination"), "{error}");
+        let commands = runner.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].script, "remove source transfer key");
         let _ = std::fs::remove_dir_all(root);
     }
 

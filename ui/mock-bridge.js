@@ -130,6 +130,12 @@
   let nextCustomCredential = 1;
   // frame_id -> enabled execution context ids, mirroring session_execution_contexts.
   const sessionContexts = {};
+  // Agent-created SSH trust edges (ssh_trust_edges_v1). One edge whose
+  // destination context no longer exists, to exercise the orphan rendering.
+  const mockTrustEdges = [
+    { source_context_id: "ssh:cpu1", destination_context_id: "ssh:gpu2", destination_target: "researcher@gpu2.lab", destination_port: 22, key_path: ".ssh/wisp-gpu2-ed25519", managed: true, verified_at: 1719900000 },
+    { source_context_id: "ssh:gpu2", destination_context_id: "ssh:cpu1", destination_target: "researcher@cpu1.lab", destination_port: null, key_path: null, managed: false, verified_at: 1719800000 },
+  ];
   const mockChannels = {
     feishu_enabled: false,
     feishu_bound: false,
@@ -403,6 +409,21 @@
             ];
           case "list_ssh_hosts":
             return [{ alias: "cpu1", user: "researcher", port: 22, identity_file: null, notes: "Mock CPU host" }];
+          case "list_ssh_trust_edges":
+            return [...mockTrustEdges];
+          case "revoke_ssh_trust_edge": {
+            const src = String(argValue(args, "sourceContextId") ?? "");
+            const dst = String(argValue(args, "destinationContextId") ?? "");
+            const index = mockTrustEdges.findIndex((edge) => edge.source_context_id === src && edge.destination_context_id === dst);
+            let cleanup_error = null;
+            if (index >= 0) {
+              cleanup_error = mockTrustEdges[index].managed && dst === "ssh:gpu2"
+                ? "destination: execution context no longer exists: ssh:gpu2"
+                : null;
+              mockTrustEdges.splice(index, 1);
+            }
+            return { edges: [...mockTrustEdges], cleanup_error };
+          }
           case "list_execution_contexts":
             return [
               { id: "local", kind: "local", label: "Local", config_json: "{}", capabilities_json: "{}", last_probe_at: null, last_probe_status: null, last_probe_error: null, created_at: 1, updated_at: 1 },

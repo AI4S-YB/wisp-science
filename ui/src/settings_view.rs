@@ -46,6 +46,10 @@ impl DeleteConfirm {
     }
 }
 
+fn trust_alias(context_id: &str) -> &str {
+    context_id.strip_prefix("ssh:").unwrap_or(context_id)
+}
+
 fn valid_sha256(value: &str) -> bool {
     let value = value.trim();
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -404,6 +408,23 @@ pub(super) fn SettingsView(
     // Model-list drag-reorder state (local — no need to hoist to the app shell).
     let drag_model = create_rw_signal(None::<String>);
     let drop_model = create_rw_signal(None::<String>);
+    // Agent-created SSH trust edges (`configure_ssh_trust`), shown under the
+    // hosts they involve so the user can see and revoke them. Reloaded each
+    // time the Environments section opens.
+    let ssh_trust_edges = create_rw_signal(Vec::<SshTrustEdge>::new());
+    let trust_cleanup_error = create_rw_signal(None::<String>);
+    create_effect(move |_| {
+        if show_settings.get() && settings_section.get() == "environments" {
+            spawn_local(async move {
+                if let Ok(value) = invoke_checked("list_ssh_trust_edges", JsValue::UNDEFINED).await
+                {
+                    if let Ok(edges) = serde_wasm_bindgen::from_value::<Vec<SshTrustEdge>>(value) {
+                        ssh_trust_edges.set(edges);
+                    }
+                }
+            });
+        }
+    });
     create_effect(move |_| {
         if joining.get() {
             focus_element_soon("sync-device-code");
@@ -741,6 +762,11 @@ pub(super) fn SettingsView(
                 {move || (settings_section.get() == "environments").then(|| view! {
                     <div class="settings-pane settings-pane-list environment-settings-pane">
                         <p class="settings-note">{move || t(locale.get(), "environments.hint")}</p>
+                        {move || trust_cleanup_error.get().map(|error| view! {
+                            <div class="settings-status fail" role="alert">
+                                {format!("{}: {error}", t(locale.get(), "environments.trust_cleanup_failed"))}
+                            </div>
+                        })}
                         <div class="settings-toolbar environment-settings-actions">
                             <button type="button" class="primary" on:click=move |_| open_add_host.call(())>
                                 {compose_icon("plus")}
@@ -760,10 +786,18 @@ pub(super) fn SettingsView(
                             {move || {
                                 let contexts = execution_contexts.get();
                                 let hosts = ssh_hosts.get();
+                                let trust_edges = ssh_trust_edges.get();
                                 if contexts.is_empty() {
                                     return view! { <div class="settings-list-empty">{t(locale.get(), "environments.empty")}</div> }.into_view();
                                 }
                                 contexts.into_iter().map(|context| {
+                                    // An edge involves two hosts; list it under both so it
+                                    // stays visible even after one endpoint is deleted.
+                                    let context_trust_edges = trust_edges.iter()
+                                        .filter(|edge| edge.source_context_id == context.id
+                                            || edge.destination_context_id == context.id)
+                                        .cloned()
+                                        .collect::<Vec<_>>();
                                     let context_id = context.id.clone();
                                     let title = if context.kind == "local" {
                                         t(locale.get(), "compute.local").to_string()
@@ -852,6 +886,66 @@ pub(super) fn SettingsView(
                                                 </span>
                                             </div>
                                         </div>
+                                        {(!context_trust_edges.is_empty()).then(|| view! {
+                                            <div class="environment-trust-edges">
+                                                {context_trust_edges.into_iter().map(|edge| {
+                                                    let title = format!("{} → {}",
+                                                        trust_alias(&edge.source_context_id),
+                                                        trust_alias(&edge.destination_context_id));
+                                                    let target = match edge.destination_port {
+                                                        Some(port) => format!("{}:{port}", edge.destination_target),
+                                                        None => edge.destination_target.clone(),
+                                                    };
+                                                    let date = js_sys::Date::new(&JsValue::from_f64(edge.verified_at as f64 * 1000.0))
+                                                        .to_locale_date_string(
+                                                            if locale.get() == Locale::Zh { "zh-CN" } else { "en-US" },
+                                                            &JsValue::UNDEFINED,
+                                                        )
+                                                        .as_string()
+                                                        .unwrap_or_default();
+                                                    let kind_key = if edge.managed {
+                                                        "environments.trust_managed"
+                                                    } else {
+                                                        "environments.trust_verified"
+                                                    };
+                                                    let sub = format!("{} · {target} · {date}", t(locale.get(), kind_key));
+                                                    let source = edge.source_context_id.clone();
+                                                    let destination = edge.destination_context_id.clone();
+                                                    view! {
+                                                        <div class="environment-trust-edge">
+                                                            <span class="environment-trust-edge-title">{title}</span>
+                                                            <span class="environment-trust-edge-sub">{sub}</span>
+                                                            <button type="button" class="environment-trust-revoke"
+                                                                title=move || t(locale.get(), "environments.trust_revoke")
+                                                                aria-label=move || t(locale.get(), "environments.trust_revoke")
+                                                                on:click=move |_| {
+                                                                    let source = source.clone();
+                                                                    let destination = destination.clone();
+                                                                    spawn_local(async move {
+                                                                        let args = to_value(&serde_json::json!({
+                                                                            "sourceContextId": source,
+                                                                            "destinationContextId": destination,
+                                                                        })).unwrap();
+                                                                        match invoke_checked("revoke_ssh_trust_edge", args).await {
+                                                                            Ok(value) => {
+                                                                                if let Ok(response) = serde_wasm_bindgen::from_value::<RevokeTrustResponse>(value) {
+                                                                                    ssh_trust_edges.set(response.edges);
+                                                                                    trust_cleanup_error.set(response.cleanup_error);
+                                                                                }
+                                                                            }
+                                                                            Err(error) => trust_cleanup_error.set(Some(
+                                                                                localize_backend(locale.get_untracked(), &js_error_text(error)),
+                                                                            )),
+                                                                        }
+                                                                    });
+                                                                }>
+                                                                {move || t(locale.get(), "environments.trust_revoke")}
+                                                            </button>
+                                                        </div>
+                                                    }
+                                                }).collect_view()}
+                                            </div>
+                                        })}
                                     }.into_view()
                                 }).collect_view()
                             }}
