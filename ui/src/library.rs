@@ -1,7 +1,7 @@
 use crate::app_support::{compose_icon, copy_text, RpCodeView};
 use crate::bindings::{invoke, invoke_checked, reveal_saved_mark};
 use crate::dto::{LibraryItem, LibraryItemDetail, LibraryItemVersion};
-use crate::i18n::{t, Locale};
+use crate::i18n::{t, tf, Locale};
 use crate::text::event_target_value;
 use leptos::*;
 use serde_wasm_bindgen::to_value;
@@ -72,6 +72,10 @@ pub(super) fn LibraryScreen(
     on_close: Callback<()>,
     on_open_source: Callback<(String, String)>,
     on_changed: Callback<()>,
+    /// Drop a "re-run this version" request into the session composer (#474).
+    on_insert: Callback<String>,
+    /// False on the Projects landing, where there is no composer to fill.
+    can_insert: Signal<bool>,
 ) -> impl IntoView {
     let query = create_rw_signal(String::new());
     let filter = create_rw_signal("all");
@@ -210,7 +214,6 @@ pub(super) fn LibraryScreen(
                 let delete_id = item.id.clone();
                 let project_id = item.source_project_id.clone();
                 let session_id = item.source_session_id.clone();
-                let code_copy = item.code.clone();
                 let image_src = detail.base64.map(|base64| format!(
                     "data:{};base64,{base64}",
                     item.content_type.as_deref().unwrap_or("application/octet-stream")
@@ -246,18 +249,14 @@ pub(super) fn LibraryScreen(
                             } else if item.kind == "text" {
                                 view! { <div class="library-text">{item.code.clone()}</div> }.into_view()
                             } else {
-                                view! { <CodeVersionPanel locale=locale item=item.clone() /> }.into_view()
+                                view! { <CodeVersionPanel locale=locale item=item.clone()
+                                    on_insert=on_insert can_insert=can_insert /> }.into_view()
                             }}
                             {(is_figure && !item.code.is_empty()).then(|| view! {
                                 <section class="library-generating-code">
-                                    <div class="library-code-head">
-                                        <h3>{move || t(locale.get(), "library.generating_code")}</h3>
-                                        <button type="button" class="icon-btn"
-                                            title=move || t(locale.get(), "tool.copy_code")
-                                            aria-label=move || t(locale.get(), "tool.copy_code")
-                                            on:click=move |_| copy_text(code_copy.clone())>{compose_icon("copy")}</button>
-                                    </div>
-                                    <RpCodeView lang=item.language.clone().unwrap_or_default() body=item.code.clone() />
+                                    <h3>{move || t(locale.get(), "library.generating_code")}</h3>
+                                    <CodeVersionPanel locale=locale item=item.clone()
+                                        on_insert=on_insert can_insert=can_insert />
                                 </section>
                             })}
                             <footer>
@@ -280,7 +279,13 @@ pub(super) fn LibraryScreen(
 /// version and never rewrites history. Shows the newest version by default
 /// with read-only switching to older ones.
 #[component]
-fn CodeVersionPanel(locale: ReadSignal<Locale>, item: LibraryItem) -> impl IntoView {
+fn CodeVersionPanel(
+    locale: ReadSignal<Locale>,
+    item: LibraryItem,
+    on_insert: Callback<String>,
+    can_insert: Signal<bool>,
+) -> impl IntoView {
+    let title = item.title.clone();
     let seed = LibraryItemVersion {
         id: item.id.clone(),
         item_id: item.id.clone(),
@@ -395,10 +400,27 @@ fn CodeVersionPanel(locale: ReadSignal<Locale>, item: LibraryItem) -> impl IntoV
                 } else {
                     let copy_code = current.code.clone();
                     let draft_seed = current.code.clone();
+                    // The rerun request carries item id + version number so the
+                    // reply can be traced back to the exact starred version (#474).
+                    let insert_message = tf(
+                        locale.get_untracked(),
+                        "library.insert_prompt",
+                        &[
+                            ("title", &title),
+                            ("version", &current.version_number.to_string()),
+                            ("id", &current.item_id),
+                        ],
+                    ) + &format!("\n```{}\n{}\n```", language, current.code.trim_end());
                     view! {
                         <div class="library-code-head">
                             <h3>{format!("v{}", current.version_number)}</h3>
                             <div class="library-detail-actions">
+                                {can_insert.get().then(|| view! {
+                                    <button type="button" class="btn-ghost library-insert"
+                                        on:click=move |_| on_insert.call(insert_message.clone())>
+                                        {t(locale.get_untracked(), "library.insert")}
+                                    </button>
+                                })}
                                 <button type="button" class="icon-btn"
                                     title=t(locale.get_untracked(), "tool.copy_code")
                                     aria-label=t(locale.get_untracked(), "tool.copy_code")

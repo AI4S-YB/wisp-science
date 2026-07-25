@@ -120,6 +120,10 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "library.save") => Some("Save as new version"),
         (Locale::En, "library.cancel") => Some("Cancel"),
         (Locale::En, "library.edit_failed") => Some("Could not save the new version"),
+        (Locale::En, "library.insert") => Some("Insert into chat"),
+        (Locale::En, "library.insert_prompt") => Some(
+            "Please re-run version v{version} of the starred item \"{title}\" (library item {id}):",
+        ),
         (Locale::En, "library.add") => Some("Add to library"),
         (Locale::En, "library.remove") => Some("Remove from library"),
         (Locale::En, "library.read_failed") => Some("Unable to read this library item."),
@@ -1468,6 +1472,10 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "library.save") => Some("保存为新版本"),
         (Locale::Zh, "library.cancel") => Some("取消"),
         (Locale::Zh, "library.edit_failed") => Some("保存新版本失败"),
+        (Locale::Zh, "library.insert") => Some("填入对话框"),
+        (Locale::Zh, "library.insert_prompt") => {
+            Some("请用收藏「{title}」的 v{version}（收藏条目 {id}）重新运行：")
+        }
         (Locale::Zh, "library.add") => Some("加入收藏库"),
         (Locale::Zh, "library.remove") => Some("移出收藏库"),
         (Locale::Zh, "library.read_failed") => Some("无法读取该收藏。"),
