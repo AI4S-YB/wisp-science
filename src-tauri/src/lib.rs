@@ -1903,7 +1903,13 @@ impl Output for TauriOutput {
         });
     }
     fn tool_result(&self, name: &str, ok: bool, content: &str, duration_ms: u64) {
-        let clipped: String = content.chars().take(4000).collect();
+        // ponytail: attempt_completion's "tool result" IS the final answer bubble,
+        // so the 4000-char preview clip must not apply to it.
+        let clipped: String = if name == "attempt_completion" {
+            content.to_string()
+        } else {
+            content.chars().take(4000).collect()
+        };
         self.emit(AgentEvent::ToolResult {
             frame_id: self.frame_id.clone(),
             name: name.into(),
