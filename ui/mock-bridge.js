@@ -48,7 +48,14 @@
     notes: "## What's new\n\n- Sidebar update prompt with changelog\n- Fixed streaming thinking bounce\n- **Breaking:** renamed `foo` to `bar`",
   };
   let mockUpdateCheckEnabled = true;
-  const memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
+  // Category = file-name prefix before "--"; plain date files sit in the
+  // default ("About you") category.
+  let memoryFiles = [
+    { name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 },
+    { name: "Projects--2026-07-02.md", preview: "Wisp: two-column memory pane in settings.", bytes: 96 },
+    { name: "Projects--2026-06-28.md", preview: "Library rerun tracking shipped in #474.", bytes: 88 },
+    { name: "Preferences--2026-07-03.md", preview: "Reply in Chinese; keep diffs minimal.", bytes: 72 },
+  ];
   let memoryEnabled = true;
   const mockModels = [
     {
@@ -581,12 +588,26 @@
             memoryEnabled = !!args?.enabled;
             return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
           case "list_memory":
-          case "write_memory_file":
+            return memoryFiles;
+          case "write_memory_file": {
+            const existing = memoryFiles.find((f) => f.name === args?.name);
+            const content = args?.content ?? "";
+            if (existing) {
+              existing.preview = content.slice(0, 240);
+              existing.bytes = content.length;
+            } else if (args?.name) {
+              memoryFiles.push({ name: args.name, preview: content.slice(0, 240), bytes: content.length });
+            }
+            return memoryFiles;
+          }
           case "delete_memory_file":
+            memoryFiles = memoryFiles.filter((f) => f.name !== args?.name);
+            return memoryFiles;
           case "clear_memory":
+            memoryFiles = [];
             return memoryFiles;
           case "read_memory_file":
-            return "User prefers DeepSeek.\n";
+            return memoryFiles.find((f) => f.name === args?.name)?.preview ?? "";
           case "send_message": {
             const fid = (args && (args.sessionId ?? args.session_id)) || "mock-frame";
             const msg = (args && args.message) || "";

@@ -1104,6 +1104,27 @@ body:has(.settings-page) .projects-screen { display: none; }
 .memory-file-row-active { background: var(--bg-elev); box-shadow: inset 2px 0 0 var(--clay); }
 .memory-file-name { font-size: 13px; font-weight: 550; color: var(--text); word-break: break-all; }
 .memory-file-meta { font-size: 11px; color: var(--text-faint); }
+.memory-cat-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+.memory-cat-input {
+  margin: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.memory-notes {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-elev);
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+.memory-notes .memory-file-list { margin: 0; border: none; border-radius: 0; }
+.memory-notes .memory-file-add { margin: 10px 12px; align-self: flex-start; }
 .memory-empty, .memory-select-hint {
   margin: 0;
   padding: 16px 12px;
