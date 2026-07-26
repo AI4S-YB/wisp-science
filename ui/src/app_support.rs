@@ -11,10 +11,10 @@ use crate::i18n::{localize_backend, t, tf, use_locale, Locale};
 use crate::text::{
     code_lang, decode_href, dom_value, event_target_value, extract_href_from_tag, fasta_seq_count,
     fenced_blocks, file_kind, format_bytes, format_duration_ms, html_escape, ime_composing,
-    is_external_href, is_separator, is_table_row, md_inline_to_html, md_to_html, next_artifact_id,
-    normalize_path, opens_in_system_browser, parent_path, parse_csv_line, parse_notebook,
-    pretty_json, provider_defaults, provider_value, split_row, tool_card_label, tool_lang,
-    unique_dom_id,
+    is_external_href, is_separator, is_table_row, md_document_to_html, md_inline_to_html,
+    md_to_html, next_artifact_id, normalize_path, opens_in_system_browser, parent_path,
+    parse_csv_line, parse_notebook, pretty_json, provider_defaults, provider_value, split_row,
+    tool_card_label, tool_lang, unique_dom_id,
     user_message_presentation, NbOutput, Notebook,
 };
 use leptos::{ev, window_event_listener, *};
@@ -7486,7 +7486,7 @@ pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
             if kind == "markdown" {
                 if let Some(el) = el {
                     el.set_class_name("rp-heavy md");
-                    el.set_inner_html(&md_to_html(fc.text.as_deref().unwrap_or("")));
+                    el.set_inner_html(&md_document_to_html(fc.text.as_deref().unwrap_or("")));
                     schedule_highlight(dom_id.clone());
                 }
                 return;
@@ -7532,7 +7532,8 @@ pub(super) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
         PreviewData::Markdown(s) => {
             let hid_for_effect = dom_id.clone();
             create_effect(move |_| schedule_highlight(hid_for_effect.clone()));
-            view! { <div class="md rp-md" id=dom_id inner_html=md_to_html(s)></div> }.into_view()
+            view! { <div class="md rp-md" id=dom_id inner_html=md_document_to_html(s)></div> }
+                .into_view()
         }
         PreviewData::Latex { tex, display } => {
             let payload = serde_json::json!({ "tex": tex, "display": display }).to_string();
