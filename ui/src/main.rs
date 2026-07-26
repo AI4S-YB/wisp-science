@@ -40,7 +40,7 @@ use notebook::{collect_notebook_cells, NotebookCache, NotebookView};
 use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay};
 use pet::{PetDesktop, PetOverlay};
 use project_landing::{ProjectLanding, ProjectLandingState};
-use research::{refresh_research_graph, ResearchGraphPane};
+use research::{refresh_research_graph, ResearchGraphModal};
 use serde_wasm_bindgen::to_value;
 use settings_view::{DeleteConfirm, SettingsView, SettingsViewState};
 use sidebar::{Sidebar, SidebarState};
@@ -1133,8 +1133,9 @@ fn App() -> impl IntoView {
     let rp_tab_drag = create_rw_signal(None::<RightTab>);
     let rp_tab_drop = create_rw_signal(None::<RightTab>);
     // Project-scoped, and the agent writes to it mid-turn — refetched when the
-    // tab is opened rather than kept live.
+    // sidebar modal is opened rather than kept live.
     let research_graph = create_rw_signal(ResearchGraph::default());
+    let show_research_graph = create_rw_signal(false);
     create_effect(move |_| {
         side_chat_items.with(|items| items.len());
         if !show_right.get() || right_tab.get() != RightTab::SideChat {
@@ -5820,6 +5821,8 @@ fn App() -> impl IntoView {
             project_open_error.set(None);
             status.set(String::new());
             show_proj_menu.set(false);
+            show_research_graph.set(false);
+            research_graph.set(ResearchGraph::default());
             demo_mode.set(false);
             // Stash the transcript we're leaving, like every other switch path —
             // dropping it made running sessions "roll back" on return (#194).
@@ -6596,6 +6599,13 @@ fn App() -> impl IntoView {
                 can_insert=Signal::derive(move || !show_projects.get())
             />
         })}
+        {move || show_research_graph.get().then(|| view! {
+            <ResearchGraphModal
+                locale=locale.read_only()
+                graph=research_graph.read_only()
+                on_close=Callback::new(move |_| show_research_graph.set(false))
+            />
+        })}
         {move || ssh_connectivity_modal.get().map(|modal| {
             let host = modal.label.clone();
             let raw_detail = modal.detail.clone();
@@ -6950,6 +6960,10 @@ fn App() -> impl IntoView {
             new_session=Callback::new(new_session)
             new_folder=Callback::new(new_folder)
             open_files=Callback::new(open_files)
+            open_research_graph=Callback::new(move |_| {
+                show_research_graph.set(true);
+                refresh_research_graph(research_graph);
+            })
             open_library=Callback::new(move |_| show_library.set(true))
             load_demo=Callback::new(load_demo)
             load_session=load_session
@@ -9142,7 +9156,6 @@ fn App() -> impl IntoView {
                             let notebook_n = notebook_cells.get().len();
                             let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                             let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
-                            let graph_n = research_graph.get().nodes.len();
                             open_right_tabs.get().into_iter().map(|tab| {
                                 let label = match tab {
                                     RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
@@ -9152,7 +9165,6 @@ fn App() -> impl IntoView {
                                     RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                     RightTab::File => t(loc, "right.file").into(),
                                     RightTab::Hosts => t(loc, "contexts.title").into(),
-                                    RightTab::Graph => tab_count(loc, "right.graph", graph_n),
                                     RightTab::SideChat => t(loc, "sidechat.title").into(),
                                 };
                                 let is_active = active == tab;
@@ -9225,9 +9237,6 @@ fn App() -> impl IntoView {
                                                     RightTab::Agents => {
                                                         refresh_agent_workflows(agent_panel)
                                                     }
-                                                    RightTab::Graph => {
-                                                        refresh_research_graph(research_graph)
-                                                    }
                                                     _ => {}
                                                 }
                                             }>{label}</button>
@@ -9257,7 +9266,6 @@ fn App() -> impl IntoView {
                                     let notebook_n = notebook_cells.get().len();
                                     let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                                     let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
-                                    let graph_n = research_graph.get().nodes.len();
                                     ALL_RIGHT_TABS.iter().copied().map(|tab| {
                                         let label = match tab {
                                             RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
@@ -9267,7 +9275,6 @@ fn App() -> impl IntoView {
                                             RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                             RightTab::File => t(loc, "right.file").into(),
                                             RightTab::Hosts => t(loc, "contexts.title").into(),
-                                            RightTab::Graph => tab_count(loc, "right.graph", graph_n),
                                             RightTab::SideChat => t(loc, "sidechat.title").into(),
                                         };
                                         let is_open = open.contains(&tab);
@@ -9293,9 +9300,6 @@ fn App() -> impl IntoView {
                                                         }
                                                         RightTab::Agents => {
                                                             refresh_agent_workflows(agent_panel)
-                                                        }
-                                                        RightTab::Graph => {
-                                                            refresh_research_graph(research_graph)
                                                         }
                                                         _ => {}
                                                     }
@@ -9537,11 +9541,6 @@ fn App() -> impl IntoView {
                                     active_session=active_session.read_only()
                                     library_items=library_items.read_only()
                                     on_library_changed=refresh_library_items />
-                            }.into_view()
-                        }
-                        RightTab::Graph => {
-                            view! {
-                                <ResearchGraphPane locale=locale.get() graph=research_graph.get() />
                             }.into_view()
                         }
                         RightTab::Highlights => {

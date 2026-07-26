@@ -50,7 +50,7 @@ A consumable output: figure, table, report, model, PDB/mmCIF, notebook, markdown
 - The Contexts UI refreshes active Runs, shows remote workdirs, output tails, and poll errors, and exposes cancellation without keeping an agent turn open.
 - Each registered context can open independent ephemeral interactive terminals in a resizable, tabbed bottom dock. The `+` menu selects any registered context, including one already used by another live tab. Local, WSL, and system-OpenSSH launch adapters share one PTY-backed TerminalSession manager; xterm instances mount directly in the main webview so Tauri channels never cross iframe boundaries. Hiding the dock keeps live views attached, while explicit termination ends the active process. Terminal buffers are not persisted and tracked computation continues to use Runs.
 - Every artifact registration creates an immutable artifact version. Harvested versions point to their producing run; run-to-artifact links are reflected as `produced` research-graph edges.
-- The `research_graph` agent tool can record data assets, papers, and decisions and add validated project-local edges.
+- The `research_graph` agent tool can record data assets, papers, and decisions and add validated project-local edges. The project-wide graph opens from the left sidebar in a dedicated modal with list and graph views.
 
 ## Milestones
 
