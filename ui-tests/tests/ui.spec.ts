@@ -673,6 +673,16 @@ test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async 
 });
 
 test("Ctrl+K opens in place and Ctrl+Enter opens a project window", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "wisp-science/Tauri",
+    });
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+  });
   await enterApp(page);
   await page.keyboard.press("Control+k");
   const search = commandPalette(page);
