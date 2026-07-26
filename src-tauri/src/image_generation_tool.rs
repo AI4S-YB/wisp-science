@@ -231,7 +231,7 @@ impl Tool for GenerateImageTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "generate_image",
-            "Generate one PNG with the configured OpenAI gpt-image-2 model and save it inside the project. This is the Scientific Illustrator's raster-image capability; call it when the user asks the Scientific Illustrator or asks to generate a scientific image. Use a project-relative path under figures/.",
+            "Generate one PNG with the configured OpenAI gpt-image-2 model and save it inside the project. This is the Scientific Illustrator's PNG image-model mode. Call it when the user explicitly asks for PNG, gpt-image-2, generate_image, or image-model generation. Also call it for a Scientific Illustrator image request that names no format or method, because the presence of this tool means an image-generation model is configured. Do not call it when the user explicitly asks for SVG, vector, an editable figure, or direct SVG generation; create and visually verify that SVG directly instead. Use a project-relative path under figures/.",
             json!({
                 "type": "object",
                 "properties": {
@@ -342,6 +342,22 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn schema_keeps_explicit_svg_requests_out_of_raster_mode() {
+        let tool = GenerateImageTool::new(
+            "https://api.openai.com/v1".into(),
+            "sk-test".into(),
+            "gpt-image-2".into(),
+            Some("none".into()),
+        );
+        let description = tool.schema().function.description;
+
+        assert!(description.contains("Do not call it when the user explicitly asks for SVG"));
+        assert!(description.contains("explicitly asks for PNG"));
+        assert!(description.contains("names no format or method"));
+        assert!(description.contains("visually verify that SVG directly"));
+    }
 
     struct RecordingEnv {
         root: PathBuf,

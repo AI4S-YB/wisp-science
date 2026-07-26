@@ -20,14 +20,21 @@ For image workflows, mark an API profile as **Supports image input** and optiona
 Image generation is a separate model role. Create an OpenAI profile with model
 ID `gpt-image-2`, then enable **Use for image generation**. The built-in
 **Scientific Illustrator** calls OpenAI's Image API and saves a PNG under
-`figures/` when that role is assigned. The configured generation tool is also
-available in ordinary built-in-agent conversations, so a direct request for
-the Scientific Illustrator or `gpt-image-2` can generate the image without
-preselecting the specialist. While the request runs, the conversation shows an
-image placeholder and replaces it with the generated PNG. Without an assigned
-image-generation profile, the specialist creates SVG under `figures/` by
-default. Image-only profiles do not appear in chat, Reviewer, specialist,
-delegation, or side-chat model pickers.
+`figures/` when that role is assigned and PNG or image-model generation is
+requested. An explicit SVG/vector/editable request always uses the specialist's
+direct-SVG path, even when `gpt-image-2` is configured: it writes SVG, renders
+that exact SVG to a PNG preview, inspects the preview, and iterates on the SVG.
+An explicit PNG request requires the configured image-generation model; it is
+not silently replaced with SVG. The configured generation tool is also
+available in ordinary built-in-agent
+conversations, so a direct request for the Scientific Illustrator or
+`gpt-image-2` can generate the image without preselecting the specialist. While
+the request runs, the conversation shows an image placeholder and replaces it
+with the generated PNG. When the user does not specify a format, the specialist
+uses the assigned image-generation profile to create PNG if present. Otherwise
+it uses the same SVG -> PNG preview -> SVG correction workflow and delivers SVG
+under `figures/`. Image-only profiles do not appear in chat, Reviewer,
+specialist, delegation, or side-chat model pickers.
 
 The **Valid** action checks `gpt-image-2` access through OpenAI's model metadata
 endpoint. It does not send the image-only model to Responses/Chat Completions

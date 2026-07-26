@@ -16,13 +16,28 @@ drawing advice.\n\n\
 Inspect referenced data and files before drawing. Never invent measurements, \
 labels, sample sizes, or scientific conclusions. Load `figure-style` for \
 data-backed plots and also `figure-composer` for multi-panel figures.\n\n\
-Output mode is determined by the tools available in this turn:\n\
-- When `generate_image` is available, distill the request and relevant context \
-into one complete, self-contained visual brief, call `generate_image`, and \
-save the result as a descriptive `figures/*.png` file.\n\
-- When `generate_image` is absent, create a publication-ready vector figure \
-as a descriptive `figures/*.svg` file using `write`, Python, or R. SVG is the \
-default; do not substitute another raster format.\n\n\
+Support exactly two output modes. An explicit user choice of format or method \
+has the highest priority; tool availability decides only when the user did not \
+choose:\n\
+- Direct-SVG mode: use this when the user explicitly asks for SVG, vector, an \
+editable figure, or direct SVG generation. Create the actual publication-ready \
+figure as a descriptive `figures/*.svg` file using `write`, Python, or R. Do \
+not call `generate_image`, do not replace the request with PNG, and do not claim \
+SVG is unsupported merely because `generate_image` itself only returns PNG. \
+After writing the SVG, rasterize that exact SVG to a PNG preview, inspect the \
+preview with `view_image`, fix visible problems in the SVG source, then \
+re-render and re-inspect. Repeat this SVG -> PNG preview -> SVG correction loop \
+until the figure is legible and unclipped. The SVG is the primary deliverable; \
+the PNG is only a QA preview.\n\
+- PNG image-model mode: use this when the user explicitly asks for PNG, \
+`gpt-image-2`, `generate_image`, or image-model generation. Call \
+`generate_image` with one complete, self-contained visual brief and save a \
+descriptive `figures/*.png` file. If `generate_image` is unavailable, explain \
+that an image-generation model must be configured; do not silently substitute \
+SVG for an explicit PNG or image-model request.\n\
+- When the user specifies neither format nor method, use PNG image-model mode \
+if `generate_image` is available. Otherwise use Direct-SVG mode, including its \
+SVG -> PNG preview -> SVG correction loop, and deliver the SVG.\n\n\
 Keep text legible, use colour-blind-safe encodings, and distinguish observed \
 data from conceptual illustration. End with a concise explanation and embed \
 the saved figure using a project-relative Markdown image link.";
@@ -339,6 +354,27 @@ pub async fn get_session_specialist(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn illustrator_rubric_gives_explicit_svg_requests_priority() {
+        let rubric = SCIENTIFIC_ILLUSTRATOR_RUBRIC;
+        let svg_rule = rubric
+            .find("when the user explicitly asks for SVG")
+            .expect("rubric must define explicit SVG routing");
+        let fallback_rule = rubric
+            .find("When the user specifies neither format nor method")
+            .expect("rubric must define the tool-availability fallback");
+
+        assert!(svg_rule < fallback_rule);
+        assert!(rubric.contains("explicit user choice of format or method"));
+        assert!(rubric.contains("Do not call `generate_image`"));
+        assert!(rubric.contains("rasterize that exact SVG to a PNG preview"));
+        assert!(rubric.contains("inspect the preview with `view_image`"));
+        assert!(rubric.contains("SVG -> PNG preview -> SVG correction loop"));
+        assert!(rubric.contains("The SVG is the primary deliverable"));
+        assert!(rubric.contains("explicitly asks for PNG"));
+        assert!(rubric.contains("do not silently substitute"));
+    }
 
     async fn test_store() -> (wisp_store::Store, std::path::PathBuf) {
         let tmp = std::env::temp_dir().join(format!("wisp_spec_{}.sqlite", uuid::Uuid::new_v4()));
