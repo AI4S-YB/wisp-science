@@ -1573,6 +1573,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             const useForImageGeneration = Boolean(
               arg("useForImageGeneration") ?? profile.use_for_image_generation,
             );
+            // Mirror the backend: an empty id creates a fresh profile.
+            if (!profile.id) {
+              let n = 1;
+              while (mockModels.some((m) => m.id === `m${n}`)) n += 1;
+              profile.id = `m${n}`;
+              if (!profile.label) profile.label = profile.model;
+              mockModels = [...mockModels, profile];
+            }
             mockModels = mockModels.map((m) => m.id === profile.id ? {
               ...m,
               ...profile,
