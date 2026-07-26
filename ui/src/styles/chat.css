@@ -230,6 +230,22 @@
   min-width: 0; box-sizing: border-box;
 }
 
+.chat-jump-pill {
+  position: absolute; z-index: 12; bottom: 14px; left: 50%;
+  transform: translate(-50%, 6px);
+  border: 1px solid var(--border); border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+  color: var(--text-muted); padding: 6px 13px; font: inherit; font-size: 12px;
+  cursor: pointer; box-shadow: var(--shadow-sm); backdrop-filter: blur(8px);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease, visibility 0s .15s;
+}
+.chat-jump-pill.visible {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transform: translate(-50%, 0); transition-delay: 0s;
+}
+.chat-jump-pill:hover { color: var(--text); background: var(--bg-elev); border-color: var(--border-strong); }
+
 .conversation-outline-toggle {
   position: absolute; z-index: 12; top: 50%; right: 10px; display: flex; width: 34px;
   max-height: min(360px, calc(100% - 24px)); padding: 9px 7px; transform: translateY(-50%);
