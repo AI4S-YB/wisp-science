@@ -5617,6 +5617,26 @@ fn App() -> impl IntoView {
         }
     });
 
+    // Image comment pins → one revision-request quote in the composer, the
+    // same landing as "Ask AI in the conversation". A center-pane preview
+    // stays open beside the chat (like ask-AI); a modal preview closes.
+    window_event_listener_untyped("wisp:pins-ask-ai", move |ev| {
+        use wasm_bindgen::JsCast;
+        let Some(detail) = ev
+            .dyn_ref::<web_sys::CustomEvent>()
+            .and_then(|ce| serde_wasm_bindgen::from_value::<PinsAskAi>(ce.detail()).ok())
+        else {
+            return;
+        };
+        composer_quotes.update(|items| items.push(ComposerQuote::plain(detail.text)));
+        modal_artifact.set(None);
+        if center_file.get_untracked().as_deref() == Some(detail.path.as_str()) {
+            center_split.set(true);
+            show_right.set(false);
+        }
+        focus_composer();
+    });
+
     // Dismiss the selection popup on any press outside it: starting a new
     // selection, clicking the composer, or clicking elsewhere in the app.
     window_event_listener(ev::mousedown, move |ev| {

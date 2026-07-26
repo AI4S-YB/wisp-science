@@ -127,9 +127,6 @@ export async function crop_region_to_upload(hostId, left, top, width, height) {
   if (rect.width < 1 || rect.height < 1) return "";
   // The browser emits a click after the crop's pointerup. Do not return the
   // path (which mounts action buttons) until that click has fully dispatched.
-  const gestureFinished = new Promise((resolve) => {
-    window.addEventListener("click", resolve, { capture: true, once: true });
-  });
   const scaleX = img.naturalWidth / rect.width;
   const scaleY = img.naturalHeight / rect.height;
   let sx = (hostRect.left + left * hostRect.width - rect.left) * scaleX;
@@ -155,7 +152,6 @@ export async function crop_region_to_upload(hostId, left, top, width, height) {
   const ok = results.find((r) => r.ok && r.info);
   const path = ok?.info?.path;
   if (!path) return "";
-  await gestureFinished;
   return String(path);
 }
 

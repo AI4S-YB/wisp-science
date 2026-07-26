@@ -463,6 +463,28 @@
    .selection-popup fixed, and the entrance animation is dropped because its
    fill-mode `to { transform: none }` would cancel the centering translate. */
 .file-preview-crop-actions { cursor: default; position: absolute; animation: none; }
+/* Comment pins: fraction-anchored markers at the center of annotated regions.
+   The layer never takes the pointer; markers sit above the crop layer so they
+   stay clickable for deletion while crop mode is armed. */
+.file-preview-pin-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.file-preview-pin-marker {
+  position: absolute; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 9px;
+  border: 1px solid var(--bg-elev); background: var(--clay); color: var(--on-clay);
+  font: inherit; font-size: 11px; font-weight: 600; line-height: 1;
+  pointer-events: auto; cursor: default; box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+}
+.file-preview-zoom-viewport.is-cropping .file-preview-pin-marker { cursor: pointer; }
+/* Region popup: note input row above the attach actions. */
+.file-preview-crop-annotate { flex-direction: column; align-items: stretch; gap: 2px; }
+.file-preview-pin-editor-row { display: flex; align-items: center; gap: 2px; }
+.file-preview-pin-editor-row input {
+  flex: 1 1 auto; min-width: 170px; border: none; background: transparent; color: var(--text);
+  font: inherit; font-size: 12.5px; padding: 5px 2px 5px 8px; outline: none;
+}
+.file-preview-crop-actions-row { display: flex; align-items: center; gap: 2px; border-top: 1px solid var(--border-strong); padding-top: 2px; }
+.file-preview-pin-send { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .file-preview-zoom-content .rp-img { display: block; width: 100%; max-width: none; height: auto; margin: 0 auto; user-select: none; -webkit-user-drag: none; }
 .rp-html {
   width: 100%;

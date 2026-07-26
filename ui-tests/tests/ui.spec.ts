@@ -3008,20 +3008,61 @@ test("image crop stays highlighted until it is added to chat", async ({ page }) 
   await expect(page.locator(".file-preview-crop-rect")).toBeVisible();
   await page.mouse.up();
 
-  // Uploading prepares the crop, but does not attach it before the user chooses.
-  await expect.poll(() => lastInvokeArgs(page, "upload_file"))
-    .toMatchObject({ filename: expect.stringMatching(/^region_.*\.png$/) });
+  // Releasing freezes the region and raises the actions; nothing uploads
+  // until the user picks an attach action (a comment-only region never will).
   const actions = page.locator(".file-preview-crop-actions");
   await expect(actions.getByRole("button", { name: "Add to chat", exact: true })).toBeVisible();
   await expect(actions.getByRole("button", { name: "Add to chat and jump back to chat" })).toBeVisible();
   await expect(page.locator(".file-preview-crop-rect.selected")).toContainText("Selected region");
+  expect(await lastInvokeArgs(page, "upload_file")).toBeNull();
   await expect(page.locator(".composer-attachments .composer-attachment.ready")).toHaveCount(0);
 
-  // Plain Add keeps the preview open and only then attaches the PNG.
+  // Plain Add uploads the region, keeps the preview open, and attaches the PNG.
   await actions.getByRole("button", { name: "Add to chat", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "upload_file"))
+    .toMatchObject({ filename: expect.stringMatching(/^region_.*\.png$/) });
   await expect(page.locator(".composer-attachments .composer-attachment.ready")).toContainText("region_");
   await expect(page.locator(".artifact-modal")).toBeVisible();
   await expect(layer).toHaveCount(0);
+});
+
+test("image region comments become numbered pins and a revision request", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make a volcano plot volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
+  const image = page.locator(".artifact-modal .rp-img");
+  await expect(image).toBeVisible();
+
+  await page.getByRole("button", { name: "Select a region to ask about" }).click();
+  const box = (await image.boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 120, box.y + 100, { steps: 4 });
+  await page.mouse.up();
+
+  // The region popup carries a note input; Enter commits it into a pin and
+  // keeps crop mode armed. No upload happens for a comment-only region.
+  const note = page.locator(".file-preview-crop-annotate input");
+  await note.fill("increase the contrast here");
+  await note.press("Enter");
+  await expect(page.locator(".file-preview-crop-annotate")).toHaveCount(0);
+  await expect(page.locator(".file-preview-pin-marker")).toHaveText("1");
+  expect(await lastInvokeArgs(page, "upload_file")).toBeNull();
+
+  // Send for AI revision lands one quote in the composer and closes the modal.
+  await page.getByRole("button", { name: "Send for AI revision (1)" }).click();
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+  await expect(page.locator(".composer-reference-chips .quote")).toContainText("Revision notes");
+  await expect(composer(page)).toBeFocused();
+
+  // Reopening the preview keeps the pin; clicking it in crop mode deletes it.
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
+  await expect(page.locator(".file-preview-pin-marker")).toHaveText("1");
+  await page.getByRole("button", { name: "Select a region to ask about" }).click();
+  await page.locator(".file-preview-pin-marker").click();
+  await expect(page.locator(".file-preview-pin-marker")).toHaveCount(0);
 });
 
 test("image crop can be added and jump back from the preview to chat", async ({ page }) => {

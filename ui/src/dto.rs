@@ -364,6 +364,16 @@ pub(crate) struct RegionAttach {
     pub(crate) jump_to_chat: bool,
 }
 
+/// Detail of the `wisp:pins-ask-ai` event: image comment pins assembled into
+/// one composer message by the preview. Serialized as a struct (not
+/// `serde_json::json!`) so serde-wasm-bindgen emits a plain JS object — a
+/// `Value::Object` would become an ES Map the listener cannot deserialize.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PinsAskAi {
+    pub(crate) path: String,
+    pub(crate) text: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub(crate) struct ArtifactInfo {
     pub(crate) id: String,

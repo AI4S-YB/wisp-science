@@ -7070,6 +7070,125 @@ pub(super) fn WorkspaceFilePreview(dom_id: String, path: String, kind: String) -
     }
 }
 
+/// A comment on a selected image region: the rect in fractional coordinates
+/// of the image box (all values in 0..=1, measured from the top-left corner)
+/// plus the note text.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ImagePin {
+    pub(super) x: f64,
+    pub(super) y: f64,
+    pub(super) w: f64,
+    pub(super) h: f64,
+    pub(super) note: String,
+}
+
+thread_local! {
+    // ponytail: pins live in this session-scoped map only and are never
+    // persisted — add real storage when annotations must survive a restart.
+    static IMAGE_PINS: RefCell<HashMap<String, Vec<ImagePin>>> = RefCell::new(HashMap::new());
+}
+
+/// Percent-positioned marker style at the region's center: fractions of the
+/// content box, so markers track the image through zoom and pan exactly like
+/// the crop rectangle.
+pub(super) fn pin_marker_style(pin: &ImagePin) -> String {
+    format!(
+        "left:{:.4}%;top:{:.4}%",
+        (pin.x + pin.w / 2.0) * 100.0,
+        (pin.y + pin.h / 2.0) * 100.0
+    )
+}
+
+/// The "send for AI revision" composer text: the localized head line naming
+/// the file, then one numbered line per pin with its fractional region rect.
+pub(super) fn pin_review_message(head: &str, pins: &[ImagePin]) -> String {
+    let mut out = String::from(head);
+    for (index, pin) in pins.iter().enumerate() {
+        out.push_str(&format!(
+            "\n{}. (x={:.3}, y={:.3}, w={:.3}, h={:.3}) {}",
+            index + 1,
+            pin.x,
+            pin.y,
+            pin.w,
+            pin.h,
+            pin.note
+        ));
+    }
+    out
+}
+
+/// Hand the assembled pin message to the chat shell, which lands it in the
+/// composer through the same quote path as "Ask AI in the conversation".
+fn dispatch_pins_ask_ai(path: &str, text: &str) {
+    let Ok(detail) = to_value(&PinsAskAi {
+        path: path.to_string(),
+        text: text.to_string(),
+    }) else {
+        return;
+    };
+    let init = web_sys::CustomEventInit::new();
+    init.set_detail(&detail);
+    let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("wisp:pins-ask-ai", &init)
+    else {
+        return;
+    };
+    if let Some(window) = web_sys::window() {
+        let _ = window.dispatch_event(&event);
+    }
+}
+
+#[cfg(test)]
+mod image_pin_tests {
+    use super::{pin_marker_style, pin_review_message, ImagePin};
+
+    #[test]
+    fn pin_review_message_numbers_fractional_regions() {
+        let pins = vec![
+            ImagePin {
+                x: 0.5,
+                y: 0.25,
+                w: 0.1,
+                h: 0.05,
+                note: "对比度太低".into(),
+            },
+            ImagePin {
+                x: 0.0,
+                y: 0.75,
+                w: 0.25,
+                h: 0.25,
+                note: "crop this corner".into(),
+            },
+        ];
+        assert_eq!(
+            pin_review_message("Revision pins on image `results/plot.png`:", &pins),
+            "Revision pins on image `results/plot.png`:\n\
+             1. (x=0.500, y=0.250, w=0.100, h=0.050) 对比度太低\n\
+             2. (x=0.000, y=0.750, w=0.250, h=0.250) crop this corner"
+        );
+        assert_eq!(pin_review_message("head", &[]), "head");
+    }
+
+    #[test]
+    fn pin_marker_style_centers_the_region() {
+        let pin = ImagePin {
+            x: 0.4,
+            y: 0.2,
+            w: 0.2,
+            h: 0.1,
+            note: String::new(),
+        };
+        assert_eq!(pin_marker_style(&pin), "left:50.0000%;top:25.0000%");
+        let corner = ImagePin {
+            x: 0.0,
+            y: 1.0,
+            w: 0.0,
+            h: 0.0,
+            note: String::new(),
+        };
+        assert_eq!(pin_marker_style(&corner), "left:0.0000%;top:100.0000%");
+    }
+}
+
 #[component]
 fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     let locale = use_locale();
@@ -7077,11 +7196,33 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
     let is_dragging = create_rw_signal(false);
     let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32)>));
     let viewport_id = unique_dom_id("preview-viewport");
-    // Region-crop (images only): drag a rectangle, then choose how to attach it.
+    // Region-crop (images only): drag a rectangle, then comment on it or
+    // attach it to the chat. Confirmed comments become numbered region notes
+    // ("pins") assembled into one revision-request message.
     let is_image = kind == "image";
+    let pins = create_rw_signal(
+        is_image
+            .then(|| IMAGE_PINS.with(|m| m.borrow().get(&path).cloned().unwrap_or_default()))
+            .unwrap_or_default(),
+    );
+    // Note text for the region popup input (window.prompt is a no-op under wry).
+    let pin_note = create_rw_signal(String::new());
+    let pin_input_id = unique_dom_id("pin-note");
+    if is_image {
+        // Write-through so pins survive a preview remount within the session.
+        let store_path = path.clone();
+        create_effect(move |_| {
+            let value = pins.get();
+            IMAGE_PINS.with(|m| {
+                m.borrow_mut().insert(store_path.clone(), value);
+            });
+        });
+    }
     let crop_mode = create_rw_signal(false);
     let crop_busy = create_rw_signal(false);
-    let crop_path = create_rw_signal(None::<String>);
+    // A finalized region: the rubber-band rect is frozen and the action popup
+    // (comment input + attach buttons) is showing.
+    let crop_ready = create_rw_signal(false);
     // Live rubber-band rect as fractions (0..1) of the crop layer, rendered
     // with percent positioning: (left, top, right, bottom). Content-anchored
     // coordinates keep the rect, the crop, and the action popup glued to the
@@ -7108,11 +7249,50 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
         let y = ((ev.client_y() as f64 - rect.top()) / rect.height()).clamp(0.0, 1.0);
         Some((layer, x, y))
     }
-    let crop_host_id = dom_id.clone();
     // Takes the layer's on-screen size so the stray-click guard stays in
-    // physical pixels regardless of zoom.
+    // physical pixels regardless of zoom. Finalizing only freezes the rect and
+    // raises the popup — the upload happens later, and only if an attach
+    // action is chosen, so a comment-only region never uploads anything.
+    let finish_input_id = pin_input_id.clone();
     let finish_crop = Callback::new(move |(layer_w, layer_h): (f64, f64)| {
-        if crop_busy.get_untracked() || crop_path.get_untracked().is_some() {
+        if crop_busy.get_untracked() || crop_ready.get_untracked() {
+            return;
+        }
+        let Some((l, t, r, b)) = crop_rect.get_untracked() else {
+            return;
+        };
+        let (w, h) = ((l - r).abs(), (t - b).abs());
+        // Ignore stray clicks; require a real region.
+        if w * layer_w < 8.0 || h * layer_h < 8.0 {
+            crop_rect.set(None);
+            return;
+        }
+        crop_ready.set(true);
+        let focus_id = finish_input_id.clone();
+        spawn_local(async move {
+            focus_element(&focus_id);
+        });
+    });
+    // Confirming the note turns the frozen region into a numbered pin and
+    // keeps crop mode armed for the next region.
+    let commit_pin = move || {
+        let note = pin_note.get_untracked().trim().to_string();
+        if note.is_empty() {
+            return;
+        }
+        let Some((l, t, r, b)) = crop_rect.get_untracked() else {
+            return;
+        };
+        let (x, y) = (l.min(r), t.min(b));
+        let (w, h) = ((l - r).abs(), (t - b).abs());
+        pins.update(|list| list.push(ImagePin { x, y, w, h, note }));
+        pin_note.set(String::new());
+        crop_rect.set(None);
+        crop_ready.set(false);
+    };
+    let crop_host_id = dom_id.clone();
+    let attach_region = move |jump: bool| {
+        if crop_busy.get_untracked() {
             return;
         }
         let Some((l, t, r, b)) = crop_rect.get_untracked() else {
@@ -7120,11 +7300,6 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
         };
         let (left, top) = (l.min(r), t.min(b));
         let (w, h) = ((l - r).abs(), (t - b).abs());
-        // Ignore stray clicks; require a real region.
-        if w * layer_w < 8.0 || h * layer_h < 8.0 {
-            crop_rect.set(None);
-            return;
-        }
         let host_id = crop_host_id.clone();
         crop_busy.set(true);
         spawn_local(async move {
@@ -7133,13 +7308,33 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                 .as_string()
                 .unwrap_or_default();
             crop_busy.set(false);
-            if path.is_empty() {
-                crop_rect.set(None);
-            } else {
-                crop_path.set(Some(path));
+            crop_rect.set(None);
+            crop_ready.set(false);
+            if !path.is_empty() {
+                pin_note.set(String::new());
+                crop_mode.set(false);
+                attach_cropped_region(&path, jump);
             }
         });
-    });
+    };
+    let pin_send_path = path.clone();
+    let locale_for_send = locale;
+    let send_pins = move |_| {
+        let list = pins.get_untracked();
+        if list.is_empty() {
+            return;
+        }
+        let head = tf(
+            locale_for_send.get_untracked(),
+            "preview.pin_message_head",
+            &[("path", &pin_send_path)],
+        );
+        pin_note.set(String::new());
+        crop_rect.set(None);
+        crop_ready.set(false);
+        crop_mode.set(false);
+        dispatch_pins_ask_ai(&pin_send_path, &pin_review_message(&head, &list));
+    };
     // Esc cancels the pending selection first, then crop mode itself.
     // Capture phase so this wins over the app-level Escape stack, which
     // would otherwise close the surrounding artifact modal.
@@ -7149,9 +7344,11 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                 if ev.key() != "Escape" || crop_busy.get_untracked() {
                     return;
                 }
-                if crop_rect.get_untracked().is_some() || crop_path.get_untracked().is_some() {
-                    crop_path.set(None);
+                // Order: pending region (and its note) first, then crop mode.
+                if crop_rect.get_untracked().is_some() || crop_ready.get_untracked() {
+                    crop_ready.set(false);
                     crop_rect.set(None);
+                    pin_note.set(String::new());
                 } else if crop_mode.get_untracked() {
                     crop_mode.set(false);
                 } else {
@@ -7210,6 +7407,7 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
     let drag_start_down = drag_start.clone();
     let drag_start_move = drag_start.clone();
     let drag_start_lost = drag_start.clone();
+    let popup_input_id = pin_input_id.clone();
     view! {
         <div class="file-preview-zoom">
             <div class="file-preview-zoom-bar">
@@ -7230,10 +7428,23 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                         aria-label=move || t(locale.get(), "preview.select_region")
                         on:click=move |_| {
                             crop_rect.set(None);
-                            crop_path.set(None);
+                            crop_ready.set(false);
+                            pin_note.set(String::new());
                             crop_mode.update(|m| *m = !*m);
                         }>
                         {compose_icon("crop")}
+                    </button>
+                })}
+                {move || (is_image && !pins.get().is_empty()).then(|| view! {
+                    <button type="button" class="file-preview-crop-btn file-preview-pin-send"
+                        title=move || t(locale.get(), "preview.pin_send")
+                        on:click=send_pins.clone()>
+                        {compose_icon("chat")}
+                        <span>{move || format!(
+                            "{} ({})",
+                            t(locale.get(), "preview.pin_send"),
+                            pins.get().len(),
+                        )}</span>
                     </button>
                 })}
             </div>
@@ -7306,14 +7517,17 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                     <FilePreview dom_id=dom_id path=path kind=kind />
                 // Region-crop overlay: lives inside the zoomed content so the
                 // fraction-based rubber-band tracks the image through zoom and
-                // scroll. Captures the drag so it never pans; on release
-                // crops+uploads the region.
-                {move || crop_mode.get().then(|| view! {
+                // scroll. Captures the drag so it never pans; releasing opens
+                // the note/attach popup for the region.
+                {move || crop_mode.get().then(|| {
+                    let attach_region = attach_region.clone();
+                    let popup_input_id = popup_input_id.clone();
+                    view! {
                     <div class="file-preview-crop-layer"
                         on:pointerdown=move |ev: web_sys::PointerEvent| {
                             if ev.button() != 0
                                 || crop_busy.get_untracked()
-                                || crop_path.get_untracked().is_some()
+                                || crop_ready.get_untracked()
                             {
                                 return;
                             }
@@ -7325,7 +7539,7 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                             crop_rect.set(Some((x, y, x, y)));
                         }
                         on:pointermove=move |ev: web_sys::PointerEvent| {
-                            if crop_busy.get_untracked() || crop_path.get_untracked().is_some() {
+                            if crop_busy.get_untracked() || crop_ready.get_untracked() {
                                 return;
                             }
                             let Some((_, x, y)) = layer_point(&ev) else {
@@ -7346,7 +7560,7 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                         }
                         on:pointercancel=move |_| crop_rect.set(None)>
                         {move || crop_rect.get().map(|(left, top, right, bottom)| {
-                            let selected = crop_path.get().is_some();
+                            let selected = crop_ready.get();
                             let style = format!(
                                 "left:{}%;top:{}%;width:{}%;height:{}%",
                                 left.min(right) * 100.0,
@@ -7364,9 +7578,16 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                                 </div>
                             }
                         })}
-                        {move || crop_path.get().and_then(|path| crop_rect.get().map(|(left, top, right, bottom)| {
-                            let add_path = path.clone();
-                            let jump_path = path;
+                        // Region popup: a note input (comment pins) on top of
+                        // the attach actions. Confirming the note records a
+                        // numbered pin; attaching uploads the crop only then.
+                        {move || {
+                            let attach_region = attach_region.clone();
+                            let input_id = popup_input_id.clone();
+                            crop_ready.get()
+                                .then(|| crop_rect.get())
+                                .flatten()
+                                .map(|(left, top, right, bottom)| {
                             let x = (left + right) / 2.0 * 100.0;
                             let y = top.min(bottom) * 100.0;
                             // Clamped inside the layer: the scroll viewport
@@ -7374,33 +7595,81 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                             let style = format!(
                                 "left:clamp(150px,{x}%,calc(100% - 150px));top:max(52px,{y}%)",
                             );
+                            let attach_add = attach_region.clone();
+                            let attach_jump = attach_region;
                             view! {
-                                <div class="selection-popup file-preview-crop-actions" style=style
+                                <div class="selection-popup file-preview-crop-actions file-preview-crop-annotate" style=style
                                     on:pointerdown=|ev: web_sys::PointerEvent| ev.stop_propagation()
                                     on:pointerup=|ev: web_sys::PointerEvent| ev.stop_propagation()>
-                                    <button type="button" class="selection-popup-btn"
-                                        on:click=move |_| {
-                                            crop_path.set(None);
-                                            crop_rect.set(None);
-                                            crop_mode.set(false);
-                                            attach_cropped_region(&add_path, false);
-                                        }>
-                                        {compose_icon("plus")}
-                                        <span>{move || t(locale.get(), "selection.add_to_chat")}</span>
-                                    </button>
-                                    <button type="button" class="selection-popup-btn"
-                                        on:click=move |_| {
-                                            crop_path.set(None);
-                                            crop_rect.set(None);
-                                            crop_mode.set(false);
-                                            attach_cropped_region(&jump_path, true);
-                                        }>
-                                        {compose_icon("chat")}
-                                        <span>{move || t(locale.get(), "selection.add_to_chat_and_jump")}</span>
-                                    </button>
+                                    <div class="file-preview-pin-editor-row">
+                                        <input id=input_id type="text"
+                                            placeholder=move || t(locale.get(), "preview.pin_placeholder")
+                                            prop:value=move || pin_note.get()
+                                            on:input=move |ev| pin_note.set(event_target_value(&ev))
+                                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                                if ev.key() == "Enter" {
+                                                    commit_pin();
+                                                }
+                                            } />
+                                        <button type="button" class="selection-popup-btn"
+                                            title=move || t(locale.get(), "preview.pin_add")
+                                            aria-label=move || t(locale.get(), "preview.pin_add")
+                                            on:click=move |_| commit_pin()>
+                                            {compose_icon("pin")}
+                                        </button>
+                                    </div>
+                                    <div class="file-preview-crop-actions-row">
+                                        <button type="button" class="selection-popup-btn"
+                                            disabled=move || crop_busy.get()
+                                            on:click=move |_| attach_add(false)>
+                                            {compose_icon("plus")}
+                                            <span>{move || t(locale.get(), "selection.add_to_chat")}</span>
+                                        </button>
+                                        <button type="button" class="selection-popup-btn"
+                                            disabled=move || crop_busy.get()
+                                            on:click=move |_| attach_jump(true)>
+                                            {compose_icon("chat")}
+                                            <span>{move || t(locale.get(), "selection.add_to_chat_and_jump")}</span>
+                                        </button>
+                                    </div>
                                 </div>
                             }
-                        }))}
+                        })}}
+                    </div>
+                    }
+                })}
+                // Pin overlay: numbered markers stay visible whenever the
+                // image has region notes. The layer itself never takes the
+                // pointer; markers sit above the crop layer so they remain
+                // clickable for deletion while crop mode is armed.
+                // Fraction-based positioning rides the same content box as the
+                // crop rect, so pins track the image through zoom and pan.
+                {move || (is_image && !pins.get().is_empty()).then(|| view! {
+                    <div class="file-preview-pin-layer">
+                        {move || pins.get().into_iter().enumerate().map(|(index, pin)| {
+                            let style = pin_marker_style(&pin);
+                            let note = pin.note.clone();
+                            view! {
+                                <button type="button" class="file-preview-pin-marker" style=style
+                                    title=move || if crop_mode.get() {
+                                        tf(locale.get(), "preview.pin_remove", &[("note", &note)])
+                                    } else {
+                                        note.clone()
+                                    }
+                                    on:pointerdown=|ev: web_sys::PointerEvent| ev.stop_propagation()
+                                    on:click=move |_| {
+                                        if crop_mode.get_untracked() {
+                                            pins.update(|list| {
+                                                if index < list.len() {
+                                                    list.remove(index);
+                                                }
+                                            });
+                                        }
+                                    }>
+                                    {(index + 1).to_string()}
+                                </button>
+                            }
+                        }).collect_view()}
                     </div>
                 })}
                 </div>
