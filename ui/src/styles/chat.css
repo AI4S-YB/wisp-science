@@ -612,16 +612,6 @@ code.hljs .hljs-deletion { color: var(--syntax-deletion); background-color: var(
 @media (min-width: 960px) {
   .md pre.md-code code.language-catalog { column-count: 3; }
 }
-.code-block { display: flex; flex-direction: column; gap: 0; min-width: 0; }
-.code-lang {
-  font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--text-faint); padding: 8px 12px 6px; border: 1px solid var(--border);
-  border-bottom: none; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  background: var(--bg-elev);
-}
-.code-block .md-code { border-radius: 0 0 var(--radius-sm) var(--radius-sm); margin: 0; }
-.code-block .code-lang + .md-code { border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
-
 .art-ref {
   display: inline; background: var(--clay-soft);
   color: var(--clay-strong); border: 1px solid rgba(13, 148, 136, 0.22);

@@ -50,10 +50,6 @@ impl RuntimeKey {
             language: RuntimeLanguage::R,
         }
     }
-
-    pub fn local_r(project_id: impl Into<String>) -> Self {
-        Self::r(project_id, LOCAL_CONTEXT_ID)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -951,7 +947,7 @@ mod tests {
         let launcher = FakeLauncher::default();
         let manager = manager(&launcher);
         let python = RuntimeKey::local_python("project-a");
-        let r = RuntimeKey::local_r("project-a");
+        let r = RuntimeKey::r("project-a", LOCAL_CONTEXT_ID);
         let cwd = PathBuf::from("project-a");
 
         finished(manager.execute(&python, &cwd, "set:3").await.unwrap())

@@ -5853,7 +5853,10 @@ mod tests {
             "steps": []
         })
         .to_string();
-        store.create_agent_workflow(&unsupported).await.unwrap();
+        store
+            .create_agent_workflow_plan(&unsupported, &[])
+            .await
+            .unwrap();
 
         assert!(tokio::time::timeout(
             Duration::from_secs(2),

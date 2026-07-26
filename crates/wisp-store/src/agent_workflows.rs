@@ -600,23 +600,6 @@ async fn insert_step(tx: &mut Transaction<'_, Sqlite>, step: &AgentWorkflowStep)
     Ok(())
 }
 
-async fn bump_draft_workflow_version(
-    tx: &mut Transaction<'_, Sqlite>,
-    workflow_id: &str,
-) -> Result<()> {
-    let updated = sqlx::query(
-        "UPDATE agent_workflows SET version=version+1,updated_at=? WHERE id=? AND status='draft'",
-    )
-    .bind(chrono::Utc::now().timestamp())
-    .bind(workflow_id)
-    .execute(&mut **tx)
-    .await?;
-    if updated.rows_affected() != 1 {
-        anyhow::bail!("agent workflow plan is missing or immutable");
-    }
-    Ok(())
-}
-
 const SELECT_WORKFLOW: &str = "SELECT id,project_id,workspace_id,frame_id,root_workflow_id,parent_attempt_id,depth,root_limits_json,name,description,goal,mode,status,max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at FROM agent_workflows";
 
 impl super::Store {
@@ -673,18 +656,6 @@ impl super::Store {
         }
         tx.commit().await?;
         Ok(())
-    }
-
-    pub async fn get_agent_workflow_plan(
-        &self,
-        id: &str,
-    ) -> Result<Option<(AgentWorkflow, Vec<AgentWorkflowStep>)>> {
-        let workflow = match self.get_agent_workflow(id).await? {
-            Some(workflow) => workflow,
-            None => return Ok(None),
-        };
-        let steps = self.list_agent_workflow_steps(id).await?;
-        Ok(Some((workflow, steps)))
     }
 
     pub async fn replace_agent_workflow_plan(
@@ -815,40 +786,6 @@ impl super::Store {
         Ok(changed)
     }
 
-    pub async fn create_agent_workflow(&self, workflow: &AgentWorkflow) -> Result<()> {
-        workflow.validate()?;
-        if workflow.status != AgentWorkflowStatus::Draft {
-            anyhow::bail!("new agent workflows must start as draft");
-        }
-        sqlx::query(
-            "INSERT INTO agent_workflows(id,project_id,workspace_id,frame_id,root_workflow_id,parent_attempt_id,depth,root_limits_json,name,description,goal,mode,status,max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(&workflow.id)
-        .bind(&workflow.project_id)
-        .bind(&workflow.workspace_id)
-        .bind(workflow.frame_id.as_deref())
-        .bind(&workflow.root_workflow_id)
-        .bind(workflow.parent_attempt_id.as_deref())
-        .bind(workflow.depth)
-        .bind(&workflow.root_limits_json)
-        .bind(&workflow.name)
-        .bind(&workflow.description)
-        .bind(&workflow.goal)
-        .bind(&workflow.mode)
-        .bind(workflow.status.as_str())
-        .bind(workflow.max_parallel)
-        .bind(workflow.requires_confirmation as i64)
-        .bind(&workflow.plan_json)
-        .bind(workflow.version)
-        .bind(workflow.enabled as i64)
-        .bind(workflow.approved_at)
-        .bind(workflow.created_at)
-        .bind(workflow.updated_at)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub async fn get_agent_workflow(&self, id: &str) -> Result<Option<AgentWorkflow>> {
         sqlx::query(&format!("{SELECT_WORKFLOW} WHERE id=?"))
             .bind(id)
@@ -867,50 +804,6 @@ impl super::Store {
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(workflow_from_row).collect()
-    }
-
-    pub async fn update_agent_workflow(&self, workflow: &AgentWorkflow) -> Result<bool> {
-        workflow.validate()?;
-        let current = match self.get_agent_workflow(&workflow.id).await? {
-            Some(current) => current,
-            None => return Ok(false),
-        };
-        if current.status != AgentWorkflowStatus::Draft
-            || workflow.status != AgentWorkflowStatus::Draft
-        {
-            anyhow::bail!("approved or running agent workflow plans are immutable");
-        }
-        if workflow.version < current.version {
-            anyhow::bail!(
-                "workflow version must not move backwards ({} < {})",
-                workflow.version,
-                current.version
-            );
-        }
-        let version = workflow.version.max(current.version.saturating_add(1));
-        let updated = sqlx::query(
-            "UPDATE agent_workflows SET project_id=?,workspace_id=?,frame_id=?,name=?,description=?,goal=?,mode=?,status=?,max_parallel=?,requires_confirmation=?,plan_json=?,version=?,enabled=?,approved_at=?,updated_at=? WHERE id=? AND version=? AND status='draft'",
-        )
-        .bind(&workflow.project_id)
-        .bind(&workflow.workspace_id)
-        .bind(workflow.frame_id.as_deref())
-        .bind(&workflow.name)
-        .bind(&workflow.description)
-        .bind(&workflow.goal)
-        .bind(&workflow.mode)
-        .bind(workflow.status.as_str())
-        .bind(workflow.max_parallel)
-        .bind(workflow.requires_confirmation as i64)
-        .bind(&workflow.plan_json)
-        .bind(version)
-        .bind(workflow.enabled as i64)
-        .bind(workflow.approved_at)
-        .bind(chrono::Utc::now().timestamp())
-        .bind(&workflow.id)
-        .bind(current.version)
-        .execute(&self.pool)
-        .await?;
-        Ok(updated.rows_affected() == 1)
     }
 
     pub async fn delete_agent_workflow(&self, id: &str) -> Result<bool> {
@@ -935,39 +828,6 @@ impl super::Store {
         Ok(deleted_workflow.rows_affected() == 1)
     }
 
-    pub async fn create_agent_workflow_step(&self, step: &AgentWorkflowStep) -> Result<()> {
-        step.validate()?;
-        let mut tx = self.begin_write().await?;
-        bump_draft_workflow_version(&mut tx, &step.workflow_id).await?;
-        sqlx::query(
-            "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,template_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,spec_json,timeout_secs,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(&step.id)
-        .bind(&step.workflow_id)
-        .bind(step.position)
-        .bind(&step.agent_id)
-        .bind(&step.template_id)
-        .bind(&step.role)
-        .bind(&step.backend)
-        .bind(step.model.as_deref())
-        .bind(&step.prompt_template)
-        .bind(&step.input_schema_json)
-        .bind(&step.output_schema_json)
-        .bind(&step.input_contract_json)
-        .bind(&step.output_contract_json)
-        .bind(&step.permissions_json)
-        .bind(&step.context_policy_json)
-        .bind(&step.budget_json)
-        .bind(&step.spec_json)
-        .bind(step.timeout_secs)
-        .bind(step.created_at)
-        .bind(step.updated_at)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     pub async fn get_agent_workflow_step(&self, id: &str) -> Result<Option<AgentWorkflowStep>> {
         sqlx::query("SELECT id,workflow_id,position,agent_id,template_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,spec_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE id=?")
             .bind(id)
@@ -987,57 +847,5 @@ impl super::Store {
             .fetch_all(&self.pool)
             .await?;
         rows.iter().map(step_from_row).collect()
-    }
-
-    pub async fn update_agent_workflow_step(&self, step: &AgentWorkflowStep) -> Result<bool> {
-        step.validate()?;
-        let mut tx = self.begin_write().await?;
-        let current_workflow_id = sqlx::query_scalar::<_, String>(
-            "SELECT workflow_id FROM agent_workflow_steps WHERE id=?",
-        )
-        .bind(&step.id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(current_workflow_id) = current_workflow_id else {
-            tx.rollback().await?;
-            return Ok(false);
-        };
-        if current_workflow_id != step.workflow_id {
-            anyhow::bail!("workflow steps cannot be moved between plans");
-        }
-        bump_draft_workflow_version(&mut tx, &current_workflow_id).await?;
-        let updated = sqlx::query("UPDATE agent_workflow_steps SET workflow_id=?,position=?,agent_id=?,template_id=?,role=?,backend=?,model=?,prompt_template=?,input_schema_json=?,output_schema_json=?,input_contract_json=?,output_contract_json=?,permissions_json=?,context_policy_json=?,budget_json=?,spec_json=?,timeout_secs=?,updated_at=? WHERE id=?")
-            .bind(&step.workflow_id).bind(step.position).bind(&step.agent_id)
-            .bind(&step.template_id).bind(&step.role).bind(&step.backend).bind(step.model.as_deref())
-            .bind(&step.prompt_template).bind(&step.input_schema_json)
-            .bind(&step.output_schema_json).bind(&step.input_contract_json)
-            .bind(&step.output_contract_json).bind(&step.permissions_json)
-            .bind(&step.context_policy_json).bind(&step.budget_json).bind(&step.spec_json)
-            .bind(step.timeout_secs).bind(chrono::Utc::now().timestamp())
-            .bind(&step.id)
-            .execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(updated.rows_affected() == 1)
-    }
-
-    pub async fn delete_agent_workflow_step(&self, id: &str) -> Result<bool> {
-        let mut tx = self.begin_write().await?;
-        let workflow_id = sqlx::query_scalar::<_, String>(
-            "SELECT workflow_id FROM agent_workflow_steps WHERE id=?",
-        )
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(workflow_id) = workflow_id else {
-            tx.rollback().await?;
-            return Ok(false);
-        };
-        bump_draft_workflow_version(&mut tx, &workflow_id).await?;
-        let deleted = sqlx::query("DELETE FROM agent_workflow_steps WHERE id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(deleted.rows_affected() == 1)
     }
 }

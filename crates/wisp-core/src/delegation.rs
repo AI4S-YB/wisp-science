@@ -140,12 +140,6 @@ impl PermissionSet {
     }
 }
 
-impl PermissionSet {
-    pub fn is_subset_of(&self, ceiling: &Self) -> bool {
-        self.intersect(ceiling) == *self
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ContextPolicy {
     #[serde(default)]
@@ -450,22 +444,6 @@ impl AgentSpec {
             anyhow::bail!("dynamic agent workspace_policy is required");
         }
         Ok(())
-    }
-
-    pub fn constrained_by(
-        &self,
-        permission_ceiling: &PermissionSet,
-        context_ceiling: &ContextPolicy,
-        budget_ceiling: &AgentBudget,
-        timeout_ceiling: Option<u64>,
-    ) -> Self {
-        Self {
-            permissions: self.permissions.intersect(permission_ceiling),
-            context_policy: self.context_policy.restrict(context_ceiling),
-            budget: self.budget.restrict(budget_ceiling),
-            timeout_secs: restrict_limit(self.timeout_secs, timeout_ceiling),
-            ..self.clone()
-        }
     }
 }
 

@@ -575,40 +575,6 @@ pub fn parse_ssh_config_aliases(config: &str) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-pub fn render_hosts_section(hosts: &[SshHost]) -> Option<String> {
-    if hosts.is_empty() {
-        return None;
-    }
-    let mut s = String::from(
-        "## Compute hosts\n\n\
-The user has these SSH hosts available. Submit remote discovery, real work, and all long-running commands with \
-`run_in_context` using the `ssh:<alias>` context. Do not use shell `sleep`, \
-`ssh ... ps`, `nohup`, background `&`, or polling loops to monitor work. After \
-submission, observe or cancel it through the Runs control plane. Remote paths \
-live on the host, not on this machine. To watch a submitted Run or wait for its \
-result, call `monitor_run` exactly once with its Run id. Wisp shows a live card, \
-suspends the tool, and resumes after completion without repeated `get_run` calls.\n\n",
-    );
-    for h in hosts {
-        let mut conn = String::new();
-        if let Some(u) = &h.user {
-            conn.push_str(u);
-            conn.push('@');
-        }
-        conn.push_str(&h.alias);
-        if let Some(p) = h.port {
-            conn.push_str(&format!(":{p}"));
-        }
-        s.push_str(&format!("- {} — {}", h.alias, conn));
-        if let Some(n) = h.notes.as_deref().filter(|n| !n.trim().is_empty()) {
-            s.push_str(&format!(" — {n}"));
-        }
-        s.push('\n');
-    }
-    Some(s)
-}
-
 pub fn render_contexts_section(contexts: &[wisp_store::ExecutionContext]) -> Option<String> {
     let contexts: Vec<_> = contexts
         .iter()
@@ -1321,43 +1287,6 @@ Host -unsafe bad/name !negated
         // The pre-existing entry (with its notes) must not be overwritten.
         assert_eq!(merged[0].notes.as_deref(), Some("slurm cluster"));
         assert!(merged[1].notes.is_none());
-    }
-
-    #[test]
-    fn render_empty_is_none() {
-        assert!(render_hosts_section(&[]).is_none());
-    }
-
-    #[test]
-    fn render_lists_conn_and_notes() {
-        let hosts = vec![
-            SshHost {
-                alias: "gpu".into(),
-                host_name: None,
-                user: Some("alice".into()),
-                port: Some(2222),
-                identity_file: None,
-                notes: Some("slurm; sbatch".into()),
-                auth_method: None,
-                has_password: false,
-                password: None,
-            },
-            host("plain", None),
-        ];
-        let s = render_hosts_section(&hosts).unwrap();
-        assert!(s.starts_with("## Compute hosts"), "{s}");
-        assert!(
-            s.contains("`run_in_context`"),
-            "must direct real work to the run manager:\n{s}"
-        );
-        assert!(
-            s.contains("Runs control plane"),
-            "runs guidance missing:\n{s}"
-        );
-        assert!(s.contains("`nohup`"), "shell prohibition missing:\n{s}");
-        assert!(s.contains("alice@gpu:2222"), "conn missing:\n{s}");
-        assert!(s.contains("slurm; sbatch"), "notes missing:\n{s}");
-        assert!(s.contains("- plain"), "bare alias missing:\n{s}");
     }
 
     #[tokio::test]

@@ -1236,21 +1236,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_root_frames(&self, project_id: &str) -> Result<Vec<(String, String, i64)>> {
-        let rows = sqlx::query("SELECT id, agent_name, created_at FROM frames WHERE project_id=? AND parent_frame_id=id ORDER BY created_at DESC")
-            .bind(project_id)
-            .fetch_all(&self.pool).await?;
-        let mut out = vec![];
-        for row in rows {
-            out.push((
-                row.try_get::<String, _>("id")?,
-                row.try_get::<String, _>("agent_name")?,
-                row.try_get::<i64, _>("created_at")?,
-            ));
-        }
-        Ok(out)
-    }
-
     /// Persist an artifact and mint an immutable version for its current location.
 
     pub async fn search_sessions(

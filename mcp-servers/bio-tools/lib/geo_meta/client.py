@@ -96,7 +96,7 @@ class PoliteClient:
             self._pacer.pace(url, self.min_interval)
             try:
                 response = self._client.request(method, url, **kwargs)
-            except httpx.TransportError as exc:
+            except httpx.TransportError:
                 attempt += 1
                 if attempt > self.max_retries:
                     raise

@@ -805,22 +805,6 @@ impl Store {
         Ok(updated.rows_affected() == 1)
     }
 
-    pub async fn request_agent_workflow_attempt_cancel(&self, id: &str) -> Result<bool> {
-        let root_workflow_id = sqlx::query_scalar::<_, String>(
-            "SELECT root_workflow_id FROM agent_workflow_attempts WHERE id=?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        match root_workflow_id {
-            Some(root_workflow_id) => Ok(self
-                .request_agent_workflow_cancel(&root_workflow_id)
-                .await?
-                > 0),
-            None => Ok(false),
-        }
-    }
-
     pub async fn request_agent_workflow_cancel(&self, workflow_id: &str) -> Result<u64> {
         let root_workflow_id = sqlx::query_scalar::<_, String>(
             "SELECT root_workflow_id FROM agent_workflows WHERE id=?",

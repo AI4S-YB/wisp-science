@@ -1,7 +1,7 @@
 """Query specification for the Grants.gov search2 API."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 VALID_STATUSES = ("forecasted", "posted", "closed", "archived")
 ALL_STATUSES = "forecasted|posted|closed|archived"

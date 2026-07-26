@@ -6362,16 +6362,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 5.0.1",
- "serde_json",
  "tokio",
- "tracing",
  "tracing-subscriber",
  "wisp-core",
  "wisp-llm",
  "wisp-mcp",
  "wisp-runtime",
  "wisp-skills",
- "wisp-tools",
 ]
 
 [[package]]
@@ -6400,15 +6397,12 @@ dependencies = [
 name = "wisp-llm"
 version = "0.24.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tokio",
- "tracing",
  "url",
 ]
 
@@ -6441,7 +6435,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tracing",
  "uuid",
  "which",
  "wisp-llm",
@@ -6454,10 +6447,7 @@ name = "wisp-skills"
 version = "0.24.0"
 dependencies = [
  "async-trait",
- "serde",
  "serde_json",
- "tokio",
- "tracing",
  "walkdir",
  "wisp-llm",
  "wisp-paths",
@@ -6478,7 +6468,6 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
- "tracing",
  "uuid",
  "wisp-llm",
 ]
@@ -6564,16 +6553,13 @@ dependencies = [
 name = "wisp-tools"
 version = "0.24.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "dunce",
  "glob",
  "regex",
- "serde",
  "serde_json",
  "tokio",
- "tracing",
  "walkdir",
  "wisp-llm",
 ]

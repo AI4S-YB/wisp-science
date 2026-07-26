@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .records import _as_float, _date_only, _listify, _value_of
+from .records import _as_float, _listify, _value_of
 
 
 def _unit_value(node: Any) -> dict:

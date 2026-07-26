@@ -105,18 +105,6 @@ impl Store {
         Ok(updated)
     }
 
-    pub async fn list_artifact_versions(&self, artifact_id: &str) -> Result<Vec<ArtifactVersion>> {
-        let rows = sqlx::query(
-            "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\
-                    parent_version_id,producing_run_id,env_snapshot_hash,created_at \
-             FROM artifact_versions WHERE artifact_id=? ORDER BY version_number DESC",
-        )
-        .bind(artifact_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter().map(artifact_version_from_row).collect()
-    }
-
     pub async fn get_artifact_version(&self, version_id: &str) -> Result<Option<ArtifactVersion>> {
         let row = sqlx::query(
             "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\

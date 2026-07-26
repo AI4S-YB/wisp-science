@@ -8,7 +8,7 @@ silently drops everything after it.
 """
 from __future__ import annotations
 
-from .client import CivicClient, CivicApiError, GraphQLError
+from .client import CivicClient, CivicApiError
 from .records import (ASSERTION_FIELDS, DISEASE_FIELDS, EVIDENCE_FIELDS,
                       GENE_FIELDS, MOLECULAR_PROFILE_FIELDS, THERAPY_FIELDS,
                       VARIANT_CORE_FIELDS, normalize)

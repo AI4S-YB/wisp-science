@@ -7905,29 +7905,6 @@ pub(super) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
     }
 }
 
-#[component]
-pub(super) fn CodeBlock(lang: String, body: String) -> impl IntoView {
-    let lang_class = if lang.is_empty() {
-        "plaintext".to_string()
-    } else {
-        lang.clone()
-    };
-    let hid = unique_dom_id("code");
-    let hid_for_effect = hid.clone();
-    let lang_track = lang_class.clone();
-    let body_track = body.clone();
-    create_effect(move |_| {
-        let _ = (&lang_track, &body_track);
-        schedule_highlight(hid_for_effect.clone());
-    });
-    view! {
-        <div class="code-block" id=hid.clone()>
-            {(!lang.is_empty()).then(|| view! { <div class="code-lang">{lang.clone()}</div> })}
-            <pre class="md-code"><code class=format!("language-{lang_class}")>{body.clone()}</code></pre>
-        </div>
-    }
-}
-
 /// Right-pane code view with a line-number gutter (Claude Science style).
 /// The gutter is a plain <pre> (no <code>) so highlight.js skips it.
 #[component]

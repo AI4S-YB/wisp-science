@@ -8,7 +8,6 @@ reshapes raw ChEMBL REST payloads into the original output formats.
 
 from __future__ import annotations
 
-import urllib.parse
 from functools import lru_cache
 
 from mcp_servers_common import Tier1Server, load_schemas

@@ -1,9 +1,8 @@
 use super::{
-    artifact_node_id, run_from_row, run_node_id, validate_run_transition, ResearchEdge,
-    ResearchNode, ResearchNodeKind, RunRecord, RunStatus, Store,
+    artifact_node_id, run_from_row, run_node_id, ResearchEdge, ResearchNode, ResearchNodeKind,
+    RunRecord, RunStatus, Store,
 };
 use anyhow::Result;
-use sqlx::Row;
 
 impl Store {
     pub async fn project_has_active_runs(&self, project_id: &str) -> Result<bool> {
@@ -106,42 +105,6 @@ impl Store {
         rows.into_iter().map(run_from_row).collect()
     }
 
-    /// Advance a Run only if its status has not changed since validation.
-    pub async fn update_run_status(&self, id: &str, status: RunStatus) -> Result<bool> {
-        let run = self
-            .get_run(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Run not found"))?;
-        validate_run_transition(run.status, status)?;
-        let now = chrono::Utc::now().timestamp();
-        let started_at = if status == RunStatus::Running && run.started_at.is_none() {
-            Some(now)
-        } else {
-            run.started_at
-        };
-        let ended_at = if status.is_terminal() {
-            Some(now)
-        } else {
-            run.ended_at
-        };
-        let updated = sqlx::query(
-            "UPDATE runs SET status=?, started_at=?, ended_at=?, \
-             lifecycle_owner=CASE WHEN ? THEN NULL ELSE lifecycle_owner END, \
-             lifecycle_lease_until=CASE WHEN ? THEN NULL ELSE lifecycle_lease_until END \
-             WHERE id=? AND status=?",
-        )
-        .bind(status.as_str())
-        .bind(started_at)
-        .bind(ended_at)
-        .bind(status.is_terminal())
-        .bind(status.is_terminal())
-        .bind(id)
-        .bind(run.status.as_str())
-        .execute(&self.pool)
-        .await?;
-        Ok(updated.rows_affected() == 1)
-    }
-
     pub async fn claim_run_lifecycle(
         &self,
         id: &str,
@@ -238,48 +201,6 @@ impl Store {
         Ok(updated.rows_affected() == 1)
     }
 
-    pub async fn release_run_lifecycle(&self, id: &str, owner: &str) -> Result<bool> {
-        let updated = sqlx::query(
-            "UPDATE runs SET lifecycle_owner=NULL, lifecycle_lease_until=NULL \
-             WHERE id=? AND lifecycle_owner=?",
-        )
-        .bind(id)
-        .bind(owner)
-        .execute(&self.pool)
-        .await?;
-        Ok(updated.rows_affected() == 1)
-    }
-
-    pub async fn update_run_output(
-        &self,
-        id: &str,
-        stdout_tail: Option<&str>,
-        stderr_tail: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query("UPDATE runs SET stdout_tail=?, stderr_tail=? WHERE id=?")
-            .bind(stdout_tail)
-            .bind(stderr_tail)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn set_run_remote_handle(
-        &self,
-        id: &str,
-        remote_handle_json: &str,
-        remote_workdir: &str,
-    ) -> Result<()> {
-        sqlx::query("UPDATE runs SET remote_handle_json=?, remote_workdir=? WHERE id=?")
-            .bind(remote_handle_json)
-            .bind(remote_workdir)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     pub async fn set_run_remote_handle_owned(
         &self,
         id: &str,
@@ -301,27 +222,6 @@ impl Store {
         .execute(&self.pool)
         .await?;
         Ok(updated.rows_affected() == 1)
-    }
-
-    pub async fn record_run_poll(
-        &self,
-        id: &str,
-        stdout_tail: Option<&str>,
-        stderr_tail: Option<&str>,
-        error: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE runs SET last_polled_at=?, stdout_tail=COALESCE(?,stdout_tail), \
-             stderr_tail=COALESCE(?,stderr_tail), last_poll_error=? WHERE id=?",
-        )
-        .bind(chrono::Utc::now().timestamp())
-        .bind(stdout_tail)
-        .bind(stderr_tail)
-        .bind(error)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
     }
 
     pub async fn record_run_poll_owned(
@@ -412,31 +312,6 @@ impl Store {
         Ok(updated.rows_affected() == 1)
     }
 
-    pub async fn finish_active_run(
-        &self,
-        id: &str,
-        status: RunStatus,
-        exit_code: Option<i64>,
-    ) -> Result<bool> {
-        if !status.is_terminal() {
-            anyhow::bail!("finish_active_run requires a terminal status");
-        }
-        let now = chrono::Utc::now().timestamp();
-        let updated = sqlx::query(
-            "UPDATE runs SET status=?, started_at=COALESCE(started_at,?), ended_at=?, exit_code=?, \
-             lifecycle_owner=NULL, lifecycle_lease_until=NULL \
-             WHERE id=? AND status IN ('submitted','running','cancelling')",
-        )
-        .bind(status.as_str())
-        .bind(now)
-        .bind(now)
-        .bind(exit_code)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        Ok(updated.rows_affected() == 1)
-    }
-
     pub async fn finish_active_run_owned(
         &self,
         id: &str,
@@ -469,54 +344,6 @@ impl Store {
     pub async fn mark_run_lost_owned(&self, id: &str, owner: &str) -> Result<bool> {
         self.finish_active_run_owned(id, owner, RunStatus::Lost, None)
             .await
-    }
-
-    pub async fn mark_run_lost(&self, id: &str) -> Result<bool> {
-        self.finish_active_run(id, RunStatus::Lost, None).await
-    }
-
-    /// A desktop restart cannot safely reattach to an in-memory direct process.
-    pub async fn mark_active_runs_lost(&self) -> Result<u64> {
-        let now = chrono::Utc::now().timestamp();
-        let updated = sqlx::query(
-            "UPDATE runs SET status='lost', ended_at=?, lifecycle_owner=NULL, lifecycle_lease_until=NULL \
-             WHERE status IN ('submitted','running','cancelling')",
-        )
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
-        Ok(updated.rows_affected())
-    }
-
-    pub async fn finish_run(
-        &self,
-        id: &str,
-        status: RunStatus,
-        exit_code: Option<i64>,
-    ) -> Result<bool> {
-        if !status.is_terminal() {
-            anyhow::bail!("finish_run requires a terminal status");
-        }
-        let run = self
-            .get_run(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Run not found"))?;
-        validate_run_transition(run.status, status)?;
-        let now = chrono::Utc::now().timestamp();
-        let started_at = run.started_at.or(Some(now));
-        let updated = sqlx::query(
-            "UPDATE runs SET status=?, started_at=?, ended_at=?, exit_code=?, \
-             lifecycle_owner=NULL, lifecycle_lease_until=NULL WHERE id=? AND status=?",
-        )
-        .bind(status.as_str())
-        .bind(started_at)
-        .bind(now)
-        .bind(exit_code)
-        .bind(id)
-        .bind(run.status.as_str())
-        .execute(&self.pool)
-        .await?;
-        Ok(updated.rows_affected() == 1)
     }
 
     pub async fn save_run_artifact_link(
@@ -558,17 +385,5 @@ impl Store {
         )?)
         .await?;
         Ok(())
-    }
-
-    pub async fn list_run_artifacts(&self, run_id: &str) -> Result<Vec<(String, String)>> {
-        let rows = sqlx::query(
-            "SELECT artifact_id, role FROM run_artifacts WHERE run_id=? ORDER BY created_at ASC, id ASC",
-        )
-        .bind(run_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|r| Ok((r.try_get("artifact_id")?, r.try_get("role")?)))
-            .collect()
     }
 }

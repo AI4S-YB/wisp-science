@@ -55,7 +55,7 @@ class EuropePMCClient:
                 resp = self._session.get(url, params=params, timeout=self.timeout_s)
                 self.n_requests += 1
                 self.bytes_downloaded += len(resp.content)
-            except (requests.ConnectionError, requests.Timeout) as exc:
+            except (requests.ConnectionError, requests.Timeout):
                 attempt += 1
                 if attempt > self.max_retries:
                     raise

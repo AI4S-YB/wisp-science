@@ -539,7 +539,10 @@ mod tests {
         assert!(!session_completion_settings(&store, "f").await.auto_resume);
         let mut workflow = wisp_store::AgentWorkflow::new("wf", "p", "workspace", "batch").unwrap();
         workflow.frame_id = Some("f".into());
-        store.create_agent_workflow(&workflow).await.unwrap();
+        store
+            .create_agent_workflow_plan(&workflow, &[])
+            .await
+            .unwrap();
         assert!(store
             .approve_agent_workflow_plan("wf", workflow.version)
             .await

@@ -7,7 +7,7 @@ ordering; marshalling/caps live in the tier-2 server.
 
 from __future__ import annotations
 
-from .client import PUG_BASE, PUG_VIEW_BASE, NotFound, PubChemApiError, PugRestClient
+from .client import PUG_BASE, PUG_VIEW_BASE, NotFound, PugRestClient
 
 # The 2025 PUG REST property names: ``SMILES`` is the full (isomeric) SMILES,
 # ``ConnectivitySMILES`` the stereo-stripped one (formerly CanonicalSMILES).

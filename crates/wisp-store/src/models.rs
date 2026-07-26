@@ -608,59 +608,6 @@ pub(crate) fn research_edge_from_row(row: SqliteRow) -> Result<ResearchEdge> {
     })
 }
 
-pub(crate) fn validate_run_transition(from: RunStatus, to: RunStatus) -> Result<()> {
-    if from == to {
-        return Ok(());
-    }
-    let ok = match from {
-        RunStatus::Draft => matches!(
-            to,
-            RunStatus::Submitted | RunStatus::Running | RunStatus::Cancelled
-        ),
-        RunStatus::Submitted => matches!(
-            to,
-            RunStatus::Running
-                | RunStatus::Cancelling
-                | RunStatus::Succeeded
-                | RunStatus::Failed
-                | RunStatus::Cancelled
-                | RunStatus::TimedOut
-                | RunStatus::Lost
-        ),
-        RunStatus::Running => matches!(
-            to,
-            RunStatus::Cancelling
-                | RunStatus::Succeeded
-                | RunStatus::Failed
-                | RunStatus::Cancelled
-                | RunStatus::TimedOut
-                | RunStatus::Lost
-        ),
-        RunStatus::Cancelling => matches!(
-            to,
-            RunStatus::Succeeded
-                | RunStatus::Failed
-                | RunStatus::Cancelled
-                | RunStatus::TimedOut
-                | RunStatus::Lost
-        ),
-        RunStatus::Succeeded
-        | RunStatus::Failed
-        | RunStatus::Cancelled
-        | RunStatus::TimedOut
-        | RunStatus::Lost => false,
-    };
-    if ok {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "Invalid run status transition: {} -> {}",
-            from.as_str(),
-            to.as_str()
-        )
-    }
-}
-
 pub(crate) fn session_display_title(
     custom_title: Option<String>,
     first_user: Option<String>,
