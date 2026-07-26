@@ -1205,16 +1205,18 @@ fn window_focus_tracking_survives_unordered_focus_handoff() {
     assert_reset();
 }
 
-// Click-to-open (#434): a notification arms one navigation for its window, and
-// the first focus consumes it — a second focus must not re-trigger.
+// Click-to-open (#434, #499): a notification arms one navigation for its
+// window, and native activation/focus consumes the exact payload only once.
 #[test]
 fn pending_notify_target_fires_once_per_window() {
+    let target = serde_json::json!({ "projectId": "project-499", "sessionId": "s1" });
     super::pending_notify_targets()
         .lock()
         .unwrap()
-        .insert("proj-434".into(), serde_json::json!({ "sessionId": "s1" }));
-    assert!(super::take_pending_notify_target("proj-434").is_some());
-    assert!(super::take_pending_notify_target("proj-434").is_none());
+        .insert("proj-434".into(), target.clone());
+    assert!(super::claim_notify_activation("proj-434", true));
+    assert!(!super::claim_notify_activation("proj-434", true));
+    assert!(super::claim_notify_activation("unresolved-project", false));
 }
 
 // Queue (#433): the enqueue/driver protocol must (a) claim exactly one driver,

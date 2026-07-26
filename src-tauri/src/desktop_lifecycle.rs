@@ -2,9 +2,9 @@
 use tauri::{
     menu::{Menu, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, Emitter, WebviewUrl, WebviewWindowBuilder,
+    App, WebviewUrl, WebviewWindowBuilder,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(target_os = "windows")]
 pub(crate) const PET_WINDOW_LABEL: &str = "pet";
@@ -31,6 +31,33 @@ pub(crate) fn activate_workspace(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_focus();
     }
+}
+
+/// Restore one workspace window and optionally navigate it to a session.
+///
+/// Notification callbacks use the window that produced the notification. If
+/// that project window was closed in the meantime, the long-lived main window
+/// is a safe fallback that can switch to the target project in-place.
+pub(crate) fn activate_workspace_window(
+    app: &AppHandle,
+    preferred_label: &str,
+    target: Option<serde_json::Value>,
+) {
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
+
+    let window = app
+        .get_webview_window(preferred_label)
+        .or_else(|| app.get_webview_window("main"));
+    let Some(window) = window else {
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    if let Some(target) = target {
+        let _ = window.emit("open-session", target);
+    }
+    let _ = window.set_focus();
 }
 
 #[cfg(target_os = "windows")]

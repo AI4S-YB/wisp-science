@@ -3012,10 +3012,9 @@ fn app_has_focus() -> bool {
 }
 
 /// The `open-session` payload a window's most recent desktop notification was
-/// about, held until that window next gains focus — the user returning, usually
-/// by clicking the notification. Consumed once, then the window navigates to the
-/// session (#434). The desktop notification plugin has no click callback, so the
-/// focus that a click triggers is the signal we hang the navigation off of.
+/// about, held until that window next gains focus. This lets a taskbar/Dock click
+/// navigate to the relevant session (#434). Native notification callbacks also
+/// consume this fallback before restoring the exact window (#499).
 fn pending_notify_targets() -> &'static StdMutex<HashMap<String, serde_json::Value>> {
     static PENDING: std::sync::OnceLock<StdMutex<HashMap<String, serde_json::Value>>> =
         std::sync::OnceLock::new();
@@ -3026,6 +3025,13 @@ fn pending_notify_targets() -> &'static StdMutex<HashMap<String, serde_json::Val
 /// disarms the navigation so a later, unrelated focus does not re-trigger it.
 fn take_pending_notify_target(label: &str) -> Option<serde_json::Value> {
     pending_notify_targets().lock().unwrap().remove(label)
+}
+
+/// Claim a native notification activation. If focus already consumed a known
+/// target, the session is open and the callback must not navigate a second
+/// time. Notifications without a resolvable session still restore the window.
+fn claim_notify_activation(label: &str, has_target: bool) -> bool {
+    !has_target || take_pending_notify_target(label).is_some()
 }
 
 /// If the focused window has a session queued from an earlier notification,
@@ -6159,6 +6165,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Wisp")
         .run(move |_app, _event| {
+            #[cfg(target_os = "macos")]
+            if matches!(_event, tauri::RunEvent::Reopen { .. }) {
+                desktop_lifecycle::activate_workspace(_app);
+            }
             #[cfg(target_os = "macos")]
             if matches!(_event, tauri::RunEvent::ExitRequested { .. }) {
                 macos_exit_in_progress.store(true, Ordering::SeqCst);

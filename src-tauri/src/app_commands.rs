@@ -2,10 +2,103 @@
 
 use super::*;
 
+#[cfg(target_os = "windows")]
+fn show_clickable_notification(
+    app: AppHandle,
+    window_label: String,
+    title: String,
+    body: String,
+    target: Option<serde_json::Value>,
+) -> Result<(), String> {
+    use tauri_winrt_notification::Toast;
+
+    // Unpackaged development binaries do not have an AppUserModelID. Keep the
+    // same PowerShell fallback used by the notification plugin in that case.
+    let app_id = if cfg!(debug_assertions) {
+        Toast::POWERSHELL_APP_ID.to_string()
+    } else {
+        app.config().identifier.clone()
+    };
+    let callback_app = app.clone();
+    let callback_label = window_label.clone();
+    Toast::new(&app_id)
+        .title(&title)
+        .text1(&body)
+        .on_activated(move |_| {
+            // The native callback identifies the notification exactly, so it
+            // takes precedence over the latest-session focus fallback.
+            if claim_notify_activation(&callback_label, target.is_some()) {
+                desktop_lifecycle::activate_workspace_window(
+                    &callback_app,
+                    &callback_label,
+                    target.clone(),
+                );
+            }
+            Ok(())
+        })
+        .show()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn show_clickable_notification(
+    app: AppHandle,
+    window_label: String,
+    title: String,
+    body: String,
+    target: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let application = if tauri::is_dev() {
+        "com.apple.Terminal".to_string()
+    } else {
+        app.config().identifier.clone()
+    };
+    // This is process-global and intentionally first-wins. A prior notification
+    // may already have configured the same application identifier.
+    let _ = mac_notification_sys::set_application(&application);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut notification = mac_notification_sys::Notification::new();
+        notification
+            .title(&title)
+            .message(&body)
+            .wait_for_click(true);
+        match notification.send() {
+            Ok(mac_notification_sys::NotificationResponse::Click) => {
+                if claim_notify_activation(&window_label, target.is_some()) {
+                    desktop_lifecycle::activate_workspace_window(&app, &window_label, target);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(target: "wisp", %error, "desktop notification failed");
+            }
+        }
+    });
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn show_clickable_notification(
+    app: AppHandle,
+    _window_label: String,
+    title: String,
+    body: String,
+    _target: Option<serde_json::Value>,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|error| error.to_string())
+}
+
 /// Desktop notification for task status (#327). No-op while any app window is
 /// focused (the in-app UI already shows the state) or when disabled in settings.
 /// Clicking the notification navigates to the session it was about (#434) —
-/// see `pending_notify_targets`.
+/// native callbacks also restore a hidden/minimized window (#499).
 #[tauri::command]
 pub(super) async fn notify_user(
     window: tauri::Window,
@@ -37,21 +130,21 @@ pub(super) async fn notify_user(
     // Arm click-to-open before showing: on this window's next focus it jumps to
     // the session. Skipped if the session's project can't be resolved (the
     // notification still shows, just without navigation).
-    if let Some(project_id) = project_id {
-        pending_notify_targets().lock().unwrap().insert(
-            window.label().to_string(),
-            serde_json::json!({ "projectId": project_id, "sessionId": session_id }),
-        );
+    let target = project_id
+        .map(|project_id| serde_json::json!({ "projectId": project_id, "sessionId": session_id }));
+    if let Some(target) = &target {
+        pending_notify_targets()
+            .lock()
+            .unwrap()
+            .insert(window.label().to_string(), target.clone());
     }
-    use tauri_plugin_notification::NotificationExt;
-    window
-        .app_handle()
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| e.to_string())
+    show_clickable_notification(
+        window.app_handle().clone(),
+        window.label().to_string(),
+        title,
+        body,
+        target,
+    )
 }
 
 #[tauri::command]
