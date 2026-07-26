@@ -49,7 +49,7 @@ use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
-    dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
+    dom_value, event_target_checked, event_target_value, file_kind, format_bytes, DEEPSEEK_FLASH_MODEL,
     format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
     note_composition_end, opens_in_system_browser, parent_path, provider_defaults, provider_value,
     runtime_language, tool_card_label, unique_dom_id, user_message_presentation,
@@ -4568,8 +4568,9 @@ fn App() -> impl IntoView {
     });
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
 
-    // Onboarding step 0: save the entered key as a new model (DeepSeek defaults),
-    // reusing the same `save_model` command as Settings. Blank key = skip.
+    // Onboarding step 0: save the entered key as DeepSeek models (flash for
+    // cheap reading work, pro for everything else), reusing the same
+    // `save_model` command as Settings. Blank key = skip.
     // ponytail: onboarding is DeepSeek-only; other providers go through Settings › Models.
     let save_onboard_key = Callback::new(move |_| {
         let key = onboard_key.get();
@@ -4577,28 +4578,32 @@ fn App() -> impl IntoView {
             return;
         }
         let provider = "openai".to_string();
-        let (api_url, model) = provider_defaults(&provider);
-        let profile = serde_json::json!({
-            "id": "",
-            "label": "",
-            "provider": provider,
-            "api_url": api_url,
-            "model": model,
-            "max_tokens": 8192,
-            "reasoning_effort": "",
-            "supports_vision": false,
-            "use_for_vision": false,
-        });
+        let (api_url, pro) = provider_defaults(&provider);
+        // `save_model` makes every newly created profile the active one, so
+        // the model the user should land on has to be saved last.
+        let wanted = [DEEPSEEK_FLASH_MODEL, pro];
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({
-                "profile": profile,
-                "key": Some(key),
-                "useForVision": false,
-            }))
-            .unwrap();
-            if let Ok(v) = invoke_checked("save_model", arg).await {
-                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                    models.set(list);
+            for model in wanted {
+                let arg = to_value(&serde_json::json!({
+                    "profile": {
+                        "id": "",
+                        "label": "",
+                        "provider": provider,
+                        "api_url": api_url,
+                        "model": model,
+                        "max_tokens": 8192,
+                        "reasoning_effort": "",
+                        "supports_vision": false,
+                        "use_for_vision": false,
+                    },
+                    "key": Some(key.clone()),
+                    "useForVision": false,
+                }))
+                .unwrap();
+                if let Ok(v) = invoke_checked("save_model", arg).await {
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                        models.set(list);
+                    }
                 }
             }
             onboard_key.set(String::new());

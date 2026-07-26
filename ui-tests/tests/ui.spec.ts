@@ -3241,6 +3241,22 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
 });
 
+test("onboarding key setup adds the flash model before the pro model", async ({ page }) => {
+  await page.goto("/?mockOnboarding=1");
+  await expect(page.locator(".onboard-overlay")).toBeVisible();
+  await page.getByLabel("API key (stored in OS keyring)").fill("sk-onboard");
+  await page.getByRole("button", { name: "Next" }).click();
+  // Order matters: save_model activates each new profile, so pro must land
+  // last for the user to start on it.
+  await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .filter((c: any) => c.cmd === "save_model")
+    .map((c: any) => {
+      const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
+      const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
+      return profile.model;
+    }))).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+});
+
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);

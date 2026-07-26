@@ -73,6 +73,10 @@ pub(crate) fn provider_value(provider: &str) -> &'static str {
     }
 }
 
+/// Cheap DeepSeek tier onboarding adds next to the default (pro) model, so a
+/// first-run user has something to switch to for reading-heavy work.
+pub(crate) const DEEPSEEK_FLASH_MODEL: &str = "deepseek-v4-flash";
+
 pub(crate) fn provider_defaults(provider: &str) -> (&'static str, &'static str) {
     match provider_value(provider) {
         "anthropic" => ("https://api.anthropic.com", "claude-sonnet-5"),
