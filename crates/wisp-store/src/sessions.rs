@@ -6,6 +6,19 @@ use anyhow::Result;
 use sqlx::{Row, Sqlite, Transaction};
 use wisp_llm::Message;
 
+/// Token totals for one root session, folded from the persisted per-round
+/// `Usage` transcript events (the `frames` token columns are never updated).
+#[derive(serde::Serialize)]
+pub struct SessionTokenUsage {
+    pub id: String,
+    pub title: String,
+    pub updated_at: i64,
+    pub input: i64,
+    pub output: i64,
+    pub reasoning: i64,
+    pub cached: i64,
+}
+
 /// One bounded, turn-aligned slice of a saved conversation.
 pub struct SessionTranscriptPage {
     pub messages: Vec<(i64, Message)>,
@@ -1276,5 +1289,42 @@ impl Store {
             .await?
             .into_iter()
             .next())
+    }
+
+    /// Per-session token totals for the Usage settings page. Sub-agent frames
+    /// fold into their root session. Serde tags internally-tagged enums first,
+    /// so the LIKE prefix is a cheap exact filter for `Usage` events.
+    pub async fn token_usage_by_session(&self) -> Result<Vec<SessionTokenUsage>> {
+        let rows = sqlx::query(
+            "SELECT r.id AS id, r.title AS custom_title, r.updated_at AS updated_at, \
+                    (SELECT content FROM messages m WHERE m.frame_id = r.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
+                    SUM(COALESCE(json_extract(e.event_json,'$.input'),0)) AS input, \
+                    SUM(COALESCE(json_extract(e.event_json,'$.output'),0)) AS output, \
+                    SUM(COALESCE(json_extract(e.event_json,'$.reasoning'),0)) AS reasoning, \
+                    SUM(COALESCE(json_extract(e.event_json,'$.cached'),0)) AS cached \
+             FROM session_ui_events e \
+             JOIN frames f ON f.id = e.frame_id \
+             JOIN frames r ON r.id = COALESCE(f.root_frame_id, f.id) \
+             WHERE e.event_json LIKE '{\"kind\":\"Usage\"%' \
+             GROUP BY r.id ORDER BY r.updated_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(SessionTokenUsage {
+                    id: row.try_get("id")?,
+                    title: session_display_title(
+                        row.try_get::<Option<String>, _>("custom_title")?,
+                        row.try_get::<Option<String>, _>("first_user")?,
+                    ),
+                    updated_at: row.try_get("updated_at")?,
+                    input: row.try_get("input")?,
+                    output: row.try_get("output")?,
+                    reasoning: row.try_get("reasoning")?,
+                    cached: row.try_get("cached")?,
+                })
+            })
+            .collect()
     }
 }

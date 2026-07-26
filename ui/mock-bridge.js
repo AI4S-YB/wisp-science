@@ -293,6 +293,25 @@
             return { provider: "openai", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", label: "deepseek-v4-pro", has_api_key: true, locale: "en", max_iter: 100, max_tokens: 4096, reasoning_effort: "", supports_vision: true };
           case "list_models":
             return mockModels;
+          case "get_storage_usage":
+            return {
+              data_dir: "C:\\mock\\AppData\\wisp-science",
+              workspace_dirs: ["C:\\mock\\wisp-science"],
+              entries: [
+                { key: "database", bytes: 23 * 1024 * 1024 },
+                { key: "python", bytes: 428 * 1024 * 1024 },
+                { key: "plugins", bytes: 5632 * 1024 },
+                { key: "workspace", bytes: 96 * 1024 * 1024 },
+                { key: "other", bytes: 300 * 1024 },
+              ],
+              total_bytes: (23 + 428 + 96) * 1024 * 1024 + 5632 * 1024 + 300 * 1024,
+            };
+          case "get_token_usage":
+            return [
+              { id: "s1", title: "查找文献, FX-cell", updated_at: 1719900000, input: 355570, output: 5548, reasoning: 0, cached: 252928 },
+              { id: "s2", title: "我确认下你你有什么skill", updated_at: 1719890000, input: 131917, output: 1462, reasoning: 319, cached: 101888 },
+              { id: "s3", title: "你能做啥", updated_at: 1719880000, input: 5085, output: 428, reasoning: 0, cached: 0 },
+            ];
           case "credential_status":
             return Object.entries(mockCredentials);
           case "list_custom_credentials":

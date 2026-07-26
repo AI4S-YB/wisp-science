@@ -671,3 +671,85 @@ pub(super) async fn set_update_check_enabled(
     save_update_check_enabled(&state.store, enabled).await?;
     Ok(enabled)
 }
+
+/// Sum of file sizes under `path`; 0 for a missing path.
+fn dir_size(path: &Path) -> u64 {
+    walkdir::WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(|meta| meta.is_file())
+        .map(|meta| meta.len())
+        .sum()
+}
+
+#[tauri::command]
+pub(super) async fn get_storage_usage(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let app_data = state.app_data.clone();
+    // Every project workspace, deduped; roots inside app_data would double
+    // count the scan below, so they are skipped.
+    let workspace_dirs: Vec<PathBuf> = state
+        .store
+        .list_projects()
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|(_, _, root, ..)| PathBuf::from(root))
+        .filter(|root| !root.as_os_str().is_empty() && !root.starts_with(&app_data))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    tokio::task::spawn_blocking(move || {
+        let (mut database, mut python, mut plugins, mut other) = (0u64, 0u64, 0u64, 0u64);
+        for entry in fs::read_dir(&app_data).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let bytes = if entry.path().is_dir() {
+                dir_size(&entry.path())
+            } else {
+                entry.metadata().map(|meta| meta.len()).unwrap_or(0)
+            };
+            match name.as_str() {
+                name if name.contains(".sqlite") => database += bytes,
+                "python" => python += bytes,
+                "plugins" | "plugin-staging" | "plugin-downloads" => plugins += bytes,
+                _ => other += bytes,
+            }
+        }
+        let workspace: u64 = workspace_dirs.iter().map(|dir| dir_size(dir)).sum();
+        let entries = [
+            ("database", database),
+            ("python", python),
+            ("plugins", plugins),
+            ("workspace", workspace),
+            ("other", other),
+        ];
+        Ok(json!({
+            "data_dir": app_data.to_string_lossy(),
+            "workspace_dirs": workspace_dirs
+                .iter()
+                .map(|dir| dir.to_string_lossy())
+                .collect::<Vec<_>>(),
+            "entries": entries
+                .iter()
+                .map(|(key, bytes)| json!({ "key": key, "bytes": bytes }))
+                .collect::<Vec<_>>(),
+            "total_bytes": entries.iter().map(|(_, bytes)| bytes).sum::<u64>(),
+        }))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn get_token_usage(
+    state: State<'_, AppState>,
+) -> Result<Vec<wisp_store::SessionTokenUsage>, String> {
+    state
+        .store
+        .token_usage_by_session()
+        .await
+        .map_err(|error| error.to_string())
+}

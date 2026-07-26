@@ -137,6 +137,66 @@ async fn roundtrip() {
 }
 
 #[tokio::test]
+async fn token_usage_folds_usage_events_into_root_sessions() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_token_usage_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_frame("root", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .append_message("root", 1, &Message::user("hello usage"))
+        .await
+        .unwrap();
+    store
+        .create_child_frame("child", "root", "p", "Sub", "m")
+        .await
+        .unwrap();
+    let usage = |input: i64, output: i64| {
+        format!(
+            "{{\"kind\":\"Usage\",\"frame_id\":\"x\",\"round\":1,\"input\":{input},\"output\":{output},\"reasoning\":1,\"cached\":2,\"ctx_tokens\":0,\"max_context\":0}}"
+        )
+    };
+    store
+        .append_session_ui_event("root", 1, &usage(100, 10))
+        .await
+        .unwrap();
+    store
+        .append_session_ui_event(
+            "root",
+            2,
+            "{\"kind\":\"Text\",\"frame_id\":\"root\",\"delta\":\"hi\"}",
+        )
+        .await
+        .unwrap();
+    store
+        .append_session_ui_event("child", 1, &usage(50, 5))
+        .await
+        .unwrap();
+    // A session with no usage events must not appear at all.
+    store
+        .create_frame("quiet", "p", "OPERON", "m")
+        .await
+        .unwrap();
+
+    let rows = store.token_usage_by_session().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.id, "root");
+    assert_eq!(row.title, "hello usage");
+    assert_eq!(
+        (row.input, row.output, row.reasoning, row.cached),
+        (150, 15, 2, 4)
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn child_agent_frames_stay_out_of_top_level_session_history() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_child_frames_{}.sqlite",

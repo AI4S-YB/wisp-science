@@ -4600,6 +4600,8 @@ pub(super) fn settings_section_label(loc: Locale, section: &str) -> String {
         "channels" => t(loc, "settings.nav.channels"),
         "credentials" => t(loc, "settings.nav.credentials"),
         "permissions" => t(loc, "settings.nav.permissions"),
+        "storage" => t(loc, "settings.nav.storage"),
+        "usage" => t(loc, "settings.nav.usage"),
         _ => t(loc, "settings.title"),
     }
     .into()
