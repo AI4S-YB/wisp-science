@@ -327,9 +327,13 @@ pub(crate) fn active_model_label(models: &[ModelProfile]) -> Option<String> {
 pub(crate) fn model_label(models: &[ModelProfile], model_id: Option<&str>) -> Option<String> {
     models
         .iter()
-        .find(|model| model_id == Some(model.id.as_str()))
-        .or_else(|| models.iter().find(|model| model.active))
-        .or_else(|| models.first())
+        .find(|model| model.is_chat_model() && model_id == Some(model.id.as_str()))
+        .or_else(|| {
+            models
+                .iter()
+                .find(|model| model.active && model.is_chat_model())
+        })
+        .or_else(|| models.iter().find(|model| model.is_chat_model()))
         .map(|m| m.label.clone())
         .filter(|s| !s.is_empty())
 }
@@ -1242,6 +1246,14 @@ pub(crate) struct ModelProfile {
     pub(crate) supports_vision: bool,
     #[serde(default)]
     pub(crate) use_for_vision: bool,
+    #[serde(default)]
+    pub(crate) use_for_image_generation: bool,
+}
+
+impl ModelProfile {
+    pub(crate) fn is_chat_model(&self) -> bool {
+        !self.model.trim().eq_ignore_ascii_case("gpt-image-2")
+    }
 }
 
 /// A user-definable agent persona (mirrors `specialists::Specialist` in src-tauri).
@@ -1468,6 +1480,7 @@ pub(crate) struct ModelForm {
     pub(crate) reasoning_effort: String,
     pub(crate) supports_vision: bool,
     pub(crate) use_for_vision: bool,
+    pub(crate) use_for_image_generation: bool,
 }
 
 fn default_model_context_window() -> u64 {

@@ -4602,6 +4602,7 @@ pub(super) fn profile_to_form(m: &ModelProfile) -> ModelForm {
         reasoning_effort: m.reasoning_effort.clone(),
         supports_vision: m.supports_vision,
         use_for_vision: m.use_for_vision,
+        use_for_image_generation: m.use_for_image_generation,
     }
 }
 
