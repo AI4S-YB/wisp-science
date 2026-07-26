@@ -1667,6 +1667,39 @@ fn App() -> impl IntoView {
         },
     );
     let project_info_cb = project_info;
+    // Roll the active conversation back to just before user message `ui_index`
+    // and return its text to the composer. Shared by message-edit and by the
+    // automatic rollback when a turn dies on a model that cannot take images.
+    let rewind_to_user_item = move |ui_index: usize| {
+        let list = items.get();
+        let Some(user_idx) = user_message_index(&list, ui_index) else {
+            return;
+        };
+        let Some(ChatItem::User(text)) = list.get(ui_index) else {
+            return;
+        };
+        let draft = composer_text_from_user_message(text);
+        let sid = active_session.get();
+        let user_idx = user_idx
+            + sid
+                .as_deref()
+                .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
+                .map_or(0, |page| page.user_offset);
+        if let Some(id) = sid.as_deref() {
+            conversation_outlines.update(|outlines| {
+                if let Some(outline) = outlines.get_mut(id) {
+                    outline.retain(|entry| entry.user_index < user_idx);
+                }
+            });
+        }
+        items.set(list.into_iter().take(ui_index).collect());
+        input.set(draft);
+        focus_composer();
+        spawn_local(async move {
+            let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
+            let _ = invoke("rewind_session", arg).await;
+        });
+    };
     // Streaming deltas are buffered and flushed on a timer (~20 fps) instead of
     // being applied per token; see the "Streaming delta batching" block above.
     let delta_buf: DeltaBuf = Rc::new(RefCell::new(HashMap::new()));
@@ -1930,19 +1963,40 @@ fn App() -> impl IntoView {
             AgentEvent::Error { frame_id, message } => {
                 flush_now();
                 notify_desktop(&frame_id, "error", &message);
-                let model = session_model_label(
-                    &models_cb.get_untracked(),
-                    &session_models_cb.get_untracked(),
-                    Some(&frame_id),
-                );
-                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                    strip_approval_pending(v);
-                    v.push(ChatItem::Assistant {
-                        text: format!("Error: {message}"),
-                        model,
-                        resources: Vec::new(),
+                // A model that cannot take images leaves the attachment sitting
+                // in history, so every later send fails the same way. Toast the
+                // fix and roll the turn back into the composer instead of
+                // parking an error card on a conversation that is now stuck.
+                let rolled_back = i18n::is_image_unsupported(&message)
+                    && active_cb.get_untracked().as_deref() == Some(&frame_id)
+                    && {
+                        let last_user = items_cb
+                            .get_untracked()
+                            .iter()
+                            .rposition(|item| matches!(item, ChatItem::User(_)));
+                        if let Some(index) = last_user {
+                            // Truncating at the user turn also drops any
+                            // approval-pending rows the dead turn left behind.
+                            rewind_to_user_item(index);
+                            show_warning_toast(&t(locale_cb.get_untracked(), "err.hint.image"));
+                        }
+                        last_user.is_some()
+                    };
+                if !rolled_back {
+                    let model = session_model_label(
+                        &models_cb.get_untracked(),
+                        &session_models_cb.get_untracked(),
+                        Some(&frame_id),
+                    );
+                    route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                        strip_approval_pending(v);
+                        v.push(ChatItem::Assistant {
+                            text: format!("Error: {message}"),
+                            model,
+                            resources: Vec::new(),
+                        });
                     });
-                });
+                }
                 approval_cb.update(|s| {
                     s.remove(&frame_id);
                 });
@@ -2720,34 +2774,7 @@ fn App() -> impl IntoView {
         if busy.get() {
             return;
         }
-        let list = items.get();
-        let Some(user_idx) = user_message_index(&list, ui_index) else {
-            return;
-        };
-        let Some(ChatItem::User(text)) = list.get(ui_index) else {
-            return;
-        };
-        let draft = composer_text_from_user_message(text);
-        let sid = active_session.get();
-        let user_idx = user_idx
-            + sid
-                .as_deref()
-                .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
-                .map_or(0, |page| page.user_offset);
-        if let Some(id) = sid.as_deref() {
-            conversation_outlines.update(|outlines| {
-                if let Some(outline) = outlines.get_mut(id) {
-                    outline.retain(|entry| entry.user_index < user_idx);
-                }
-            });
-        }
-        items.set(list.into_iter().take(ui_index).collect());
-        input.set(draft);
-        focus_composer();
-        spawn_local(async move {
-            let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
-            let _ = invoke("rewind_session", arg).await;
-        });
+        rewind_to_user_item(ui_index);
     };
     let branch_message = {
         let locale = locale;

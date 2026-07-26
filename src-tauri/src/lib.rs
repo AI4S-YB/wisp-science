@@ -4635,6 +4635,10 @@ async fn send_message_inner(
     };
 
     let turn_start = agent.ctx.messages.len();
+    // Re-stated every turn: the session may have been switched to a different
+    // model since the last one, and images already in history must follow the
+    // model that is about to receive them, not the one that accepted them.
+    agent.ctx.supports_vision = primary_supports_vision;
     state.running_turns.lock().await.insert(frame_id.clone());
     let result = if resume {
         agent

@@ -29,6 +29,10 @@ const OLD_REASONING_KEEP: (usize, usize) = (125, 125);
 /// repoint at a newer archive that itself only contains tombstones.
 pub const TOMBSTONE_PREFIX: &str = "[compacted;";
 
+/// Stands in for an image part when the target model cannot read images.
+pub const IMAGE_UNSUPPORTED_NOTE: &str =
+    "[image omitted: the active model does not accept image input]";
+
 /// Largest char boundary `<= i` (std's `floor_char_boundary` is still unstable).
 fn floor_char_boundary(s: &str, mut i: usize) -> usize {
     if i >= s.len() {
@@ -56,6 +60,10 @@ pub struct ContextManager {
     /// Set once the warning fired; reset when back under the threshold.
     warned: bool,
     pub runtime_injections: Vec<Message>,
+    /// Whether the model this context is about to be sent to accepts image
+    /// content parts. Set per turn from the active profile; `true` by default
+    /// so anything that builds a context without asking keeps sending images.
+    pub supports_vision: bool,
     /// Persisted prefix and ephemeral messages used by the latest model call.
     /// Keeping only the prefix length avoids cloning the full conversation on
     /// every agent-loop iteration.
@@ -71,6 +79,7 @@ impl ContextManager {
             warn_threshold: (max_context as f64 * 0.8) as usize,
             warned: false,
             runtime_injections: vec![],
+            supports_vision: true,
             last_request_message_count: None,
             last_request_runtime_injections: vec![],
         }
@@ -543,13 +552,29 @@ work in progress. Use this structure:
         self.last_request_message_count = Some(self.messages.len());
         self.last_request_runtime_injections
             .clone_from(&self.runtime_injections);
-        if self.runtime_injections.is_empty() {
-            std::borrow::Cow::Borrowed(&self.messages)
+        let mut prepared = if self.runtime_injections.is_empty() {
+            std::borrow::Cow::Borrowed(&self.messages[..])
         } else {
             let mut out = self.messages.clone();
             out.extend(self.runtime_injections.iter().cloned());
             std::borrow::Cow::Owned(out)
+        };
+        // A text-only model rejects the whole request over one image part, and
+        // an image sent under an earlier vision model stays in history forever
+        // — so the session would fail on every send until it is rewound. Drop
+        // the parts on the way out instead. History itself is untouched, and
+        // the substitution is deterministic, so the prefix stays cacheable for
+        // as long as the model does not change.
+        if !self.supports_vision && prepared.iter().any(Self::has_image) {
+            for m in prepared.to_mut() {
+                Self::age_images(m, IMAGE_UNSUPPORTED_NOTE);
+            }
         }
+        prepared
+    }
+
+    fn has_image(m: &Message) -> bool {
+        matches!(&m.content, Content::Parts(parts) if parts.iter().any(|p| matches!(p, Part::Image { .. })))
     }
 }
 
@@ -793,6 +818,42 @@ mod tests {
         ctx.append_user("y".repeat(4_000));
         ctx.prepare_for_api(&counter);
         assert_eq!(counter.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    // An image attached under a vision model stays in history; sending it to a
+    // text-only model 400s the whole request ("unknown variant `image_url`"),
+    // which would otherwise repeat on every later send in the session.
+    #[test]
+    fn prepare_for_api_drops_images_for_a_text_only_model() {
+        let counter = WarnCounter(std::sync::atomic::AtomicUsize::new(0));
+        let mut ctx = ContextManager::new(1_000_000);
+        ctx.append_user_content(image_content("plot", "data:image/png;base64,AAAA"));
+        ctx.inject_user("runtime note");
+        let before = serde_json::to_string(&ctx.messages).unwrap();
+
+        assert!(
+            has_image_part(&ctx.prepare_for_api(&counter)),
+            "a vision-capable model still receives the image"
+        );
+
+        ctx.supports_vision = false;
+        let prepared = ctx.prepare_for_api(&counter).into_owned();
+        assert!(!has_image_part(&prepared), "image part must not be sent");
+        assert!(prepared[0].content.as_text().contains("plot"), "label kept");
+        assert!(prepared[0]
+            .content
+            .as_text()
+            .contains(IMAGE_UNSUPPORTED_NOTE));
+        assert_eq!(prepared.len(), 2, "runtime injection still appended");
+        assert_eq!(
+            serde_json::to_string(&ctx.messages).unwrap(),
+            before,
+            "stripping happens on the way out, never in history"
+        );
+    }
+
+    fn has_image_part(messages: &[Message]) -> bool {
+        messages.iter().any(ContextManager::has_image)
     }
 
     #[test]
