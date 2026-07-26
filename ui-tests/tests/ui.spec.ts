@@ -378,21 +378,30 @@ test("ACP turn maps config, overlapping tools, plan, usage, and exact permission
   await expect(page.getByText("Hello from ACP.")).toBeVisible();
   await expect(page.getByTestId("acp-tool")).toHaveCount(2);
   await expect(page.getByText("Inspect")).toBeVisible();
+  await expect(page.getByTestId("acp-session-config")).toHaveCount(0);
+  await expect(page.locator(".model-picker-btn")).toContainText("Test ACP Agent");
+  await page.locator(".model-picker-btn").click();
   const config = page.getByTestId("acp-session-config");
   await expect(config).toContainText("Agent");
   await expect(config).toContainText("Smart");
-  await config.getByRole("button", { name: "Model" }).click();
-  await page.getByRole("option", { name: "Fast" }).click();
+  await config.getByLabel("Model").selectOption("fast");
   await expect.poll(() => lastInvokeArgs(page, "set_acp_session_config")).toMatchObject({
     configId: "model", value: { value: "fast" },
   });
-  // Session mode is now a selector (#247): switching invokes set_acp_session_mode.
-  await config.getByRole("button", { name: "Session mode" }).click();
-  await page.getByRole("option", { name: "Full Access" }).click();
+  await config.getByLabel("Session mode").selectOption("full-access");
   await expect.poll(() => lastInvokeArgs(page, "set_acp_session_mode")).toMatchObject({
     modeId: "full-access",
   });
-  await expect(config).toContainText("Full Access");
+  await expect(config.getByLabel("Session mode")).toHaveValue("full-access");
+  const fastMode = config.getByLabel("Fast Mode");
+  await expect(fastMode).not.toBeChecked();
+  await config.locator("label.model-menu-config-row", { hasText: "Fast Mode" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_config")).toMatchObject({
+    configId: "fast_mode", value: { type: "boolean", value: true },
+  });
+  await expect(fastMode).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(config).toHaveCount(0);
 
   const permission = page.getByTestId("acp-permission-card");
   await expect(permission).toBeVisible();

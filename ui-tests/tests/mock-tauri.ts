@@ -1311,8 +1311,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             };
           case "authenticate_acp_agent":
             return null;
-          case "set_acp_session_config":
-            return [{ id: "model", name: "Model", type: "select", currentValue: arg("value")?.value ?? "fast", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }];
+          case "set_acp_session_config": {
+            const configId = String(arg("configId") ?? "");
+            const currentValue = plain(arg("value"))?.value;
+            return [
+              { id: "model", name: "Model", type: "select", currentValue: configId === "model" ? currentValue : "smart", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] },
+              { id: "fast_mode", name: "Fast Mode", type: "boolean", currentValue: configId === "fast_mode" ? Boolean(currentValue) : false },
+            ];
+          }
           case "set_acp_session_mode":
             return String(arg("modeId") ?? "");
           case "respond_acp_permission":
@@ -2169,7 +2175,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 emit("acp-session-update", { frameId: fid, kind: "ToolCall", payload: { toolCallId: "tool-b", title: "Run checks", kind: "execute", status: "in_progress" } });
                 emit("acp-session-update", { frameId: fid, kind: "ToolCallUpdate", payload: { toolCallId: "tool-a", status: "completed", content: [{ type: "content", content: { type: "text", text: "read complete" } }] } });
                 emit("acp-session-update", { frameId: fid, kind: "Plan", payload: { entries: [{ content: "Inspect", priority: "high", status: "completed" }, { content: "Implement", priority: "medium", status: "in_progress" }] } });
-                emit("acp-session-update", { frameId: fid, kind: "ConfigOptions", payload: { configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "smart", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }] } });
+                emit("acp-session-update", { frameId: fid, kind: "ConfigOptions", payload: { configOptions: [
+                  { id: "model", name: "Model", type: "select", currentValue: "smart", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] },
+                  { id: "fast_mode", name: "Fast Mode", type: "boolean", currentValue: false },
+                ] } });
                 emit("acp-session-update", { frameId: fid, kind: "Usage", payload: { used: 1200, size: 8000 } });
                 if (String(msg).includes("PERMISSION")) {
                   acpPermissionFrames["permission-1"] = fid;
