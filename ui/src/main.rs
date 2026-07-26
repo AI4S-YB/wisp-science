@@ -1263,7 +1263,6 @@ fn App() -> impl IntoView {
     let bootstrap = create_rw_signal::<Option<BootstrapStatus>>(None);
     let show_onboarding = create_rw_signal(false);
     let onboard_step = create_rw_signal(0usize);
-    let onboard_provider = create_rw_signal("openai".to_string());
     let onboard_key = create_rw_signal(String::new());
 
     create_effect(move |_| {
@@ -4562,12 +4561,13 @@ fn App() -> impl IntoView {
 
     // Onboarding step 0: save the entered key as a new model (DeepSeek defaults),
     // reusing the same `save_model` command as Settings. Blank key = skip.
+    // ponytail: onboarding is DeepSeek-only; other providers go through Settings › Models.
     let save_onboard_key = Callback::new(move |_| {
         let key = onboard_key.get();
         if key.trim().is_empty() {
             return;
         }
-        let provider = provider_value(&onboard_provider.get()).to_string();
+        let provider = "openai".to_string();
         let (api_url, model) = provider_defaults(&provider);
         let profile = serde_json::json!({
             "id": "",
@@ -10904,7 +10904,7 @@ fn App() -> impl IntoView {
         />
         <OnboardingOverlay
             locale=locale show_onboarding=show_onboarding onboard_step=onboard_step
-            onboard_provider=onboard_provider onboard_key=onboard_key
+            onboard_key=onboard_key
             save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)
         />

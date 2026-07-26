@@ -4,7 +4,7 @@ use crate::app_support::{
 use crate::bindings::{invoke_checked, open_external_url};
 use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, Locale};
-use crate::text::{dom_value, event_target_value, provider_value};
+use crate::text::{dom_value, event_target_value};
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 
@@ -353,21 +353,14 @@ pub(super) fn CapabilitiesOverlay(
     }
 }
 
-/// Where each provider issues API keys — used by the onboarding "Get an API key" link.
-fn provider_key_url(provider: &str) -> &'static str {
-    match provider_value(provider) {
-        "anthropic" => "https://console.anthropic.com/settings/keys",
-        "openai_responses" => "https://platform.openai.com/api-keys",
-        _ => "https://platform.deepseek.com/api_keys",
-    }
-}
+// ponytail: onboarding only offers DeepSeek; other providers live in Settings › Models.
+const DEEPSEEK_KEY_URL: &str = "https://platform.deepseek.com/api_keys";
 
 #[component]
 pub(super) fn OnboardingOverlay(
     locale: RwSignal<Locale>,
     show_onboarding: RwSignal<bool>,
     onboard_step: RwSignal<usize>,
-    onboard_provider: RwSignal<String>,
     onboard_key: RwSignal<String>,
     save_onboard_key: Callback<()>,
     dismiss_onboard: Callback<web_sys::MouseEvent>,
@@ -384,21 +377,13 @@ pub(super) fn OnboardingOverlay(
                         <h2>{t(loc, "onboard.apikey.title")}</h2>
                         <p class="hint">{t(loc, "onboard.apikey.body")}</p>
                         <div class="onboard-form">
-                            <label>{t(loc, "settings.provider")}
-                                <select prop:value=move || provider_value(&onboard_provider.get()).to_string()
-                                    on:change=move |ev| onboard_provider.set(provider_value(&dom_value(&ev)).into())>
-                                    <option value="openai">{t(loc, "settings.provider.openai")}</option>
-                                    <option value="openai_responses">{t(loc, "settings.provider.openai_responses")}</option>
-                                    <option value="anthropic">{t(loc, "settings.provider.anthropic")}</option>
-                                </select>
-                            </label>
                             <label>{t(loc, "settings.api_key")}
                                 <input type="password" autocomplete="new-password"
                                     prop:value=move || onboard_key.get()
                                     on:input=move |ev| onboard_key.set(event_target_value(&ev)) />
                             </label>
                             <button type="button" class="linklike onboard-getkey"
-                                on:click=move |_| open_external_url(provider_key_url(&onboard_provider.get()).into())>
+                                on:click=move |_| open_external_url(DEEPSEEK_KEY_URL.into())>
                                 {t(loc, "onboard.apikey.get_key")}
                             </button>
                         </div>
@@ -425,7 +410,9 @@ pub(super) fn OnboardingOverlay(
                         view! { <button class="primary" on:click=move |_| {
                             if step == 0 { save_onboard_key.call(()); }
                             onboard_step.update(|s| *s += 1);
-                        }>{move || t(locale.get(), "onboard.next")}</button> }.into_view()
+                        }>{move || t(locale.get(), if step == 0 && onboard_key.get().trim().is_empty() {
+                            "onboard.apikey.later"
+                        } else { "onboard.next" })}</button> }.into_view()
                     } else {
                         view! {
                             <button class="primary" on:click=move |ev| dismiss_onboard.call(ev)>{move || t(locale.get(), "onboard.start")}</button>
