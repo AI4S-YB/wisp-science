@@ -18,10 +18,10 @@ Each **Open terminal** action creates an independent live terminal, including
 when another terminal already uses the same context. The dock keeps concurrent
 sessions in tabs; use **New terminal (+)** to choose any registered execution
 context. Switching tabs keeps every terminal attached so background output is
-not interrupted. Hiding the panel keeps its views attached without terminating
-the shells, while **Terminate** ends the active tab's process explicitly. Terminal
-sessions and scrollback are ephemeral and are not written to SQLite or included
-in project sync.
+not interrupted. The **−** button collapses the panel while keeping its views
+attached, so shells continue running in the background. The **×** inside each
+tab closes that tab and terminates its process. Terminal sessions and scrollback
+are ephemeral and are not written to SQLite or included in project sync.
 
 The xterm instances are mounted directly in the main application webview. PTY
 attach channels, input, resize events, and terminal rendering therefore share
@@ -50,8 +50,8 @@ harvesting, or provenance.
 
 On Windows, verify local PowerShell and an installed WSL distribution can open
 in parallel tabs, resize, accept input immediately, run a full-screen
-application, switch tabs without losing output, close/reopen the dock without
-losing the shells, and terminate the active tab explicitly. For SSH, use a test
+application, switch tabs without losing output, collapse/reopen the dock without
+losing the shells, and close a tab to terminate its shell. For SSH, use a test
 alias from SSH config and verify host-key/password prompts, resize, `Ctrl+C`,
 and disconnect handling.
 Automated tests must not require a real WSL distribution or SSH host.

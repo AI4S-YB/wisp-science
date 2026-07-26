@@ -6004,7 +6004,7 @@ pub fn run() {
             terminal_sessions::attach_terminal,
             terminal_sessions::write_terminal,
             terminal_sessions::resize_terminal,
-            terminal_sessions::terminate_terminal,
+            terminal_sessions::close_terminal,
             session_commands::new_session,
             session_commands::branch_session,
             session_commands::list_sessions,
