@@ -3246,7 +3246,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
 test("editing API URL keeps provider state and display aligned", async ({ page }) => {
@@ -3255,12 +3255,20 @@ test("editing API URL keeps provider state and display aligned", async ({ page }
   await page.getByLabel("API URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
 test("settings can validate current API config", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
+  await page.getByRole("button", { name: "Valid" }).click();
+  // The mock profile has "supports images" on, so validation probes with a
+  // test image and says so.
+  await expect(page.locator(".settings-status")).toHaveText(
+    "Validated openai with deepseek-v4-pro — the test image was accepted.",
+  );
+
+  await page.getByLabel("Supports image input").uncheck();
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
@@ -3274,7 +3282,7 @@ test("editing a saved model validates with that model profile id", async ({ page
   await expect(page.getByLabel("Model ID")).toHaveValue("opus-4.8");
 
   await page.getByRole("button", { name: "Valid" }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
   await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
     profileId: "opus",
     key: "",
