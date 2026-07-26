@@ -3490,6 +3490,36 @@ test("credentials settings add, replace, clear, and remove a custom credential",
     .toMatchObject({ id: "custom-1" });
 });
 
+test("capability counts open skills, connections, and current-project memory", async ({ page }) => {
+  await enterApp(page);
+
+  await page.getByRole("button", { name: "Capabilities" }).click();
+  let capabilities = page.getByRole("dialog", { name: "Capabilities" });
+  await capabilities.getByRole("button", { name: "12 Skills" }).click();
+  await expect(page.locator(".settings-nav button.active")).toHaveText("Skills");
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Capabilities" }).click();
+  capabilities = page.getByRole("dialog", { name: "Capabilities" });
+  await capabilities.getByRole("button", { name: "2 MCP servers" }).click();
+  await expect(page.locator(".settings-nav button.active")).toHaveText("Connections");
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Capabilities" }).click();
+  capabilities = page.getByRole("dialog", { name: "Capabilities" });
+  await capabilities.getByRole("button", { name: "1 Memory files" }).click();
+
+  const memory = page.getByRole("dialog", { name: "Memory files" });
+  await expect(memory).toBeVisible();
+  await expect(memory).toContainText("Current project: wisp-science");
+  await expect(memory).toContainText("2026-07-01.md");
+  await expect(memory).toContainText("User prefers DeepSeek.");
+
+  await page.keyboard.press("Escape");
+  await expect(memory).toHaveCount(0);
+  await expect(capabilities).toBeVisible();
+});
+
 test("skill manager filters by tag and batch disables visible skills", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Add to message" }).click();

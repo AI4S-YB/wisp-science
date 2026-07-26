@@ -9,7 +9,7 @@
 
 - **Skills** 从 `skill_paths()`(内置资源目录 + `<workspace>/.wisp/skills` + `~/.wisp/skills` + `WISP_SKILLS_PATH`)全量发现,全部注入 agent,**无 UI 开关、无添加入口**。
 - **MCP** 只有内置 bio-tools 聚合包,通过 `wire_python_and_mcp` 在 agent 创建时挂载;仅能靠 `WISP_MCP_PKG` / `WISP_MCP_COMMAND` 环境变量控制;**无 UI、无远程支持**。
-- `Capabilities` 弹窗是只读展示。
+- `Capabilities` 弹窗展示只读摘要；摘要数字可作为入口跳转到相应管理页面。
 
 目标:提供一个**多分区 Settings 页面**,支持:
 
@@ -99,7 +99,11 @@ Agent 创建路径(lib.rs:573/581):seed 前用 `disabled_skills` 过滤 `ap.skil
 - **Skills** —— skill 列表(名 + 描述 + 开关);顶部"Add skill"按钮走 `tauri-plugin-dialog` 选文件/夹 → `install_skill`;用户 skill 带删除按钮,内置 skill 只有开关。
 - **Connections** —— 顶部内置 bio-tools 连接器列表;下面用户连接列表(名 / 类型徽标 / 开关 / 编辑 / 删除)。点击连接行查看工具列表,编辑走独立按钮;"Add connection"打开表单(选 Local stdio 或 Remote URL,填对应字段),含"Test"按钮调 `test_mcp_connection` 并显示返回工具数。
 
-现有 **Capabilities 弹窗保持不动**(只读运行时状态)。
+**Capabilities 弹窗**继续展示只读运行时状态，但三个统计卡片同时作为导航入口：
+
+- Skills 跳转到 Settings → Skills。
+- MCP servers 跳转到 Settings → Connections。
+- Memory files 不离开当前页面，叠加只读 modal，列出当前项目的记忆文件、大小与内容预览。
 
 生效提示:Skills / Connections 分区顶部一行小字"改动对新会话生效",旁边复用现有"New session"入口。
 
