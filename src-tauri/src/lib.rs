@@ -739,6 +739,9 @@ struct SessionOutlineItem {
     user_index: usize,
     seq: i64,
     text: String,
+    sent_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_at: Option<i64>,
 }
 
 #[derive(Serialize)]

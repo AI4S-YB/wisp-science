@@ -669,11 +669,15 @@ pub(super) async fn load_session(
             .map_err(|e| format!("{e}"))?
             .into_iter()
             .enumerate()
-            .map(|(user_index, (seq, text))| SessionOutlineItem {
-                user_index,
-                seq,
-                text,
-            })
+            .map(
+                |(user_index, (seq, text, sent_at, response_at))| SessionOutlineItem {
+                    user_index,
+                    seq,
+                    text,
+                    sent_at,
+                    response_at,
+                },
+            )
             .collect()
     } else {
         Vec::new()

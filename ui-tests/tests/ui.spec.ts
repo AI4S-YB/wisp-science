@@ -992,6 +992,8 @@ test("user message renders before a delayed backend User event", async ({ page }
   await expect(page.locator(".user-bubble .body", { hasText: /^DELAYUSER$/ })).toBeVisible({ timeout: 500 });
   await expect(page.getByText("delayed reply")).toBeVisible({ timeout: 3_000 });
   await expect(page.locator(".user-bubble .body", { hasText: /^DELAYUSER$/ })).toHaveCount(1);
+  await expect(page.locator(".msg.user .user-message-time")).toBeVisible();
+  await expect(page.locator(".msg.assistant .assistant-message-time")).toBeVisible();
 });
 
 test("long unbroken user text wraps inside the chat column", async ({ page }) => {
@@ -3896,7 +3898,13 @@ test("conversation outline loads and jumps to an older user question", async ({ 
   await toggle.click();
   const outline = page.getByTestId("conversation-outline");
   await expect(outline).toBeVisible();
-  await outline.getByRole("button", { name: "Oldest loaded question" }).click();
+  const oldestOutline = outline.getByRole("button", { name: "Oldest loaded question" });
+  await expect(oldestOutline.locator(".conversation-outline-time")).toHaveAttribute(
+    "data-timestamp",
+    "1783478400",
+  );
+  await expect(oldestOutline.locator(".conversation-outline-time")).not.toBeEmpty();
+  await oldestOutline.click();
 
   await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({
     id: "long-session",
@@ -3904,6 +3912,14 @@ test("conversation outline loads and jumps to an older user question", async ({ 
   });
   const target = page.locator('[data-user-index="0"]');
   await expect(target).toContainText("Oldest loaded question");
+  await expect(target.locator(".user-message-time")).toHaveAttribute(
+    "data-timestamp",
+    "1783478400",
+  );
+  await expect(page.locator('[data-ui-index="1"] .assistant-message-time')).toHaveAttribute(
+    "data-timestamp",
+    "1783478430",
+  );
   await expect.poll(() => target.evaluate((element) => {
     const scroller = document.querySelector("#chat-scroller");
     if (!scroller) return false;

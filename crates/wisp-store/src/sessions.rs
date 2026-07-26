@@ -473,11 +473,15 @@ impl Store {
             .collect())
     }
 
-    /// Load the durable user-authored turns used by the conversation outline.
-    pub async fn load_session_user_messages(&self, frame_id: &str) -> Result<Vec<(i64, String)>> {
+    /// Load the durable user-authored turns used by the conversation outline,
+    /// including when each question was sent and its final assistant reply.
+    pub async fn load_session_user_messages(
+        &self,
+        frame_id: &str,
+    ) -> Result<Vec<(i64, String, i64, Option<i64>)>> {
         let rows = sqlx::query(
-            "SELECT seq,content FROM messages \
-             WHERE frame_id=? AND role='user' ORDER BY seq",
+            "SELECT seq,role,content,ts FROM messages \
+             WHERE frame_id=? AND role IN ('user','assistant') ORDER BY seq",
         )
         .bind(frame_id)
         .fetch_all(&self.pool)
@@ -485,10 +489,20 @@ impl Store {
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
             let seq: i64 = row.try_get("seq")?;
+            let role: String = row.try_get("role")?;
+            let ts: i64 = row.try_get("ts")?;
+            if role == "assistant" {
+                if ts > 0 {
+                    if let Some((_, _, _, response_at)) = messages.last_mut() {
+                        *response_at = Some(ts);
+                    }
+                }
+                continue;
+            }
             let content_json: String = row.try_get("content")?;
             let content: wisp_llm::Content =
                 serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
-            messages.push((seq, content.as_text()));
+            messages.push((seq, content.as_text(), ts, None));
         }
         Ok(messages)
     }
@@ -780,9 +794,10 @@ impl Store {
         Ok(row.0)
     }
 
-    /// Root frames that have at least one user turn, newest first, each with a
-    /// title derived from its first user message. Used to populate the UI's
-    /// session-history sidebar. Returns `(frame_id, title, created_at, folder_id)`.
+    /// Root frames that have at least one user turn, most recently active first,
+    /// each with a title derived from its first user message. Used to populate
+    /// the UI's session-history sidebar. Returns
+    /// `(frame_id, title, activity_at, folder_id)`.
     pub async fn list_sessions(
         &self,
         project_id: &str,
@@ -790,8 +805,9 @@ impl Store {
         self.list_sessions_page(project_id, None, usize::MAX).await
     }
 
-    /// One stable, newest-first page for the session-history sidebar. The
-    /// cursor is the final `(created_at, frame_id)` pair from the previous page.
+    /// One stable, most-recently-active-first page for the session-history
+    /// sidebar. The cursor is the final `(activity_at, frame_id)` pair from the
+    /// previous page.
     pub async fn list_sessions_page(
         &self,
         project_id: &str,
@@ -801,13 +817,17 @@ impl Store {
         let cursor_ts = cursor.map(|value| value.0);
         let cursor_id = cursor.map(|value| value.1);
         let rows = sqlx::query(
-            "SELECT f.id AS id, f.created_at AS created_at, f.title AS custom_title, f.folder_id AS folder_id, \
-                (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
-             FROM frames f \
-             WHERE f.project_id = ? AND f.parent_frame_id = f.id \
-               AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user') \
-               AND (? IS NULL OR f.created_at < ? OR (f.created_at = ? AND f.id < ?)) \
-             ORDER BY f.created_at DESC, f.id DESC LIMIT ?",
+            "SELECT * FROM ( \
+                SELECT f.id AS id, \
+                    COALESCE((SELECT MAX(NULLIF(m.ts, 0)) FROM messages m WHERE m.frame_id = f.id), f.updated_at) AS activity_at, \
+                    f.title AS custom_title, f.folder_id AS folder_id, \
+                    (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
+                FROM frames f \
+                WHERE f.project_id = ? AND f.parent_frame_id = f.id \
+                  AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user') \
+             ) sessions \
+             WHERE (? IS NULL OR activity_at < ? OR (activity_at = ? AND id < ?)) \
+             ORDER BY activity_at DESC, id DESC LIMIT ?",
         )
         .bind(project_id)
         .bind(cursor_ts)
@@ -820,31 +840,33 @@ impl Store {
         let mut out = vec![];
         for row in rows {
             let id: String = row.try_get("id")?;
-            let created: i64 = row.try_get("created_at")?;
+            let activity_at: i64 = row.try_get("activity_at")?;
             let folder_id: Option<String> = row.try_get("folder_id")?;
             let custom_title: Option<String> = row.try_get("custom_title")?;
             let first_user: Option<String> = row.try_get("first_user")?;
             let title = session_display_title(custom_title, first_user);
-            out.push((id, title, created, folder_id));
+            out.push((id, title, activity_at, folder_id));
         }
         Ok(out)
     }
 
     /// Pinned root frames for a project, newest first. Returned as
-    /// `(frame_id, title, created_at, folder_id)` like `list_sessions_page`, but
-    /// unpaginated so the sidebar's "Pinned" section is complete regardless of
-    /// how far the keyset history has been scrolled.
+    /// `(frame_id, title, activity_at, folder_id)` like `list_sessions_page`,
+    /// but unpaginated so the sidebar's "Pinned" section is complete regardless
+    /// of how far the keyset history has been scrolled.
     pub async fn list_pinned_sessions(
         &self,
         project_id: &str,
     ) -> Result<Vec<(String, String, i64, Option<String>)>> {
         let rows = sqlx::query(
-            "SELECT f.id AS id, f.created_at AS created_at, f.title AS custom_title, f.folder_id AS folder_id, \
+            "SELECT f.id AS id, \
+                COALESCE((SELECT MAX(NULLIF(m.ts, 0)) FROM messages m WHERE m.frame_id = f.id), f.updated_at) AS activity_at, \
+                f.title AS custom_title, f.folder_id AS folder_id, \
                 (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id AND COALESCE(f.pinned, 0) = 1 \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user') \
-             ORDER BY f.created_at DESC, f.id DESC",
+             ORDER BY activity_at DESC, f.id DESC",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -852,14 +874,14 @@ impl Store {
         let mut out = vec![];
         for row in rows {
             let id: String = row.try_get("id")?;
-            let created: i64 = row.try_get("created_at")?;
+            let activity_at: i64 = row.try_get("activity_at")?;
             let folder_id: Option<String> = row.try_get("folder_id")?;
             let custom_title: Option<String> = row.try_get("custom_title")?;
             let first_user: Option<String> = row.try_get("first_user")?;
             out.push((
                 id,
                 session_display_title(custom_title, first_user),
-                created,
+                activity_at,
                 folder_id,
             ));
         }

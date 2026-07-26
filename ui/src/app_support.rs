@@ -671,6 +671,10 @@ pub(super) fn now_ms() -> u64 {
     js_sys::Date::now() as u64
 }
 
+pub(super) fn now_secs() -> i64 {
+    (js_sys::Date::now() / 1000.0) as i64
+}
+
 pub(super) fn step_tool_meta(
     locale: Locale,
     duration_ms: Option<u64>,
@@ -4515,6 +4519,55 @@ pub(super) fn format_relative_time(ts: i64, locale: Locale) -> String {
     tf(locale, "time.days", &[("n", &(secs / 86_400).to_string())])
 }
 
+/// Compact local clock for transcript metadata. Today's messages use `HH:mm`;
+/// older messages add the date so revisiting long-running sessions is unambiguous.
+pub(super) fn format_message_time(ts: i64) -> String {
+    if ts <= 0 {
+        return String::new();
+    }
+    let ts_ms = if ts > 1_000_000_000_000 {
+        ts as f64
+    } else {
+        ts as f64 * 1000.0
+    };
+    let date = js_sys::Date::new(&JsValue::from_f64(ts_ms));
+    let now = js_sys::Date::new(&JsValue::from_f64(js_sys::Date::now()));
+    let clock = format!("{:02}:{:02}", date.get_hours(), date.get_minutes());
+    if date.get_full_year() == now.get_full_year()
+        && date.get_month() == now.get_month()
+        && date.get_date() == now.get_date()
+    {
+        clock
+    } else if date.get_full_year() == now.get_full_year() {
+        format!("{:02}-{:02} {clock}", date.get_month() + 1, date.get_date())
+    } else {
+        format!(
+            "{:04}-{:02}-{:02} {clock}",
+            date.get_full_year(),
+            date.get_month() + 1,
+            date.get_date()
+        )
+    }
+}
+
+pub(super) fn format_message_datetime(ts: i64, locale: Locale) -> String {
+    if ts <= 0 {
+        return String::new();
+    }
+    let ts_ms = if ts > 1_000_000_000_000 {
+        ts as f64
+    } else {
+        ts as f64 * 1000.0
+    };
+    js_sys::Date::new(&JsValue::from_f64(ts_ms))
+        .to_locale_string(
+            if locale == Locale::Zh { "zh-CN" } else { "en-US" },
+            &JsValue::UNDEFINED,
+        )
+        .as_string()
+        .unwrap_or_default()
+}
+
 #[component]
 pub(super) fn SessionStatusBadge(
     status: SessionStatusKind,
@@ -8235,6 +8288,38 @@ pub(super) fn user_turn_index(items: &[ChatItem], ui_index: usize) -> Option<usi
     )
 }
 
+pub(super) fn transcript_item_timestamp(
+    items: &[ChatItem],
+    ui_index: usize,
+    user_offset: usize,
+    outline: &[SessionOutlineItem],
+) -> Option<i64> {
+    let item = items.get(ui_index)?;
+    if !matches!(
+        item,
+        ChatItem::User(_) | ChatItem::QueuedUser { .. } | ChatItem::Assistant { .. }
+    ) {
+        return None;
+    }
+    let user_index = items
+        .iter()
+        .take(ui_index + 1)
+        .filter(|item| matches!(item, ChatItem::User(_) | ChatItem::QueuedUser { .. }))
+        .count()
+        .checked_sub(1)?
+        + user_offset;
+    let entry = outline
+        .iter()
+        .find(|entry| entry.user_index == user_index)?;
+    match item {
+        ChatItem::User(_) | ChatItem::QueuedUser { .. } => {
+            entry.sent_at.filter(|timestamp| *timestamp > 0)
+        }
+        ChatItem::Assistant { .. } => entry.response_at.filter(|timestamp| *timestamp > 0),
+        _ => None,
+    }
+}
+
 pub(super) fn merge_conversation_outline(
     persisted: &[SessionOutlineItem],
     items: &[ChatItem],
@@ -8259,6 +8344,8 @@ pub(super) fn merge_conversation_outline(
                 user_index,
                 seq: None,
                 text: text.clone(),
+                sent_at: None,
+                response_at: None,
             });
         }
     }
@@ -8345,7 +8432,8 @@ mod transcript_render_window_tests {
 #[cfg(test)]
 mod conversation_outline_tests {
     use super::{
-        conversation_outline_target_is_loaded, merge_conversation_outline, user_turn_index,
+        conversation_outline_target_is_loaded, merge_conversation_outline,
+        transcript_item_timestamp, user_turn_index,
     };
     use crate::dto::{ChatItem, SessionOutlineItem};
 
@@ -8356,11 +8444,15 @@ mod conversation_outline_tests {
                 user_index: 0,
                 seq: Some(1),
                 text: "first".into(),
+                sent_at: Some(100),
+                response_at: Some(110),
             },
             SessionOutlineItem {
                 user_index: 1,
                 seq: Some(3),
                 text: "stale second".into(),
+                sent_at: Some(200),
+                response_at: Some(210),
             },
         ];
         let items = vec![
@@ -8384,13 +8476,25 @@ mod conversation_outline_tests {
                     user_index: 1,
                     seq: Some(3),
                     text: "second".into(),
+                    sent_at: Some(200),
+                    response_at: Some(210),
                 },
                 SessionOutlineItem {
                     user_index: 2,
                     seq: None,
                     text: "third".into(),
+                    sent_at: None,
+                    response_at: None,
                 },
             ]
+        );
+        assert_eq!(
+            transcript_item_timestamp(&items, 0, 1, &persisted),
+            Some(200)
+        );
+        assert_eq!(
+            transcript_item_timestamp(&items, 1, 1, &persisted),
+            Some(210)
         );
         assert_eq!(user_turn_index(&items, 2), Some(1));
         assert!(conversation_outline_target_is_loaded(&items, 1, 2));
@@ -8683,6 +8787,7 @@ pub(super) fn QueuedMessage(
 #[component]
 pub(super) fn UserMessage(
     text: String,
+    timestamp: Option<i64>,
     ui_index: usize,
     busy: ReadSignal<bool>,
     can_modify: bool,
@@ -8795,6 +8900,22 @@ pub(super) fn UserMessage(
                     on:click=move |_| set_expanded.update(|v| *v = !*v)
                 >{move || t(locale.get(), if expanded.get() { "msg.show_less" } else { "msg.show_all" })}</button>
             })}
+            {timestamp.map(|timestamp| {
+                let compact = format_message_time(timestamp);
+                view! {
+                    <time
+                        class="message-time user-message-time"
+                        data-timestamp=timestamp.to_string()
+                        title=move || tf(
+                            locale.get(),
+                            "msg.sent_at",
+                            &[("time", &format_message_datetime(timestamp, locale.get()))],
+                        )
+                    >
+                        {compact}
+                    </time>
+                }
+            })}
             <div class="msg-actions">
                 <button
                     type="button"
@@ -8827,6 +8948,7 @@ pub(super) fn UserMessage(
 pub(super) fn AssistantMessage(
     text: String,
     model: Option<String>,
+    timestamp: Option<i64>,
     resources: Vec<MessageResource>,
     artifacts: Vec<Artifact>,
     source_item: usize,
@@ -8941,6 +9063,22 @@ pub(super) fn AssistantMessage(
             <span class="role-brand">{move || t(locale.get(), "chat.assistant")}</span>
             {move || model.clone().filter(|m| !m.is_empty()).map(|m| view! {
                 <span class="role-model">{m}</span>
+            })}
+            {timestamp.map(|timestamp| {
+                let compact = format_message_time(timestamp);
+                view! {
+                    <time
+                        class="message-time assistant-message-time"
+                        data-timestamp=timestamp.to_string()
+                        title=move || tf(
+                            locale.get(),
+                            "msg.replied_at",
+                            &[("time", &format_message_datetime(timestamp, locale.get()))],
+                        )
+                    >
+                        {compact}
+                    </time>
+                }
             })}
         </div>
         <div class="assistant-wrap">
