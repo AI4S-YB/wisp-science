@@ -1258,6 +1258,7 @@ fn App() -> impl IntoView {
     // interactive project-open path. The callback is built after `load_session`.
     let dedicated_project_id = url_project_param();
     let show_capabilities = create_rw_signal(false);
+    let show_capability_memory = create_rw_signal(false);
     let skill_filter_tag = create_rw_signal(String::new());
     let caps = create_rw_signal::<Option<Capabilities>>(None);
     let bootstrap = create_rw_signal::<Option<BootstrapStatus>>(None);
@@ -3513,6 +3514,11 @@ fn App() -> impl IntoView {
         });
     };
     let open_settings = move |_| open_settings_fn(None);
+    let open_capability_settings = Callback::new(move |section: String| {
+        show_capability_memory.set(false);
+        show_capabilities.set(false);
+        open_settings_fn(Some(section));
+    });
 
     let save_settings = move |_| {
         if settings_busy.get() {
@@ -4472,6 +4478,7 @@ fn App() -> impl IntoView {
     };
 
     let open_capabilities = move |_| {
+        show_capability_memory.set(false);
         show_capabilities.set(true);
         refresh_capabilities(caps);
     };
@@ -5565,6 +5572,11 @@ fn App() -> impl IntoView {
         if show_proj_settings.get() && !proj_settings_busy.get() {
             ev.prevent_default();
             show_proj_settings.set(false);
+            return;
+        }
+        if show_capability_memory.get() {
+            ev.prevent_default();
+            show_capability_memory.set(false);
             return;
         }
         if show_capabilities.get() {
@@ -10960,7 +10972,8 @@ fn App() -> impl IntoView {
             runtimes=runtime_infos
         />
         <CapabilitiesOverlay
-            locale=locale show_capabilities=show_capabilities bootstrap=bootstrap caps=caps busy=busy
+            locale=locale show_capabilities=show_capabilities show_memory_files=show_capability_memory
+            bootstrap=bootstrap caps=caps busy=busy open_settings_section=open_capability_settings
             start_env_setup=Callback::new(start_env_setup)
         />
         <OnboardingOverlay

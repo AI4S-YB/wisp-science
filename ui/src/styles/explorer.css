@@ -61,11 +61,47 @@
 
 /* ---------- Capabilities ---------- */
 .cap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.cap-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.cap-stat {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px;
+  background: var(--bg-sunken); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font: inherit; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, transform .12s ease;
+}
+.cap-stat:hover { background: var(--surface-hover); border-color: var(--clay); transform: translateY(-1px); }
+.cap-stat:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
 .cap-num { font-size: 22px; font-weight: 700; color: var(--clay); }
 .cap-label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
 .cap-section { display: flex; flex-direction: column; gap: 8px; }
 .cap-section h3 { margin: 0; font-size: 13px; font-weight: 650; color: var(--text-muted); }
+.cap-memory-overlay { z-index: 110; }
+.cap-memory-modal { min-height: 240px; }
+.cap-memory-heading { min-width: 0; }
+.cap-memory-heading p {
+  margin: 4px 0 0; color: var(--text-faint); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cap-memory-list {
+  display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; gap: 8px;
+  overflow-y: auto; padding: 2px;
+}
+.cap-memory-file {
+  display: flex; flex-direction: column; gap: 8px; padding: 11px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken);
+}
+.cap-memory-file-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cap-memory-file-name {
+  min-width: 0; color: var(--text); font-family: var(--font-mono); font-size: 12.5px;
+  font-weight: 650; overflow-wrap: anywhere;
+}
+.cap-memory-file-size { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; }
+.cap-memory-file pre {
+  margin: 0; color: var(--text-muted); font-family: var(--font-mono); font-size: 11.5px;
+  line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+.cap-memory-empty {
+  display: grid; flex: 1 1 auto; min-height: 120px; place-items: center;
+  color: var(--text-faint); font-size: 13px; text-align: center;
+}
 .cap-tags { display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; }
 .cap-tag { font-size: 11px; font-family: var(--font-mono); padding: 4px 8px; border-radius: 6px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-muted); }
 .cap-skills { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
