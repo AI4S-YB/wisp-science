@@ -77,7 +77,6 @@ def extract_entry_record(entry: dict) -> dict:
     method = sd.get("method")
     aggregation_state = sd.get("aggregation_state")
     resolution = None
-    resolution_units = None
     resolution_method = None
     image_processing = _listify(sd.get("image_processing"))
     if image_processing:
@@ -85,8 +84,6 @@ def extract_entry_record(entry: dict) -> dict:
         res_node = final.get("resolution")
         if res_node is not None:
             resolution = _as_float(_value_of(res_node))
-            if isinstance(res_node, dict):
-                resolution_units = res_node.get("units")
         resolution_method = final.get("resolution_method")
 
     # ---- sample / macromolecules

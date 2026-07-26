@@ -999,7 +999,6 @@ mod tests {
         let workflow =
             crate::AgentWorkflow::new("workflow-1", "project-1", "workspace-1", "Review QC")
                 .unwrap();
-        source.create_agent_workflow(&workflow).await.unwrap();
         let step = crate::AgentWorkflowStep::new(
             "workflow-step-1",
             "workflow-1",
@@ -1010,7 +1009,10 @@ mod tests {
             "Review {{input}}",
         )
         .unwrap();
-        source.create_agent_workflow_step(&step).await.unwrap();
+        source
+            .create_agent_workflow_plan(&workflow, &[step.clone()])
+            .await
+            .unwrap();
         let workflow = source
             .get_agent_workflow("workflow-1")
             .await
@@ -1068,11 +1070,8 @@ mod tests {
             Some(r#"{"identity_file":"C:\\Users\\Alice\\.ssh\\id_ed25519","pid":42}"#.into());
         run.progress_json = r#"{"phase":"uploading"}"#.into();
         run.env_snapshot_json = r#"{"SSH_AUTH_SOCK":"/tmp/private-agent"}"#.into();
+        run.status = RunStatus::Submitted;
         source.create_run(&run).await.unwrap();
-        source
-            .update_run_status("run-1", RunStatus::Submitted)
-            .await
-            .unwrap();
 
         let stats = source
             .export_project_database("project-1", &archive_path)

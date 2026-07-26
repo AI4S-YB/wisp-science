@@ -155,14 +155,6 @@ impl ContextManager {
         self.messages.push(m);
     }
 
-    pub fn get_messages(&self) -> &[Message] {
-        &self.messages
-    }
-    pub fn get_latest(&self, n: usize) -> &[Message] {
-        let start = self.messages.len().saturating_sub(n);
-        &self.messages[start..]
-    }
-
     pub fn load(&mut self, path: &Path) {
         self.invalidate_last_request();
         match std::fs::read_to_string(path) {
@@ -242,57 +234,8 @@ impl ContextManager {
         turns
     }
 
-    fn role_msgs(&self, role: Role, n: Option<usize>) -> Vec<&Message> {
-        let slice = match n {
-            Some(n) => self.get_latest(n),
-            None => &self.messages[..],
-        };
-        slice.iter().filter(|m| m.role == role).collect()
-    }
-
-    fn tool_names_of(msgs: &[&Message]) -> Vec<String> {
-        msgs.iter()
-            .filter(|m| m.role == Role::Tool)
-            .filter_map(|m| m.tool_name.clone())
-            .collect()
-    }
-
-    #[allow(dead_code)]
-    fn last_user_content(&self, msgs: Option<&[Message]>) -> String {
-        let src = msgs.unwrap_or(&self.messages);
-        src.iter()
-            .rev()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.content.as_text())
-            .unwrap_or_default()
-    }
-
     fn under_threshold(&self) -> bool {
         self.total_tokens() < self.warn_threshold
-    }
-
-    pub fn tool_pattern(&self, n: usize) -> Option<Vec<String>> {
-        let tools = Self::tool_names_of(&self.role_msgs(Role::Tool, Some(n)));
-        if tools.is_empty() {
-            None
-        } else {
-            Some(tools)
-        }
-    }
-
-    pub fn tool_context(&self, n: usize, cap: usize) -> String {
-        let mut tc = vec![];
-        for m in self.role_msgs(Role::Tool, Some(n)) {
-            let content = m.content.as_text();
-            let compacted = if content.len() > cap {
-                Self::compact_text(&content, 200, 200)
-            } else {
-                content.clone()
-            };
-            let name = m.tool_name.clone().unwrap_or_default();
-            tc.push(format!("[{name} tool] {compacted}"));
-        }
-        tc.join("\n\n")
     }
 
     /// Rough token estimate (~JSON length / 4) from field lengths directly.

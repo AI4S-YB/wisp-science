@@ -6,11 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-tokio = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = "0.1"
-tracing = { workspace = true }
 walkdir = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }

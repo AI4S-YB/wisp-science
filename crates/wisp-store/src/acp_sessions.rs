@@ -74,14 +74,6 @@ impl Store {
         .await?;
         row.map(from_row).transpose()
     }
-
-    pub async fn delete_acp_session(&self, frame_id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM acp_sessions WHERE frame_id=?")
-            .bind(frame_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() == 1)
-    }
 }
 
 #[cfg(test)]
@@ -145,9 +137,6 @@ mod tests {
         assert_eq!(loaded.created_at, 10);
         assert_eq!(loaded.updated_at, 20);
 
-        assert!(store.delete_acp_session("f1").await.unwrap());
-        assert!(!store.delete_acp_session("f1").await.unwrap());
-        assert!(store.get_acp_session("f1").await.unwrap().is_none());
         drop(store);
         let _ = std::fs::remove_file(path);
     }

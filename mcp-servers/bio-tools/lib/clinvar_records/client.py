@@ -109,7 +109,7 @@ class ClinVarClient:
                     f"{endpoint} HTTP {resp.status_code}: {resp.text[:200]}")
             try:
                 return resp.json()
-            except ValueError as exc:
+            except ValueError:
                 raise ClinVarApiError(
                     f"{endpoint} returned non-JSON: {resp.text[:200]}")
         raise ClinVarApiError(f"{endpoint} retries exhausted: {last_err!r}")

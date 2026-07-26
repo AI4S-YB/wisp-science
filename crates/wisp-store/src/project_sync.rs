@@ -72,14 +72,6 @@ impl Store {
         .await?;
         Ok(())
     }
-
-    pub async fn delete_project_sync_state(&self, project_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM project_sync_state WHERE project_id=?")
-            .bind(project_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -101,8 +93,6 @@ mod tests {
             store.get_project_sync_state("p1").await.unwrap(),
             Some(state)
         );
-        store.delete_project_sync_state("p1").await.unwrap();
-        assert!(store.get_project_sync_state("p1").await.unwrap().is_none());
         store.pool.close().await;
         let _ = std::fs::remove_file(path);
     }

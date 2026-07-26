@@ -231,11 +231,12 @@ mod tests {
         assert_eq!(artifacts.len(), 1);
         assert!(std::path::Path::new(&artifacts[0].3)
             .ends_with(std::path::Path::new("results").join("table.tsv")));
-        let links = store.list_run_artifacts("r").await.unwrap();
-        assert_eq!(
-            links,
-            vec![(harvested[0].artifact_id.clone(), "table".into())]
-        );
+        let graph = store.research_graph("p").await.unwrap();
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source_id == "run:r"
+                && edge.target_id == format!("artifact:{}", harvested[0].artifact_id)
+                && edge.relation == "produced"
+        }));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

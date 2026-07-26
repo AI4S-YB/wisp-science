@@ -1403,7 +1403,10 @@ mod tests {
         let feishu = feishu.unwrap();
         let wechat = wechat.unwrap();
         assert_eq!(feishu, wechat);
-        assert_eq!(store.list_root_frames("project-1").await.unwrap().len(), 1);
+        assert_eq!(
+            store.frame_project_id(&feishu).await.unwrap().as_deref(),
+            Some("project-1")
+        );
         drop(store);
         let _ = std::fs::remove_file(path);
     }

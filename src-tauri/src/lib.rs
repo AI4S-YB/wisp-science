@@ -6073,7 +6073,6 @@ pub fn run() {
             project_sync::resolve_project_sync,
             project_sync::project_sync_code,
             project_sync::join_synced_project,
-            project_sync::get_project_sync_status,
             project_commands::create_project,
             project_commands::open_project,
             project_commands::open_project_window,

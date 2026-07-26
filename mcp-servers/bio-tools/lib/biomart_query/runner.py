@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Mapping
 
-from .client import BiomartClient, QueryResult
+from .client import BiomartClient
 
 
 def plan_requests(battery: Mapping) -> list:

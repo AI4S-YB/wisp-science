@@ -241,10 +241,15 @@ async fn monitor_run_waits_once_for_an_existing_run() {
         .unwrap();
     let run = wisp_store::RunRecord::new("long-run", "p", "local", "Long run", "command");
     store.create_run(&run).await.unwrap();
-    store
-        .update_run_status("long-run", wisp_store::RunStatus::Submitted)
+    assert!(store
+        .activate_run_lifecycle(
+            "long-run",
+            wisp_store::RunStatus::Submitted,
+            "monitor-owner",
+            60,
+        )
         .await
-        .unwrap();
+        .unwrap());
     let snapshot = GetRunTool::new(store.clone(), "p".into())
         .run(
             &serde_json::json!({ "run_id": "long-run" }),
@@ -257,14 +262,19 @@ async fn monitor_run_waits_once_for_an_existing_run() {
     let finishing_store = store.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(25)).await;
-        finishing_store
-            .update_run_status("long-run", wisp_store::RunStatus::Running)
+        assert!(finishing_store
+            .transition_run_to_running_owned("long-run", "monitor-owner")
             .await
-            .unwrap();
-        finishing_store
-            .update_run_status("long-run", wisp_store::RunStatus::Succeeded)
+            .unwrap());
+        assert!(finishing_store
+            .finish_active_run_owned(
+                "long-run",
+                "monitor-owner",
+                wisp_store::RunStatus::Succeeded,
+                Some(0),
+            )
             .await
-            .unwrap();
+            .unwrap());
     });
 
     let tool = MonitorRunTool::new(store, "p".into());
@@ -440,10 +450,14 @@ async fn submit_run_harvests_output_specs_on_success() {
     .await
     .unwrap();
 
-    let links = store.list_run_artifacts(&res.run_id).await.unwrap();
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0].1, "table");
-    assert_eq!(store.list_artifacts("f").await.unwrap().len(), 1);
+    let artifacts = store.list_artifacts("f").await.unwrap();
+    assert_eq!(artifacts.len(), 1);
+    let graph = store.research_graph("p").await.unwrap();
+    assert!(graph.edges.iter().any(|edge| {
+        edge.source_id == format!("run:{}", res.run_id)
+            && edge.target_id == format!("artifact:{}", artifacts[0].0)
+            && edge.relation == "produced"
+    }));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -719,11 +733,8 @@ async fn recovery_fails_unconfirmed_ssh_run_without_reconnecting() {
     run.last_poll_error = Some("connection timed out".into());
     run.remote_workdir = Some("~/.wisp-science/runs/stale".into());
     run.remote_handle_json = Some(serde_json::to_string(&test_handle("stale", false)).unwrap());
+    run.status = wisp_store::RunStatus::Submitted;
     store.create_run(&run).await.unwrap();
-    store
-        .update_run_status("stale", wisp_store::RunStatus::Submitted)
-        .await
-        .unwrap();
     let runner = Arc::new(ScriptedRunRunner::new(Vec::new()));
     let manager = RunManager::with_runner(runner.clone());
 
@@ -756,18 +767,12 @@ async fn recovery_reattaches_ssh_after_transient_error_and_marks_local_lost() {
     remote.timeout_secs = Some(3600);
     remote.remote_workdir = Some("~/.wisp-science/runs/remote".into());
     remote.remote_handle_json = Some(serde_json::to_string(&test_handle("remote", true)).unwrap());
+    remote.status = wisp_store::RunStatus::Running;
     store.create_run(&remote).await.unwrap();
-    store
-        .update_run_status("remote", wisp_store::RunStatus::Running)
-        .await
-        .unwrap();
 
-    let local = wisp_store::RunRecord::new("local-run", "p", "local", "Local", "command");
+    let mut local = wisp_store::RunRecord::new("local-run", "p", "local", "Local", "command");
+    local.status = wisp_store::RunStatus::Running;
     store.create_run(&local).await.unwrap();
-    store
-        .update_run_status("local-run", wisp_store::RunStatus::Running)
-        .await
-        .unwrap();
 
     let runner = Arc::new(ScriptedRunRunner::new(vec![
         Err("temporary SSH disconnect".into()),
@@ -804,11 +809,8 @@ async fn confirmed_ssh_run_stops_polling_after_authentication_failure() {
     run.timeout_secs = Some(3600);
     run.remote_workdir = Some("~/.wisp-science/runs/remote".into());
     run.remote_handle_json = Some(serde_json::to_string(&test_handle("remote", true)).unwrap());
+    run.status = wisp_store::RunStatus::Running;
     store.create_run(&run).await.unwrap();
-    store
-        .update_run_status("remote", wisp_store::RunStatus::Running)
-        .await
-        .unwrap();
 
     let runner = Arc::new(ScriptedRunRunner::new(vec![Err(
         "Permission denied (publickey).".into(),
@@ -843,11 +845,8 @@ async fn ssh_cancel_stays_cancelling_until_remote_group_confirms() {
     run.timeout_secs = Some(3600);
     run.remote_workdir = Some("~/.wisp-science/runs/remote".into());
     run.remote_handle_json = Some(serde_json::to_string(&test_handle("remote", true)).unwrap());
+    run.status = wisp_store::RunStatus::Running;
     store.create_run(&run).await.unwrap();
-    store
-        .update_run_status("remote", wisp_store::RunStatus::Running)
-        .await
-        .unwrap();
     let runner = Arc::new(ScriptedRunRunner::new(vec![ok_output(
         "__WISP_CANCEL__:cancelled\n",
     )]));
@@ -905,11 +904,8 @@ async fn cancelling_ssh_input_staging_aborts_the_transfer() {
         updated_at: chrono::Utc::now().timestamp(),
     })
     .unwrap();
+    run.status = wisp_store::RunStatus::Submitted;
     store.create_run(&run).await.unwrap();
-    store
-        .update_run_status("upload", wisp_store::RunStatus::Submitted)
-        .await
-        .unwrap();
     assert!(store
         .claim_run_lifecycle("upload", &manager.owner_id, ACTIVE_LEASE_SECS)
         .await

@@ -111,9 +111,6 @@ async fn roundtrip() {
         [0, 1]
     );
     assert_eq!(sequenced[1].1.content.as_text(), "hello");
-    let frames = store.list_root_frames("p1").await.unwrap();
-    assert_eq!(frames.len(), 1);
-
     // list_sessions derives a title from the first user message and skips
     // frames with no user turn.
     store.create_frame("f2", "p1", "OPERON", "m").await.unwrap();
@@ -305,17 +302,6 @@ async fn agent_workflow_and_steps_roundtrip() {
     let mut workflow = AgentWorkflow::new("wf", "p", "workspace-1", "review").unwrap();
     assert_eq!(workflow.mode, "manual");
     workflow.description = "Review an implementation with a second agent".into();
-    store.create_agent_workflow(&workflow).await.unwrap();
-    assert_eq!(
-        store.list_agent_workflows("p").await.unwrap(),
-        vec![workflow.clone()]
-    );
-    workflow.name = "review-v2".into();
-    assert!(store.update_agent_workflow(&workflow).await.unwrap());
-    let updated_workflow = store.get_agent_workflow("wf").await.unwrap().unwrap();
-    assert_eq!(updated_workflow.name, "review-v2");
-    assert_eq!(updated_workflow.version, 2);
-
     let mut step = AgentWorkflowStep::new(
         "step-1",
         "wf",
@@ -328,14 +314,28 @@ async fn agent_workflow_and_steps_roundtrip() {
     .unwrap();
     assert!(step.template_id.is_empty());
     step.permissions_json = r#"{"tools":["read_file"]}"#.into();
-    store.create_agent_workflow_step(&step).await.unwrap();
+    store
+        .create_agent_workflow_plan(&workflow, &[step.clone()])
+        .await
+        .unwrap();
+    assert_eq!(
+        store.list_agent_workflows("p").await.unwrap(),
+        vec![workflow.clone()]
+    );
     assert_eq!(
         store.list_agent_workflow_steps("wf").await.unwrap(),
         vec![step.clone()]
     );
 
+    workflow.name = "review-v2".into();
     step.position = 1;
-    assert!(store.update_agent_workflow_step(&step).await.unwrap());
+    assert!(store
+        .replace_agent_workflow_plan(&workflow, &[step.clone()], 1)
+        .await
+        .unwrap());
+    let updated_workflow = store.get_agent_workflow("wf").await.unwrap().unwrap();
+    assert_eq!(updated_workflow.name, "review-v2");
+    assert_eq!(updated_workflow.version, 2);
     assert_eq!(
         store
             .get_agent_workflow_step("step-1")
@@ -386,7 +386,8 @@ async fn agent_workflow_plan_edit_and_approval_are_versioned() {
         .replace_agent_workflow_plan(&workflow, &[], 1)
         .await
         .unwrap());
-    let (edited, steps) = store.get_agent_workflow_plan("wf").await.unwrap().unwrap();
+    let edited = store.get_agent_workflow("wf").await.unwrap().unwrap();
+    let steps = store.list_agent_workflow_steps("wf").await.unwrap();
     assert_eq!(edited.version, 2);
     assert_eq!(edited.max_parallel, 1);
     assert_eq!(steps.len(), 1);
@@ -396,69 +397,13 @@ async fn agent_workflow_plan_edit_and_approval_are_versioned() {
     assert_eq!(approved.status, AgentWorkflowStatus::Approved);
     assert_eq!(approved.version, 3);
     assert!(approved.approved_at.is_some());
-    assert!(store.update_agent_workflow_step(&steps[0]).await.is_err());
-    assert!(store.delete_agent_workflow_step("code").await.is_err());
-    let mut reverted = approved;
+    let mut reverted = approved.clone();
     reverted.status = AgentWorkflowStatus::Draft;
-    assert!(store.update_agent_workflow(&reverted).await.is_err());
+    assert!(!store
+        .replace_agent_workflow_plan(&reverted, &steps, 3)
+        .await
+        .unwrap());
     assert!(store.delete_agent_workflow("wf").await.unwrap());
-    store.pool.close().await;
-    let _ = std::fs::remove_file(tmp);
-}
-
-#[tokio::test]
-async fn legacy_step_mutations_invalidate_the_reviewed_plan_version() {
-    let tmp = std::env::temp_dir().join(format!(
-        "wisp_agent_plan_step_cas_{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let store = Store::open(&tmp).await.unwrap();
-    store.create_project("p", "proj", "").await.unwrap();
-
-    let workflow = AgentWorkflow::new("wf", "p", "workspace", "Delegated analysis").unwrap();
-    store.create_agent_workflow(&workflow).await.unwrap();
-    let mut step =
-        AgentWorkflowStep::new("code", "wf", 0, "code", "coder", "acp", "controlled prompt")
-            .unwrap();
-
-    store.create_agent_workflow_step(&step).await.unwrap();
-    assert!(!store.approve_agent_workflow_plan("wf", 1).await.unwrap());
-    assert_eq!(
-        store
-            .get_agent_workflow("wf")
-            .await
-            .unwrap()
-            .unwrap()
-            .version,
-        2
-    );
-
-    step.position = 1;
-    assert!(store.update_agent_workflow_step(&step).await.unwrap());
-    assert!(!store.approve_agent_workflow_plan("wf", 2).await.unwrap());
-    assert_eq!(
-        store
-            .get_agent_workflow("wf")
-            .await
-            .unwrap()
-            .unwrap()
-            .version,
-        3
-    );
-
-    assert!(store.delete_agent_workflow_step("code").await.unwrap());
-    assert!(!store.approve_agent_workflow_plan("wf", 3).await.unwrap());
-    assert_eq!(
-        store
-            .get_agent_workflow("wf")
-            .await
-            .unwrap()
-            .unwrap()
-            .version,
-        4
-    );
-    assert!(store.approve_agent_workflow_plan("wf", 4).await.unwrap());
-
     store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
 }
@@ -472,11 +417,13 @@ async fn agent_workflow_attempts_persist_cas_lifecycle_and_usage() {
     let store = Store::open(&tmp).await.unwrap();
     store.create_project("p", "proj", "").await.unwrap();
     let workflow = AgentWorkflow::new("wf", "p", "workspace", "Delegated analysis").unwrap();
-    store.create_agent_workflow(&workflow).await.unwrap();
     let step = AgentWorkflowStep::new("code", "wf", 0, "code", "coder", "acp", "controlled prompt")
         .unwrap();
-    store.create_agent_workflow_step(&step).await.unwrap();
-    assert!(store.approve_agent_workflow_plan("wf", 2).await.unwrap());
+    store
+        .create_agent_workflow_plan(&workflow, &[step])
+        .await
+        .unwrap();
+    assert!(store.approve_agent_workflow_plan("wf", 1).await.unwrap());
     assert!(store
         .transition_agent_workflow_status(
             "wf",
@@ -576,10 +523,12 @@ async fn interrupted_agent_workflows_recover_to_failed_terminal_state() {
     let store = Store::open(&tmp).await.unwrap();
     store.create_project("p", "proj", "").await.unwrap();
     let workflow = AgentWorkflow::new("wf", "p", "workspace", "Delegation").unwrap();
-    store.create_agent_workflow(&workflow).await.unwrap();
     let step = AgentWorkflowStep::new("step", "wf", 0, "step", "coder", "acp", "prompt").unwrap();
-    store.create_agent_workflow_step(&step).await.unwrap();
-    assert!(store.approve_agent_workflow_plan("wf", 2).await.unwrap());
+    store
+        .create_agent_workflow_plan(&workflow, &[step])
+        .await
+        .unwrap();
+    assert!(store.approve_agent_workflow_plan("wf", 1).await.unwrap());
     assert!(store
         .transition_agent_workflow_status(
             "wf",
@@ -629,10 +578,12 @@ async fn workflow_cancellation_is_persisted_and_cleared_for_retry() {
     let store = Store::open(&tmp).await.unwrap();
     store.create_project("p", "proj", "").await.unwrap();
     let workflow = AgentWorkflow::new("wf", "p", "workspace", "Delegation").unwrap();
-    store.create_agent_workflow(&workflow).await.unwrap();
     let step = AgentWorkflowStep::new("step", "wf", 0, "step", "coder", "acp", "prompt").unwrap();
-    store.create_agent_workflow_step(&step).await.unwrap();
-    assert!(store.approve_agent_workflow_plan("wf", 2).await.unwrap());
+    store
+        .create_agent_workflow_plan(&workflow, &[step])
+        .await
+        .unwrap();
+    assert!(store.approve_agent_workflow_plan("wf", 1).await.unwrap());
     assert!(store
         .transition_agent_workflow_status(
             "wf",
@@ -2462,7 +2413,10 @@ async fn reserved_background_generation_is_failed_instead_of_resumed_after_resta
     store.create_frame("f", "p", "OPERON", "m").await.unwrap();
     let mut workflow = AgentWorkflow::new("wf", "p", "workspace", "Background batch").unwrap();
     workflow.frame_id = Some("f".into());
-    store.create_agent_workflow(&workflow).await.unwrap();
+    store
+        .create_agent_workflow_plan(&workflow, &[])
+        .await
+        .unwrap();
     assert!(store
         .approve_agent_workflow_plan("wf", workflow.version)
         .await
@@ -2693,34 +2647,41 @@ async fn run_manager_roundtrip_and_lifecycle() {
     let progress: RunProgress = serde_json::from_str(&got.progress_json).unwrap();
     assert_eq!(progress.completed_bytes, 512);
 
-    store
-        .update_run_status("r1", RunStatus::Submitted)
+    assert!(store
+        .activate_run_lifecycle("r1", RunStatus::Submitted, "roundtrip-owner", 60)
         .await
-        .unwrap();
-    store
-        .set_run_remote_handle(
+        .unwrap());
+    assert!(store
+        .set_run_remote_handle_owned(
             "r1",
+            "roundtrip-owner",
             r#"{"kind":"ssh_direct","pid":42,"start_time":7}"#,
             "/scratch/wisp/r1",
         )
         .await
-        .unwrap();
-    store
-        .update_run_status("r1", RunStatus::Running)
+        .unwrap());
+    assert!(store
+        .transition_run_to_running_owned("r1", "roundtrip-owner")
         .await
-        .unwrap();
-    store
-        .record_run_poll("r1", Some("ok stdout"), None, Some("temporary error"))
+        .unwrap());
+    assert!(store
+        .record_run_poll_owned(
+            "r1",
+            "roundtrip-owner",
+            Some("ok stdout"),
+            None,
+            Some("temporary error"),
+        )
         .await
-        .unwrap();
-    store
-        .record_run_poll("r1", None, Some("warn stderr"), None)
+        .unwrap());
+    assert!(store
+        .record_run_poll_owned("r1", "roundtrip-owner", None, Some("warn stderr"), None,)
         .await
-        .unwrap();
-    store
-        .finish_run("r1", RunStatus::Succeeded, Some(0))
+        .unwrap());
+    assert!(store
+        .finish_active_run_owned("r1", "roundtrip-owner", RunStatus::Succeeded, Some(0),)
         .await
-        .unwrap();
+        .unwrap());
 
     let finished = store.get_run("r1").await.unwrap().unwrap();
     assert_eq!(finished.status, RunStatus::Succeeded);
@@ -2758,22 +2719,19 @@ async fn run_can_cancel_then_time_out() {
         .await
         .unwrap();
 
-    store
-        .update_run_status("r1", RunStatus::Submitted)
+    assert!(store
+        .activate_run_lifecycle("r1", RunStatus::Submitted, "cancel-owner", 60)
         .await
-        .unwrap();
-    store
-        .update_run_status("r1", RunStatus::Cancelling)
-        .await
-        .unwrap();
+        .unwrap());
+    assert!(store.request_run_cancellation("r1").await.unwrap());
     assert_eq!(
         store.get_run("r1").await.unwrap().unwrap().status,
         RunStatus::Cancelling
     );
-    store
-        .finish_run("r1", RunStatus::TimedOut, None)
+    assert!(store
+        .finish_active_run_owned("r1", "cancel-owner", RunStatus::TimedOut, None)
         .await
-        .unwrap();
+        .unwrap());
     assert_eq!(
         store.get_run("r1").await.unwrap().unwrap().status,
         RunStatus::TimedOut
@@ -2800,42 +2758,43 @@ async fn conditional_terminal_update_does_not_overwrite_winner() {
             .await
             .unwrap();
     }
-    store
-        .update_run_status("submitted", RunStatus::Submitted)
-        .await
-        .unwrap();
-    store
-        .update_run_status("running", RunStatus::Running)
-        .await
-        .unwrap();
-    store
-        .update_run_status("cancelling", RunStatus::Running)
-        .await
-        .unwrap();
-    store
-        .update_run_status("cancelling", RunStatus::Cancelling)
-        .await
-        .unwrap();
+    for (id, status) in [
+        ("submitted", RunStatus::Submitted),
+        ("running", RunStatus::Running),
+        ("cancelling", RunStatus::Running),
+    ] {
+        assert!(store
+            .activate_run_lifecycle(id, status, "race-owner", 60)
+            .await
+            .unwrap());
+    }
+    assert!(store.request_run_cancellation("cancelling").await.unwrap());
 
     let active = store.list_active_runs().await.unwrap();
     assert_eq!(active.len(), 3);
     assert!(active.iter().any(|run| run.status == RunStatus::Cancelling));
-    assert!(store.mark_run_lost("running").await.unwrap());
-    assert!(!store.mark_run_lost("running").await.unwrap());
     assert!(store
-        .finish_active_run("cancelling", RunStatus::Cancelled, None)
+        .mark_run_lost_owned("running", "race-owner")
         .await
         .unwrap());
     assert!(!store
-        .finish_active_run("cancelling", RunStatus::TimedOut, None)
-        .await
-        .unwrap());
-    assert!(!store
-        .finish_active_run("draft", RunStatus::Failed, Some(1))
+        .mark_run_lost_owned("running", "race-owner")
         .await
         .unwrap());
     assert!(store
-        .finish_active_run("submitted", RunStatus::Succeeded, Some(0))
+        .finish_active_run_owned("cancelling", "race-owner", RunStatus::Cancelled, None,)
+        .await
+        .unwrap());
+    assert!(!store
+        .finish_active_run_owned("cancelling", "race-owner", RunStatus::TimedOut, None,)
+        .await
+        .unwrap());
+    assert!(!store
+        .finish_active_run_owned("draft", "race-owner", RunStatus::Failed, Some(1))
+        .await
+        .unwrap());
+    assert!(store
+        .finish_active_run_owned("submitted", "race-owner", RunStatus::Succeeded, Some(0),)
         .await
         .unwrap());
     assert_eq!(
@@ -2843,23 +2802,9 @@ async fn conditional_terminal_update_does_not_overwrite_winner() {
         RunStatus::Cancelled
     );
     assert!(store
-        .finish_active_run("draft", RunStatus::Running, None)
+        .finish_active_run_owned("draft", "race-owner", RunStatus::Running, None)
         .await
         .is_err());
-
-    let mut restart_cancel = RunRecord::new("restart-cancel", "p", "local", "rc", "command");
-    restart_cancel.status = RunStatus::Cancelling;
-    store.create_run(&restart_cancel).await.unwrap();
-    assert_eq!(store.mark_active_runs_lost().await.unwrap(), 1);
-    assert_eq!(
-        store
-            .get_run("restart-cancel")
-            .await
-            .unwrap()
-            .unwrap()
-            .status,
-        RunStatus::Lost
-    );
 
     let lease_run = RunRecord::new("lease", "p", "ssh:gpu", "lease", "ssh_direct");
     store.create_run(&lease_run).await.unwrap();
@@ -2910,41 +2855,6 @@ async fn conditional_terminal_update_does_not_overwrite_winner() {
         .finish_active_run_owned("lease", "owner-a", RunStatus::Cancelled, None)
         .await
         .unwrap());
-
-    let _ = std::fs::remove_file(&tmp);
-}
-
-#[tokio::test]
-async fn run_status_transitions_are_validated() {
-    let tmp = std::env::temp_dir().join(format!(
-        "wisp_store_run_status_{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let store = Store::open(&tmp).await.unwrap();
-    store.create_project("p", "proj", "").await.unwrap();
-    store
-        .upsert_execution_context(&ExecutionContext::new("local", "Local").unwrap())
-        .await
-        .unwrap();
-    store
-        .create_run(&RunRecord::new("r1", "p", "local", "Terminal", "command"))
-        .await
-        .unwrap();
-    store
-        .update_run_status("r1", RunStatus::Running)
-        .await
-        .unwrap();
-    store
-        .finish_run("r1", RunStatus::Failed, Some(1))
-        .await
-        .unwrap();
-
-    let err = store
-        .update_run_status("r1", RunStatus::Running)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("Invalid run status transition"), "{err}");
 
     let _ = std::fs::remove_file(&tmp);
 }
@@ -3046,19 +2956,16 @@ async fn artifacts_keep_version_lineage() {
         .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v1.md")
         .await
         .unwrap();
-    store
+    let second = store
         .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v2.md")
         .await
         .unwrap();
-    let versions = store.list_artifact_versions("a").await.unwrap();
-    assert_eq!(versions.len(), 2);
-    assert_eq!(versions[0].version_number, 2);
-    assert_eq!(
-        versions[0].parent_version_id.as_deref(),
-        Some(first.as_str())
-    );
-    assert_eq!(versions[0].storage_path, "reports/v2.md");
-    assert_eq!(versions[1].version_number, 1);
+    let latest = store.get_artifact_version(&second).await.unwrap().unwrap();
+    let original = store.get_artifact_version(&first).await.unwrap().unwrap();
+    assert_eq!(latest.version_number, 2);
+    assert_eq!(latest.parent_version_id.as_deref(), Some(first.as_str()));
+    assert_eq!(latest.storage_path, "reports/v2.md");
+    assert_eq!(original.version_number, 1);
 
     assert!(store
         .relocate_artifact_storage("a", "durable/isolated-report.md")
@@ -3072,9 +2979,24 @@ async fn artifacts_keep_version_lineage() {
         store.get_artifact("a").await.unwrap().unwrap().2,
         "durable/isolated-report.md"
     );
-    let relocated = store.list_artifact_versions("a").await.unwrap();
-    assert_eq!(relocated[0].storage_path, "durable/isolated-report.md");
-    assert_eq!(relocated[1].storage_path, "reports/v1.md");
+    assert_eq!(
+        store
+            .get_artifact_version(&second)
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_path,
+        "durable/isolated-report.md"
+    );
+    assert_eq!(
+        store
+            .get_artifact_version(&first)
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_path,
+        "reports/v1.md"
+    );
 
     let graph = store.research_graph("p").await.unwrap();
     assert!(graph

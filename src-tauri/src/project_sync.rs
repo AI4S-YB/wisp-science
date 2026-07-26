@@ -40,16 +40,6 @@ pub(super) struct ProjectSyncResult {
     skipped_paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ProjectSyncStatus {
-    configured: bool,
-    transport_kind: Option<String>,
-    last_synced_at: Option<i64>,
-    last_direction: Option<String>,
-    revision: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JoinCode {
     version: u32,
@@ -1483,34 +1473,6 @@ pub(super) async fn resolve_project_sync(
         clear_project_runtime_cache(&state, &id, &old_frame_ids).await;
     }
     Ok(result)
-}
-
-#[tauri::command]
-pub(super) async fn get_project_sync_status(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<ProjectSyncStatus, String> {
-    let cursor = state
-        .store
-        .get_project_sync_state(&id)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(match cursor {
-        Some(cursor) => ProjectSyncStatus {
-            configured: cursor.base_revision.is_some(),
-            transport_kind: Some(cursor.transport_kind),
-            last_synced_at: cursor.last_synced_at,
-            last_direction: cursor.last_direction,
-            revision: cursor.base_revision,
-        },
-        None => ProjectSyncStatus {
-            configured: false,
-            transport_kind: None,
-            last_synced_at: None,
-            last_direction: None,
-            revision: None,
-        },
-    })
 }
 
 #[tauri::command]

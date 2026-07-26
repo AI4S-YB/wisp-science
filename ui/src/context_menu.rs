@@ -144,7 +144,7 @@ pub(crate) fn selection_text() -> Option<String> {
 }
 
 fn text_from_code_block(el: &web_sys::Element) -> Option<String> {
-    for sel in [".code-block", ".tool-panel", "pre.md-code", "pre.rp-pre"] {
+    for sel in [".tool-panel", "pre.md-code", "pre.rp-pre"] {
         let Some(block) = closest(el, sel) else {
             continue;
         };

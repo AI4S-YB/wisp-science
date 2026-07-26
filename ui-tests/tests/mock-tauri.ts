@@ -1137,8 +1137,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return { status: "synced", direction: arg("strategy") === "remote" ? "pull" : "push", revision: "revision-2", uploadedFiles: 1, downloadedFiles: 1, skippedPaths: [] };
           case "project_sync_code":
             return "wisp-sync:mock-secret-code";
-          case "get_project_sync_status":
-            return { configured: true, transportKind: "folder", lastSyncedAt: 1, lastDirection: "push", revision: "revision-1" };
           case "delete_project":
             return null;
           case "open_project_window":

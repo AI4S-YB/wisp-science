@@ -1,7 +1,7 @@
 """Query specification for annotation retrieval (gene products + aspect/evidence filters)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # GO aspects accepted by the QuickGO annotation endpoints.
 ASPECTS = ("biological_process", "molecular_function", "cellular_component")

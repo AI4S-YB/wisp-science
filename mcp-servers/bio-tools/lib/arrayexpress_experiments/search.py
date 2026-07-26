@@ -133,7 +133,6 @@ def search_experiments(
     ``BioStudiesError`` if the number of unique retrieved accessions does not equal
     ``total_hits`` (unless ``max_records`` truncated the walk).
     """
-    own_client = client is None
     client = client or BioStudiesClient()
     params = spec.to_params()
     page_size = min(page_size, PAGE_SIZE_MAX)
