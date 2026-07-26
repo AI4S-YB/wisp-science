@@ -3157,6 +3157,18 @@ fn build_provider_config(
     Ok(cfg)
 }
 
+fn add_configured_image_generation_tool(
+    agent: &mut Agent,
+    config: Option<(String, String, String)>,
+    proxy: Option<String>,
+) {
+    if let Some((api_url, model, api_key)) = config {
+        agent.add_tool(Box::new(image_generation_tool::GenerateImageTool::new(
+            api_url, api_key, model, proxy,
+        )));
+    }
+}
+
 async fn build_vision_provider_config(store: &Store) -> Option<ProviderConfig> {
     let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
         models::vision_config(store).await?;
@@ -4273,17 +4285,12 @@ async fn send_message_inner(
         {
             std::fs::create_dir_all(ap.root.join("figures"))
                 .map_err(|error| format!("Failed to prepare figures directory: {error}"))?;
-            if let Some((api_url, model, api_key)) =
-                models::image_generation_config(&state.store).await
-            {
-                agent.add_tool(Box::new(image_generation_tool::GenerateImageTool::new(
-                    api_url,
-                    api_key,
-                    model,
-                    llm_proxy(),
-                )));
-            }
         }
+        add_configured_image_generation_tool(
+            &mut agent,
+            models::image_generation_config(&state.store).await,
+            llm_proxy(),
+        );
         agent.add_tool(Box::new(browser_bridge::BrowserSetupTool::new(
             state.browser_bridge.clone(),
         )));

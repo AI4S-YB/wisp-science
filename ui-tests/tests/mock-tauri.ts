@@ -2031,8 +2031,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               mockUpdateCheckPending = false;
             }
             return mockUpdateCheck;
-          case "validate_settings":
-            return "Validated openai with deepseek-v4-pro";
+          case "validate_settings": {
+            const validationSettings = plain(arg("settings") ?? {});
+            return String(validationSettings.model ?? "") === "gpt-image-2"
+              ? "Validated openai_responses with gpt-image-2"
+              : "Validated openai with deepseek-v4-pro";
+          }
           case "get_memory_view":
             return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
           case "set_memory_enabled":
@@ -2170,6 +2174,42 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                   emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Attach the existing Run monitor." });
                   emit("agent", { kind: "ToolCall", frame_id: fid, name: "monitor_run", preview: "run-local-002" });
                 }, 30);
+              });
+            }
+            if (String(msg).includes("IMAGEGENPLACEHOLDER")) {
+              return await new Promise<string>((resolve) => {
+                setTimeout(() => {
+                  emit("agent", { kind: "User", frame_id: fid, text: msg });
+                  emit("agent", {
+                    kind: "Text",
+                    frame_id: fid,
+                    delta: "I’ll generate the scientific figure now.",
+                  });
+                  emit("agent", {
+                    kind: "ToolCall",
+                    frame_id: fid,
+                    name: "generate_image",
+                    preview: "figures/pathway.png",
+                  });
+                }, 30);
+                setTimeout(() => {
+                  emit("agent", {
+                    kind: "ToolResult",
+                    frame_id: fid,
+                    name: "generate_image",
+                    ok: true,
+                    content: "Generated PNG at figures/pathway.png.",
+                  });
+                }, 1_200);
+                setTimeout(() => {
+                  emit("agent", {
+                    kind: "Text",
+                    frame_id: fid,
+                    delta: "The scientific figure is ready.",
+                  });
+                  emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
+                  resolve(fid);
+                }, 1_350);
               });
             }
             // Long-approval path (#63 regression test): emit a confirm-request

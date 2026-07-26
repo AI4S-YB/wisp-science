@@ -10961,6 +10961,9 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
         ChatItem::Tool { name, .. } if is_run_monitor_tool(name) => "tool-wrap run-monitor-wrap",
+        ChatItem::Tool { name, .. } if is_image_generation_tool(name) => {
+            "tool-wrap image-generation-wrap"
+        }
         ChatItem::Tool { .. } => "tool-wrap",
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
@@ -11572,6 +11575,14 @@ fn render_item(
                 runs=runs
                 tool_ok=*ok
                 tool_output=output.clone()
+            />
+        }.into_view(),
+        ChatItem::Tool { name, ok, input, output, .. } if is_image_generation_tool(name) => view! {
+            <ImageGenerationCard
+                path=input.trim().to_string()
+                ok=*ok
+                output=output.clone()
+                on_file=on_file
             />
         }.into_view(),
         ChatItem::Reasoning(s) => {

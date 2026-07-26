@@ -3807,9 +3807,9 @@ mod start_user_turn_tests {
     use super::{
         append_assistant_delta, append_reasoning_delta, completed_activity_end,
         composer_text_from_user_message, is_commentary_at, message_with_attachments,
-        message_with_composer_context, message_with_quotes, process_item_insert_index,
-        runtime_object_quote, start_user_turn, trailing_queue_start, ComposerQuote,
-        ComposerReferenceChip,
+        is_image_generation_tool, is_tool_activity, message_with_composer_context,
+        message_with_quotes, process_item_insert_index, runtime_object_quote, start_user_turn,
+        trailing_queue_start, ComposerQuote, ComposerReferenceChip,
     };
     use crate::dto::ChatItem;
 
@@ -4095,6 +4095,21 @@ mod start_user_turn_tests {
     }
 
     #[test]
+    fn image_generation_is_not_folded_into_tool_activity() {
+        let image = ChatItem::Tool {
+            name: "generate_image".into(),
+            ok: None,
+            input: "figures/pathway.png".into(),
+            output: String::new(),
+            started_at_ms: None,
+            duration_ms: None,
+        };
+
+        assert!(is_image_generation_tool("generate_image"));
+        assert!(!is_tool_activity(&image));
+    }
+
+    #[test]
     fn completed_activity_folds_until_the_final_answer() {
         let assistant = |text: &str| ChatItem::Assistant {
             text: text.into(),
@@ -4314,9 +4329,17 @@ pub(super) fn is_run_monitor_tool(name: &str) -> bool {
     matches!(name, "monitor_run" | "wisp_monitor_run")
 }
 
+pub(super) fn is_image_generation_tool(name: &str) -> bool {
+    name == "generate_image"
+}
+
 pub(super) fn is_tool_activity(item: &ChatItem) -> bool {
     match item {
-        ChatItem::Tool { name, .. } => name != "attempt_completion" && !is_run_monitor_tool(name),
+        ChatItem::Tool { name, .. } => {
+            name != "attempt_completion"
+                && !is_run_monitor_tool(name)
+                && !is_image_generation_tool(name)
+        }
         ChatItem::AcpTool { .. } => true,
         _ => false,
     }
@@ -8626,6 +8649,125 @@ fn attachment_name(path: &str) -> String {
         .filter(|name| !name.is_empty())
         .unwrap_or(path)
         .to_string()
+}
+
+/// A `generate_image` call owns a stable media slot in the transcript. The
+/// ToolCall event paints the placeholder immediately; ToolResult remounts the
+/// same card and loads the PNG into that slot.
+#[component]
+pub(super) fn ImageGenerationCard(
+    path: String,
+    ok: Option<bool>,
+    output: String,
+    on_file: Callback<ModalArtifact>,
+) -> impl IntoView {
+    let locale = use_locale();
+    let source = create_rw_signal(None::<String>);
+    let preview_failed = create_rw_signal(false);
+    if ok == Some(true) {
+        let load_path = path.clone();
+        let loc = locale.get_untracked();
+        spawn_local(async move {
+            match load_file_content(&load_path, loc).await {
+                Ok(file) => match file.base64 {
+                    Some(base64) => {
+                        source.set(Some(format!("data:{};base64,{base64}", file.mime)))
+                    }
+                    None => preview_failed.set(true),
+                },
+                Err(_) => preview_failed.set(true),
+            }
+        });
+    }
+
+    let status = match ok {
+        None => "running",
+        Some(true) => "completed",
+        Some(false) => "failed",
+    };
+    let title_key = match ok {
+        None => "chat.image_generating",
+        Some(true) => "chat.image_generated",
+        Some(false) => "chat.image_failed",
+    };
+    let display_path = path.clone();
+    let open_path = path.clone();
+    let filename = attachment_name(&path);
+    let open_name = filename.clone();
+    let failure_detail = output.trim().to_string();
+
+    view! {
+        <article
+            class="image-generation-card"
+            data-testid="image-generation-card"
+            data-status=status
+            data-path=path
+        >
+            <div class="image-generation-media">
+                {move || match ok {
+                    None => view! {
+                        <div class="image-generation-state" role="status" aria-live="polite">
+                            <span class="image-generation-spinner" aria-hidden="true"></span>
+                            <span>{move || t(locale.get(), "chat.image_generating")}</span>
+                        </div>
+                    }.into_view(),
+                    Some(false) => view! {
+                        <div class="image-generation-state failed">
+                            <span class="image-generation-failed-mark" aria-hidden="true">"!"</span>
+                            <span>{move || t(locale.get(), "chat.image_failed")}</span>
+                            {(!failure_detail.is_empty()).then(|| view! {
+                                <small title=failure_detail.clone()>{failure_detail.clone()}</small>
+                            })}
+                        </div>
+                    }.into_view(),
+                    Some(true) => match source.get() {
+                        Some(src) => {
+                            let click_path = open_path.clone();
+                            let click_name = open_name.clone();
+                            let open = on_file;
+                            view! {
+                                <button
+                                    type="button"
+                                    class="image-generation-open"
+                                    aria-label=move || t(locale.get(), "chat.image_generated")
+                                    on:click=move |_| open.call((
+                                        click_path.clone(),
+                                        click_name.clone(),
+                                        "image".into(),
+                                    ))
+                                >
+                                    <img
+                                        src=src
+                                        alt=filename.clone()
+                                        on:error=move |_| {
+                                            source.set(None);
+                                            preview_failed.set(true);
+                                        }
+                                    />
+                                </button>
+                            }.into_view()
+                        }
+                        None if preview_failed.get() => view! {
+                            <div class="image-generation-state failed">
+                                <span class="image-generation-failed-mark" aria-hidden="true">"!"</span>
+                                <span>{move || t(locale.get(), "chat.image_preview_unavailable")}</span>
+                            </div>
+                        }.into_view(),
+                        None => view! {
+                            <div class="image-generation-state" role="status" aria-live="polite">
+                                <span class="image-generation-spinner" aria-hidden="true"></span>
+                                <span>{move || t(locale.get(), "chat.image_loading")}</span>
+                            </div>
+                        }.into_view(),
+                    },
+                }}
+            </div>
+            <footer class="image-generation-meta">
+                <strong>{move || t(locale.get(), title_key)}</strong>
+                <code>{display_path}</code>
+            </footer>
+        </article>
+    }
 }
 
 /// Small, lazy image preview shared by composer cards and sent messages. The

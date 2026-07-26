@@ -566,8 +566,19 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
     (p.provider, p.api_url, p.model, key_for(&p.id))
 }
 
+pub(crate) fn is_image_generation_model(model: &str) -> bool {
+    model.trim().eq_ignore_ascii_case("gpt-image-2")
+}
+
+pub(crate) fn supports_image_generation(provider: &str, model: &str) -> bool {
+    matches!(
+        provider.trim(),
+        "openai" | "openai_compatible" | "openai_responses" | "openai-responses" | "responses"
+    ) && is_image_generation_model(model)
+}
+
 fn is_chat_model(p: &ModelProfile) -> bool {
-    !p.model.trim().eq_ignore_ascii_case("gpt-image-2")
+    !is_image_generation_model(&p.model)
 }
 
 fn can_describe_images(p: &ModelProfile) -> bool {
@@ -575,10 +586,7 @@ fn can_describe_images(p: &ModelProfile) -> bool {
 }
 
 fn can_generate_images(p: &ModelProfile) -> bool {
-    matches!(
-        p.provider.trim(),
-        "openai" | "openai_compatible" | "openai_responses" | "openai-responses" | "responses"
-    ) && p.model.trim().eq_ignore_ascii_case("gpt-image-2")
+    supports_image_generation(&p.provider, &p.model)
 }
 
 async fn vision_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Option<String> {

@@ -31,15 +31,30 @@ impl GenerateImageTool {
         }
     }
 
-    fn endpoint(&self) -> String {
+    fn api_root(&self) -> String {
         let base = self.api_url.trim().trim_end_matches('/');
-        if base.ends_with("/images/generations") {
-            base.to_string()
+        if let Some(root) = base.strip_suffix("/images/generations") {
+            root.to_string()
         } else if base == "https://api.openai.com" {
-            format!("{base}/v1/images/generations")
+            format!("{base}/v1")
         } else {
-            format!("{base}/images/generations")
+            base.to_string()
         }
+    }
+
+    fn endpoint(&self) -> String {
+        format!(
+            "{}/images/generations",
+            self.api_root().trim_end_matches('/')
+        )
+    }
+
+    fn model_endpoint(&self) -> String {
+        format!(
+            "{}/models/{}",
+            self.api_root().trim_end_matches('/'),
+            self.model.trim()
+        )
     }
 
     fn client(&self) -> Result<reqwest::Client, String> {
@@ -145,6 +160,66 @@ impl GenerateImageTool {
         }
         Ok(image)
     }
+
+    /// Validate credentials and access without creating a billable image.
+    ///
+    /// Image-only models cannot be sent to Responses or Chat Completions. The
+    /// OpenAI model metadata route provides a lightweight authenticated probe.
+    pub async fn validate_model_access(&self) -> Result<(), String> {
+        if !self.model.trim().eq_ignore_ascii_case("gpt-image-2") {
+            return Err("only OpenAI gpt-image-2 is supported".into());
+        }
+        if self.api_key.trim().is_empty() {
+            return Err("the assigned image-generation model has no API key".into());
+        }
+        let mut response = self
+            .client()?
+            .get(self.model_endpoint())
+            .bearer_auth(self.api_key.trim())
+            .send()
+            .await
+            .map_err(|error| format!("image-generation validation failed: {error}"))?;
+        let status = response.status();
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| format!("image-generation validation response failed: {error}"))?
+        {
+            if body.len().saturating_add(chunk.len()) > MAX_ERROR_BYTES {
+                return Err("image-generation validation response is too large".into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if !status.is_success() {
+            let message = serde_json::from_slice::<Value>(&body)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| String::from_utf8_lossy(&body[..body.len().min(2_048)]).into());
+            return Err(format!(
+                "OpenAI model API returned {}: {message}",
+                status.as_u16()
+            ));
+        }
+        let id = serde_json::from_slice::<Value>(&body)
+            .map_err(|error| format!("invalid OpenAI model response: {error}"))?
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if !id.eq_ignore_ascii_case("gpt-image-2") {
+            return Err(format!(
+                "OpenAI returned model '{}' while validating gpt-image-2",
+                if id.is_empty() { "(missing)" } else { &id }
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -156,7 +231,7 @@ impl Tool for GenerateImageTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "generate_image",
-            "Generate one PNG with the configured OpenAI gpt-image-2 model and save it inside the project. Use a project-relative path under figures/.",
+            "Generate one PNG with the configured OpenAI gpt-image-2 model and save it inside the project. This is the Scientific Illustrator's raster-image capability; call it when the user asks the Scientific Illustrator or asks to generate a scientific image. Use a project-relative path under figures/.",
             json!({
                 "type": "object",
                 "properties": {
@@ -372,6 +447,30 @@ mod tests {
         assert_eq!(body["output_format"], "png");
         assert_eq!(body["size"], "1536x1024");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn validates_with_the_model_endpoint_instead_of_a_chat_endpoint() {
+        let response = json!({"id": "gpt-image-2", "object": "model"}).to_string();
+        let (api_url, request) = serve_once(response).await;
+
+        GenerateImageTool::new(
+            api_url,
+            "sk-test".into(),
+            "gpt-image-2".into(),
+            Some("none".into()),
+        )
+        .validate_model_access()
+        .await
+        .unwrap();
+
+        let request = request.await.unwrap();
+        assert!(request.starts_with("GET /v1/models/gpt-image-2 HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer sk-test"));
+        assert!(!request.contains("/responses"));
+        assert!(!request.contains("/chat/completions"));
     }
 
     #[tokio::test]

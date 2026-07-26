@@ -13,6 +13,42 @@ use wisp_store::secrets::Secret;
 
 const SYNC_RELAY_TOKEN: &str = "sync_relay_token";
 
+async fn validate_provider_config(
+    provider_name: &str,
+    mut cfg: wisp_llm::ProviderConfig,
+    supports_vision: bool,
+) -> Result<(), String> {
+    if models::is_image_generation_model(&cfg.model) {
+        if !models::supports_image_generation(provider_name, &cfg.model) {
+            return Err("Image generation currently supports only OpenAI gpt-image-2.".into());
+        }
+        return super::image_generation_tool::GenerateImageTool::new(
+            cfg.base_url,
+            cfg.api_key,
+            cfg.model,
+            cfg.proxy,
+        )
+        .validate_model_access()
+        .await;
+    }
+
+    // Keep the ping cheap but respect API minimum (Responses API needs >= 16).
+    cfg.max_tokens = cfg.max_tokens.min(64).max(16);
+    // "Supports images" is checked by hand, so probe with a real image rather
+    // than trusting the box — otherwise the first pasted screenshot is what
+    // discovers the model can't take one.
+    let probe = if supports_vision {
+        vision_probe_message()
+    } else {
+        Message::user("Reply with OK.")
+    };
+    wisp_llm::build(cfg)
+        .complete(&[probe], &[])
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     let (provider, api_url, model, _api_key) = load_settings(&state.store).await;
@@ -542,7 +578,7 @@ pub(super) async fn validate_settings(
         }
     };
     let api_key = effective_api_key(key, stored_key);
-    let mut cfg = build_provider_config(
+    let cfg = build_provider_config(
         &settings.provider,
         &settings.api_url,
         &api_key,
@@ -550,8 +586,6 @@ pub(super) async fn validate_settings(
         settings.max_tokens,
         &settings.reasoning_effort,
     )?;
-    // Keep the ping cheap but respect API minimum (Responses API needs >= 16).
-    cfg.max_tokens = cfg.max_tokens.min(64).max(16);
 
     tracing::info!(
         target: "wisp",
@@ -560,18 +594,9 @@ pub(super) async fn validate_settings(
         model = %settings.model,
         "validating settings"
     );
-    let provider = wisp_llm::build(cfg);
-    // "Supports images" is checked by hand, so probe with a real image rather
-    // than trusting the box — otherwise the first pasted screenshot is what
-    // discovers the model can't take one.
-    let probe = if settings.supports_vision {
-        vision_probe_message()
-    } else {
-        Message::user("Reply with OK.")
-    };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        provider.complete(&[probe], &[]),
+        validate_provider_config(&provider_name, cfg, settings.supports_vision),
     )
     .await
     .map_err(|_| {
@@ -580,7 +605,7 @@ pub(super) async fn validate_settings(
     })?;
     if let Err(e) = result {
         tracing::warn!(target: "wisp", error = %e, vision = settings.supports_vision, "settings validation failed");
-        return Err(format!("{e}"));
+        return Err(e);
     }
 
     tracing::info!(target: "wisp", "settings validation succeeded");
