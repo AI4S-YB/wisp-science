@@ -48,6 +48,7 @@ until the popup shows *Connected to Wisp*. Never invent the path.
 |---|---|
 | Switch to & focus a tab (so the user sees it) | `{"cmd":"tabs","method":"switch","tabId":<id>}` |
 | List tabs | `{"cmd":"tabs"}` (or just `web_scan tabs_only`) |
+| Close tabs you opened | `{"cmd":"tabs","method":"close","tabIds":[<id>,...]}` — returns `closed` + `remaining` |
 | Trusted click when `.click()` is ignored | `{"cmd":"cdp","method":"Input.dispatchMouseEvent","params":{"type":"mousePressed","x":<x>,"y":<y>,"button":"left","clickCount":1}}` then the same with `"type":"mouseReleased"` — use the element's `rect` centre from `web_scan` |
 
 Prefer plain JS. Reach for `cmd:cdp` only when a page blocks synthetic
@@ -65,6 +66,26 @@ Pass `question` to say what to read out of it, e.g.
 
 It goes through the configured vision model, so `web_scan` stays the cheaper
 default — screenshot when you need eyes, not for every step.
+
+## Tab hygiene — track what you open, offer to close it
+
+Browsing tasks (searching papers, opening a dozen results) leave the user
+with a pile of tabs to close by hand. So:
+
+1. Every `web_open_tab` returns `tab.id`. **Keep a running list of the ids
+   you opened in this task**, in your own message text — e.g. after a batch
+   write `opened tabs: 1234, 1235, 1236`. `{"cmd":"tabs"}` cannot tell you
+   which tabs are yours, only what exists.
+2. When the task is done, before your final answer, **ask the user**:
+   name the count and offer to close them, e.g. *"我为这次检索开了 6 个标签
+   页，需要我关掉吗？"* Do not close anything without a yes.
+3. On a yes, close them in one call:
+   `{"cmd":"tabs","method":"close","tabIds":[1234,1235,1236]}`. Report
+   `closed`; ids already gone are skipped silently.
+
+Close **only ids you opened yourself**. Tabs the user had open, or ones
+they opened during the task, are theirs — never include them, and never
+close a tab mid-task that later steps still need.
 
 ## Stop conditions (do not automate through these)
 
