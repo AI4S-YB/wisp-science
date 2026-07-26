@@ -2984,6 +2984,18 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
 /// `http: ...` from wisp-llm). Provider error bodies vary too much to parse,
 /// so this is substring classification — specific causes first, generic last.
 pub fn api_error_hint(locale: Locale, msg: &str) -> Option<String> {
+    api_error_hint_key(msg).map(|key| t(locale, key))
+}
+
+/// True when the provider rejected the request because it cannot take image
+/// content parts. Goes through the full classifier, so an unrelated failure
+/// that happens to mention `image_url` (out of balance, rate limited) does not
+/// misfire the automatic turn rollback.
+pub fn is_image_unsupported(msg: &str) -> bool {
+    api_error_hint_key(msg) == Some("err.hint.image")
+}
+
+fn api_error_hint_key(msg: &str) -> Option<&'static str> {
     if !msg.contains("api: ") && !msg.contains("http: ") {
         return None;
     }
@@ -3025,7 +3037,7 @@ pub fn api_error_hint(locale: Locale, msg: &str) -> Option<String> {
     } else {
         return None;
     };
-    Some(t(locale, key))
+    Some(key)
 }
 
 #[cfg(test)]
@@ -3054,6 +3066,19 @@ mod api_error_hint_tests {
         for (msg, key) in cases {
             assert_eq!(hint_key(msg), Some(t(Locale::En, key)), "for: {msg}");
         }
+    }
+
+    // Only this classification may auto-roll-back a turn, so a failure that
+    // merely mentions image_url must not trip it.
+    #[test]
+    fn image_unsupported_gates_the_rollback() {
+        assert!(is_image_unsupported(
+            r#"api: 400 {"error":{"message":"unknown variant `image_url`, expected `text`"}}"#
+        ));
+        assert!(!is_image_unsupported(
+            r#"api: 402 {"error":{"message":"Insufficient Balance for image_url request"}}"#
+        ));
+        assert!(!is_image_unsupported("tool `python` failed: image_url"));
     }
 
     #[test]
