@@ -183,12 +183,15 @@ pub(crate) fn md_to_html(src: &str) -> String {
     out
 }
 
-fn preprocess_markdown(src: &str) -> std::borrow::Cow<'_, str> {
+/// Render a standalone Markdown document, hiding leading YAML front matter.
+/// Chat messages must use `md_to_html` so ordinary thematic breaks are kept.
+pub(crate) fn md_document_to_html(src: &str) -> String {
     let src = strip_yaml_front_matter(src);
-    let src = match rewrite_image_tags(src.as_ref()) {
-        std::borrow::Cow::Borrowed(_) => src,
-        std::borrow::Cow::Owned(s) => std::borrow::Cow::Owned(s),
-    };
+    md_to_html(src.as_ref())
+}
+
+fn preprocess_markdown(src: &str) -> std::borrow::Cow<'_, str> {
+    let src = rewrite_image_tags(src);
     match normalize_math_delimiters(src.as_ref()) {
         std::borrow::Cow::Borrowed(_) => src,
         std::borrow::Cow::Owned(s) => std::borrow::Cow::Owned(s),
@@ -1076,10 +1079,10 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 #[cfg(test)]
 mod md_catalog_tests {
     use super::{
-        code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes, md_to_html,
-        parent_path, parse_notebook, pretty_json, push_nb_output, runtime_language, strip_ansi,
-        tool_card_label, user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES,
-        MAX_NB_TOTAL_OUTPUT_BYTES,
+        code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes,
+        md_document_to_html, md_to_html, parent_path, parse_notebook, pretty_json, push_nb_output,
+        runtime_language, strip_ansi, tool_card_label, user_message_presentation, NbOutput,
+        MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
     #[test]
@@ -1154,7 +1157,58 @@ mod md_catalog_tests {
     #[test]
     fn strips_yaml_front_matter_from_markdown_preview() {
         let src = "---\nskill: bear-counter\ntopic: demo\n---\n\n# Title\n\nBody\n";
+        let html = md_document_to_html(src);
+        assert!(html.contains("<h1>Title</h1>"), "{html}");
+        assert!(!html.contains("skill: bear-counter"), "{html}");
+        assert!(!html.contains("topic: demo"), "{html}");
+    }
+
+    #[test]
+    fn keeps_front_matter_like_text_in_chat_messages() {
+        let src = "---\nskill: bear-counter\ntopic: demo\n---\n\n# Title\n\nBody\n";
         let html = md_to_html(src);
+        assert!(html.contains("skill: bear-counter"), "{html}");
+        assert!(html.contains("topic: demo"), "{html}");
+        assert!(html.contains("<h1>Title</h1>"), "{html}");
+    }
+
+    #[test]
+    fn keeps_rule_wrapped_chat_body_after_closing_rule_streams_in() {
+        let partial = "---\n\n**Figure 3. Example title.**\n\nColor scale: RdBu_r.";
+        let partial_html = md_to_html(partial);
+        assert!(
+            partial_html.contains("Figure 3. Example title."),
+            "{partial_html}"
+        );
+        assert!(
+            partial_html.contains("Color scale: RdBu_r."),
+            "{partial_html}"
+        );
+
+        let complete = format!("{partial}\n\n---\n");
+        let complete_html = md_to_html(&complete);
+        assert!(
+            complete_html.contains("Figure 3. Example title."),
+            "{complete_html}"
+        );
+        assert!(
+            complete_html.contains("Color scale: RdBu_r."),
+            "{complete_html}"
+        );
+    }
+
+    #[test]
+    fn keeps_rule_wrapped_chat_body_with_crlf() {
+        let src = "---\r\n\r\n**Figure 3.**\r\n\r\nColor scale: RdBu_r.\r\n\r\n---\r\n";
+        let html = md_to_html(src);
+        assert!(html.contains("Figure 3."), "{html}");
+        assert!(html.contains("Color scale: RdBu_r."), "{html}");
+    }
+
+    #[test]
+    fn strips_crlf_yaml_front_matter_from_markdown_preview() {
+        let src = "---\r\nskill: bear-counter\r\ntopic: demo\r\n---\r\n\r\n# Title\r\n";
+        let html = md_document_to_html(src);
         assert!(html.contains("<h1>Title</h1>"), "{html}");
         assert!(!html.contains("skill: bear-counter"), "{html}");
         assert!(!html.contains("topic: demo"), "{html}");
