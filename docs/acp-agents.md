@@ -116,7 +116,7 @@ npm install -g @agentclientprotocol/claude-agent-acp
   and opens a fresh ACP session automatically. Existing transcript history is
   left unchanged because ACP cannot bind it as native session history.
 - Permission cards show the exact options the agent returns; choose one to continue.
-- If the agent advertises session config options (model, mode, …), they appear above the composer for that turn.
+- If the agent advertises session config options (model, mode, …), open the compact ACP model menu beside Send to adjust them.
 - Stop cancels the active ACP turn for the bound session.
 - After restart, Wisp reconnects only when the same profile fingerprint and project path still match and the agent supports resume/load. Editing Command/Arguments creates a new fingerprint; start a fresh session.
 
