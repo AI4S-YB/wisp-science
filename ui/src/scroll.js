@@ -2,6 +2,14 @@
 
 const hooks = new Map();
 
+// ponytail: single chat scroller, so the jump pill id is a constant.
+const JUMP_PILL_ID = "chat-jump-pill";
+
+function lastUserRow(root) {
+  const rows = root.querySelectorAll("[data-user-index]");
+  return rows.length ? rows[rows.length - 1] : null;
+}
+
 function bottomGap(el) {
   return Math.max(0, el.scrollHeight - el.clientHeight - el.scrollTop);
 }
@@ -32,7 +40,24 @@ export function attach_chat_scroll(scrollerId, contentId) {
     lastUserScroll = performance.now();
   };
 
+  // Floating "Your last message" jump pill: visible only when the last user
+  // turn is off-screen and the view is scrolled away from the bottom. Class
+  // toggle on a static element — no reactive rebuild involved.
+  const syncPill = () => {
+    const pill = document.getElementById(JUMP_PILL_ID);
+    if (!pill) return;
+    let show = false;
+    const row = lastUserRow(content);
+    if (row && bottomGap(scroller) > 48) {
+      const view = scroller.getBoundingClientRect();
+      const top = row.getBoundingClientRect().top;
+      show = top < view.top - 4 || top > view.bottom - 4;
+    }
+    pill.classList.toggle("visible", show);
+  };
+
   const syncFollow = () => {
+    syncPill();
     if (atBottom(scroller)) {
       follow = true;
       return;
@@ -126,6 +151,16 @@ export function preserve_chat_scroll_on_prepend(scrollerId, contentId) {
       scroller.scrollTop = oldTop + content.scrollHeight - oldHeight;
     });
   });
+}
+
+/** Scroll the latest user turn into view (the floating jump pill).
+ * @param {string} scrollerId */
+export function jump_chat_scroll_last_user(scrollerId) {
+  const scroller = document.getElementById(scrollerId);
+  const target = scroller && lastUserRow(scroller);
+  if (!target) return;
+  hooks.get(scrollerId)?.unfollow();
+  target.scrollIntoView({ block: "start" });
 }
 
 /** @param {string} scrollerId @param {string} selector */
