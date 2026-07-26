@@ -2,7 +2,8 @@
 //!
 //! `ExecutionContext` selects what is launched (local shell, WSL, or OpenSSH),
 //! while `Run` remains the durable abstraction for tracked computation. A
-//! terminal panel is only a view: closing it detaches from the session. Each
+//! terminal panel is only a view: collapsing it keeps the session attached,
+//! while closing a terminal tab terminates and unregisters its session. Each
 //! `open_terminal` call creates an independent PTY so multiple terminals can
 //! run concurrently, including multiple shells in the same context.
 
@@ -222,6 +223,13 @@ impl TerminalManager {
             .get(id)
             .cloned()
             .ok_or_else(|| format!("Terminal session not found: {id}"))
+    }
+
+    fn close(&self, id: &str) -> Result<(), String> {
+        let session = self.get(id)?;
+        session.terminate()?;
+        lock(&self.state).sessions.remove(id);
+        Ok(())
     }
 
     pub fn shutdown_all(&self) {
@@ -473,11 +481,11 @@ pub fn resize_terminal(
 }
 
 #[tauri::command]
-pub fn terminate_terminal(
+pub fn close_terminal(
     terminals: State<'_, TerminalManager>,
     session_id: String,
 ) -> Result<(), String> {
-    terminals.get(&session_id)?.terminate()
+    terminals.close(&session_id)
 }
 
 #[cfg(test)]

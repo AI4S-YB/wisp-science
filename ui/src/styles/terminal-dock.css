@@ -82,19 +82,18 @@
 .terminal-dock-tabs::-webkit-scrollbar { display: none; }
 
 .terminal-dock-tab {
+  flex: 0 1 220px;
   min-width: 112px;
   max-width: 220px;
   height: 29px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px 5px 7px;
+  padding-right: 3px;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  cursor: pointer;
 }
 
 .terminal-dock-tab:hover { background: var(--surface-hover); color: var(--text); }
@@ -106,8 +105,56 @@
   box-shadow: var(--shadow-sm);
 }
 
-.terminal-dock-tab .gi { width: 14px; height: 14px; color: var(--text-muted); }
-.terminal-dock-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 520; }
+.terminal-dock-tab-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px 5px 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.terminal-dock-tab-main .gi {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.terminal-dock-tab-close {
+  flex: 0 0 auto;
+  width: 21px;
+  height: 21px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.terminal-dock-tab-close .gi { width: 12px; height: 12px; }
+.terminal-dock-tab-close:hover {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  color: var(--err);
+}
+
+.terminal-dock-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 520;
+}
 .terminal-dock-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font: 10px/1.2 var(--font-mono); }
 .terminal-dock-spacer { flex: 1; }
 
@@ -200,12 +247,14 @@
   height: 100%;
   background: var(--bg-app);
 }
-.terminal-dock-frame .xterm-viewport {
+.terminal-dock-frame .xterm .xterm-viewport {
   /* Keep xterm on the shared WebKit scrollbar path. Chromium gives the
      standardized `thin` value precedence over our themed pseudo-elements,
-     producing a wider, solid thumb beside the chat's inset thumb. */
+     producing a wider, solid thumb beside the chat's inset thumb. The extra
+     `.xterm` specificity also overrides xterm.css's black viewport background,
+     which otherwise shows as a line below the final fitted row in light mode. */
   scrollbar-width: auto;
-  background: var(--bg-app);
+  background-color: var(--bg-app);
 }
 .terminal-dock-frame .xterm-screen,
 .terminal-dock-frame .xterm-scroll-area {

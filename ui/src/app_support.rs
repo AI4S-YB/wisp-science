@@ -8207,6 +8207,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "bell" => view! { <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/> }.into_view(),
         "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
+        "minus" => view! { <path d="M5 12h14"/> }.into_view(),
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
         "crop" => view! { <path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/> }.into_view(),
         "split" => view! { <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/> }.into_view(),

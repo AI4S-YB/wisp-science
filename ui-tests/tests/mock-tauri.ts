@@ -1539,7 +1539,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           }
           case "write_terminal":
           case "resize_terminal":
-          case "terminate_terminal":
+          case "close_terminal":
             return null;
           case "list_runs":
             return runs;

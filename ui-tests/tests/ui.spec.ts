@@ -1996,7 +1996,14 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
     standardWidth: getComputedStyle(viewport).scrollbarWidth,
     themedWidth: getComputedStyle(viewport, "::-webkit-scrollbar").width,
     thumbInset: getComputedStyle(viewport, "::-webkit-scrollbar-thumb").borderTopWidth,
-  }))).toEqual({ standardWidth: "auto", themedWidth: "10px", thumbInset: "2px" });
+    backgroundMatches: getComputedStyle(viewport).backgroundColor
+      === getComputedStyle(viewport.closest(".terminal-dock-frame")!).backgroundColor,
+  }))).toEqual({
+    standardWidth: "auto",
+    themedWidth: "10px",
+    thumbInset: "2px",
+    backgroundMatches: true,
+  });
   await expect.poll(async () => (await invokeArgsList(page, "resize_terminal")).some((args: any) =>
     args.sessionId === "terminal-mock-1" && args.rows > 0 && args.cols > 0,
   )).toBe(true);
@@ -2022,17 +2029,22 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await terminalDock.getByRole("tab", { name: "ssh:gpu-server — Terminal" }).click();
   await expect(terminalDock.locator(".terminal-dock-frame.active"))
     .toHaveAttribute("data-terminal-session", "terminal-mock-1");
-  await terminalDock.getByRole("button", { name: "Close terminal panel" }).click();
+  await terminalDock.getByRole("button", { name: "Collapse terminal panel" }).click();
   await expect(terminalDock).toBeHidden();
   await sshContext.getByRole("button", { name: "Open terminal" }).click();
   await expect(terminalDock).toBeVisible();
   await expect(terminalDock.getByRole("tab")).toHaveCount(3);
   await expect(firstTerminal.locator(".xterm-rows")).toContainText("terminal ready");
-  await terminalDock.getByRole("button", { name: "Terminate" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "terminate_terminal")).toMatchObject({
+  await expect(terminalDock.getByRole("button", { name: "Terminate", exact: true })).toHaveCount(0);
+  await terminalDock.locator(".terminal-dock-tab.active")
+    .getByRole("button", { name: "Close and terminate terminal" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "close_terminal")).toMatchObject({
     sessionId: "terminal-mock-3",
   });
-  await expect(terminalDock.getByRole("button", { name: "Terminate" })).toBeDisabled();
+  await expect(terminalDock.getByRole("tab")).toHaveCount(2);
+  await expect(terminalDock.locator(".terminal-dock-frame")).toHaveCount(2);
+  await expect(terminalDock.locator(".terminal-dock-frame.active"))
+    .toHaveAttribute("data-terminal-session", "terminal-mock-2");
   await sshContext.getByRole("button", { name: "View runs" }).click();
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("succeeded");
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
