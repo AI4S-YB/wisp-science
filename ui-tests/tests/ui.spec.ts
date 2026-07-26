@@ -4612,7 +4612,7 @@ test("desktop pet remains independent and reflects global agent state", async ({
   await expect(pet).toHaveAttribute("data-state", "jumping");
 });
 
-test("pet navigation opens the project and session that need the user", async ({ page }) => {
+test("notification navigation opens the project and session that need the user (#499)", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.evaluate(() =>
     (window as any).__tauriListenerReady("open-session"),
