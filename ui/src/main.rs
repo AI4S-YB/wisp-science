@@ -4610,6 +4610,34 @@ fn App() -> impl IntoView {
                     }
                 }
             }
+            // Bind the built-in Reader to the flash tier so reading-heavy work
+            // runs on the cheap model out of the box. An already-bound Reader
+            // is the user's choice — leave it alone.
+            let flash_id = models
+                .get_untracked()
+                .iter()
+                .find(|p| p.model == DEEPSEEK_FLASH_MODEL)
+                .map(|p| p.id.clone());
+            if let Some(flash_id) = flash_id {
+                if let Ok(v) = invoke_checked("list_specialists", JsValue::UNDEFINED).await {
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) {
+                        if let Some(mut reader) = list
+                            .into_iter()
+                            .find(|s| s.id == "reader" && s.model_id.trim().is_empty())
+                        {
+                            reader.model_id = flash_id;
+                            let arg = to_value(&serde_json::json!({ "spec": reader })).unwrap();
+                            if let Ok(v) = invoke_checked("save_specialist_cmd", arg).await {
+                                if let Ok(list) =
+                                    serde_wasm_bindgen::from_value::<Vec<Specialist>>(v)
+                                {
+                                    specialists.set(list);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             onboard_key.set(String::new());
         });
     });

@@ -3275,6 +3275,15 @@ test("onboarding key setup adds the flash model before the pro model", async ({ 
       const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
       return profile.model;
     }))).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+  // The built-in Reader gets bound to the flash profile so reading-heavy
+  // work runs on the cheap tier out of the box.
+  await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .filter((c: any) => c.cmd === "save_specialist_cmd")
+    .map((c: any) => {
+      const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
+      const spec = args.spec instanceof Map ? Object.fromEntries(args.spec) : args.spec;
+      return { id: spec.id, model_id: spec.model_id };
+    }))).toEqual([{ id: "reader", model_id: "m1" }]);
 });
 
 test("gpt-image-2 can be assigned for generation but not selected for chat", async ({ page }) => {
