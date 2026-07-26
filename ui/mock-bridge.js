@@ -70,6 +70,7 @@
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: true,
+      use_for_image_generation: false,
     },
   ];
   // Preview fixtures, keyed by extension, so the file-preview kinds (#307:
@@ -374,8 +375,20 @@
             // Object.fromEntries above is shallow; the nested profile is still a Map.
             const raw = args?.profile;
             const p = raw instanceof Map ? Object.fromEntries(raw) : raw;
-            const target = p && mockModels.find((m) => m.id === p.id);
-            if (target) Object.assign(target, p);
+            const useForImageGeneration = Boolean(
+              (args instanceof Map
+                ? args.get("useForImageGeneration")
+                : args?.useForImageGeneration) ?? p?.use_for_image_generation,
+            );
+            for (const model of mockModels) {
+              if (model.id === p?.id) {
+                Object.assign(model, p, {
+                  use_for_image_generation: useForImageGeneration,
+                });
+              } else if (useForImageGeneration) {
+                model.use_for_image_generation = false;
+              }
+            }
             return mockModels;
           }
           case "reorder_models": {

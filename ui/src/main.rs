@@ -3603,6 +3603,7 @@ fn App() -> impl IntoView {
             "reasoning_effort": form.reasoning_effort.trim(),
             "supports_vision": form.supports_vision,
             "use_for_vision": form.use_for_vision,
+            "use_for_image_generation": form.use_for_image_generation,
         });
         let key_arg = if key.is_empty() { None } else { Some(key) };
         spawn_local(async move {
@@ -3610,6 +3611,7 @@ fn App() -> impl IntoView {
                 "profile": profile,
                 "key": key_arg,
                 "useForVision": form.use_for_vision,
+                "useForImageGeneration": form.use_for_image_generation,
             }))
             .unwrap();
             match invoke_checked("save_model", arg).await {
@@ -4579,12 +4581,14 @@ fn App() -> impl IntoView {
             "reasoning_effort": "",
             "supports_vision": false,
             "use_for_vision": false,
+            "use_for_image_generation": false,
         });
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
                 "profile": profile,
                 "key": Some(key),
                 "useForVision": false,
+                "useForImageGeneration": false,
             }))
             .unwrap();
             if let Ok(v) = invoke_checked("save_model", arg).await {
@@ -8627,9 +8631,15 @@ fn App() -> impl IntoView {
                                                     "follow_session".to_string(),
                                                     t(locale.get(), "composer.reviewer.follow_session"),
                                                 )];
-                                                choices.extend(models.get().into_iter().map(|model| {
-                                                    (format!("http:{}", model.id), model.label)
-                                                }));
+                                                choices.extend(
+                                                    models
+                                                        .get()
+                                                        .into_iter()
+                                                        .filter(ModelProfile::is_chat_model)
+                                                        .map(|model| {
+                                                            (format!("http:{}", model.id), model.label)
+                                                        }),
+                                                );
                                                 choices.extend(acp_agents.get().into_iter().map(|agent| {
                                                     (format!("acp:{}", agent.id), format!("{} · ACP", agent.label))
                                                 }));
@@ -8813,7 +8823,7 @@ fn App() -> impl IntoView {
                                                 });
                                                 let acp_selected = active_acp_agent_id.get().is_some();
                                                 let acp_locked = acp_selected && items.with(|rows| !rows.is_empty());
-                                                list.into_iter().map(|m| {
+                                                list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
                                                     let pick_label = m.label.clone();
                                                     let is_active = !acp_selected
@@ -8919,13 +8929,16 @@ fn App() -> impl IntoView {
                                                                 "reasoning_effort": effort,
                                                                 "supports_vision": m.supports_vision,
                                                                 "use_for_vision": m.use_for_vision,
+                                                                "use_for_image_generation": m.use_for_image_generation,
                                                             });
                                                             let use_for_vision = m.use_for_vision;
+                                                            let use_for_image_generation = m.use_for_image_generation;
                                                             spawn_local(async move {
                                                                 let arg = to_value(&serde_json::json!({
                                                                     "profile": profile,
                                                                     "key": Option::<String>::None,
                                                                     "useForVision": use_for_vision,
+                                                                    "useForImageGeneration": use_for_image_generation,
                                                                 })).unwrap();
                                                                 if let Ok(v) = invoke_checked("save_model", arg).await {
                                                                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
@@ -10060,7 +10073,11 @@ fn App() -> impl IntoView {
                                                                 acp_agents.get().into_iter().find(|agent| agent.id == id).map(|agent| agent.label).unwrap_or_else(|| "ACP Agent".into())
                                                             } else {
                                                                 let l = models.get();
-                                                                l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                                                l.iter()
+                                                                    .find(|m| m.active && m.is_chat_model())
+                                                                    .or_else(|| l.iter().find(|m| m.is_chat_model()))
+                                                                    .map(|m| m.label.clone())
+                                                                    .unwrap_or_default()
                                                             }
                                                         }}
                                                         <span>"▾"</span>
@@ -10068,7 +10085,7 @@ fn App() -> impl IntoView {
                                                     {move || side_chat_model_menu_open.get().then(|| view! {
                                                         <div class="sidechat-model-backdrop" on:click=move |_| side_chat_model_menu_open.set(false)></div>
                                                         <div class="sidechat-model-menu">
-                                                            {move || models.get().into_iter().map(|m| {
+                                                            {move || models.get().into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                                 let pick_id = m.id.clone();
                                                                 let is_active = m.active && side_chat_acp_agent.get().is_none();
                                                                 view! {

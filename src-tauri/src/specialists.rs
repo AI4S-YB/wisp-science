@@ -1,14 +1,31 @@
 //! Specialists (专家): user-definable agent personas — instructions plus a
 //! skill/MCP subset and a directly-bound model, selectable per session.
 //! Stored as a JSON array under the `specialists` settings key (same pattern
-//! as `model_profiles`). The builtin Reviewer is materialized into the list on
-//! first read so user edits to their model bindings persist like any other row.
+//! as `model_profiles`). Built-ins are materialized on first read so user edits
+//! to their model bindings persist like any other row.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use wisp_store::Store;
 
 pub const SPECIALISTS_KEY: &str = "specialists";
+pub const SCIENTIFIC_ILLUSTRATOR_RUBRIC: &str = "\
+You are the Scientific Illustrator. Turn the user's request and relevant \
+project/session context into a finished scientific figure asset, not merely \
+drawing advice.\n\n\
+Inspect referenced data and files before drawing. Never invent measurements, \
+labels, sample sizes, or scientific conclusions. Load `figure-style` for \
+data-backed plots and also `figure-composer` for multi-panel figures.\n\n\
+Output mode is determined by the tools available in this turn:\n\
+- When `generate_image` is available, distill the request and relevant context \
+into one complete, self-contained visual brief, call `generate_image`, and \
+save the result as a descriptive `figures/*.png` file.\n\
+- When `generate_image` is absent, create a publication-ready vector figure \
+as a descriptive `figures/*.svg` file using `write`, Python, or R. SVG is the \
+default; do not substitute another raster format.\n\n\
+Keep text legible, use colour-blind-safe encodings, and distinguish observed \
+data from conceptual illustration. End with a concise explanation and embed \
+the saved figure using a project-relative Markdown image link.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Specialist {
@@ -75,6 +92,24 @@ pub fn builtin_reader() -> Specialist {
     }
 }
 
+pub fn builtin_scientific_illustrator() -> Specialist {
+    Specialist {
+        id: "scientific_illustrator".into(),
+        name: "Scientific Illustrator".into(),
+        icon: "image".into(),
+        color: "clay".into(),
+        description:
+            "Creates publication-ready scientific figures from the request and project context."
+                .into(),
+        instructions: SCIENTIFIC_ILLUSTRATOR_RUBRIC.into(),
+        model_id: String::new(),
+        review_backend: None,
+        skills: Some(vec!["figure-composer".into(), "figure-style".into()]),
+        connectors: Some(vec![]),
+        builtin: true,
+    }
+}
+
 async fn load_raw(store: &Store) -> Vec<Specialist> {
     store
         .get_setting(SPECIALISTS_KEY)
@@ -114,6 +149,16 @@ pub async fn ensure(store: &Store) -> Vec<Specialist> {
             reader.connectors = Some(vec![]);
         }
         None => list.insert(1.min(list.len()), builtin_reader()),
+    }
+    match list.iter_mut().find(|s| s.id == "scientific_illustrator") {
+        Some(illustrator) => {
+            illustrator.builtin = true;
+            illustrator.instructions = SCIENTIFIC_ILLUSTRATOR_RUBRIC.into();
+            illustrator.review_backend = None;
+            illustrator.skills = Some(vec!["figure-composer".into(), "figure-style".into()]);
+            illustrator.connectors = Some(vec![]);
+        }
+        None => list.insert(2.min(list.len()), builtin_scientific_illustrator()),
     }
     list
 }
@@ -158,6 +203,10 @@ pub async fn upsert(store: &Store, mut spec: Specialist) -> Result<Vec<Specialis
         } else if spec.id == "reader" {
             spec.review_backend = None;
             spec.skills = Some(vec![]);
+            spec.connectors = Some(vec![]);
+        } else if spec.id == "scientific_illustrator" {
+            spec.review_backend = None;
+            spec.skills = Some(vec!["figure-composer".into(), "figure-style".into()]);
             spec.connectors = Some(vec![]);
         }
         *existing = spec;
@@ -300,7 +349,7 @@ mod tests {
     async fn ensure_materializes_builtin_specialists_once() {
         let (store, tmp) = test_store().await;
         let list = ensure(&store).await;
-        assert_eq!(list.len(), 2);
+        assert_eq!(list.len(), 3);
         let r = &list[0];
         assert_eq!(r.id, "reviewer");
         assert!(r.builtin);
@@ -309,8 +358,16 @@ mod tests {
         assert_eq!(reader.id, "reader");
         assert!(reader.builtin);
         assert_eq!(reader.instructions, crate::project_reader::READER_RUBRIC);
-        // Second read does not duplicate either builtin.
-        assert_eq!(ensure(&store).await.len(), 2);
+        let illustrator = &list[2];
+        assert_eq!(illustrator.id, "scientific_illustrator");
+        assert!(illustrator.builtin);
+        assert_eq!(illustrator.instructions, SCIENTIFIC_ILLUSTRATOR_RUBRIC);
+        assert_eq!(
+            illustrator.skills.as_deref(),
+            Some(&["figure-composer".to_string(), "figure-style".to_string()][..])
+        );
+        // Second read does not duplicate the built-ins.
+        assert_eq!(ensure(&store).await.len(), 3);
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -350,11 +407,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_reviewer_guards() {
+    async fn builtin_specialist_guards() {
         let (store, tmp) = test_store().await;
         ensure(&store).await;
         assert!(remove(&store, "reviewer").await.is_err());
         assert!(remove(&store, "reader").await.is_err());
+        assert!(remove(&store, "scientific_illustrator").await.is_err());
         // Editing the builtin keeps instructions but accepts a model change.
         let mut r = get(&store, "reviewer").await.unwrap();
         r.instructions = "haha".into();
@@ -376,6 +434,20 @@ mod tests {
         assert_eq!(reader.instructions, crate::project_reader::READER_RUBRIC);
         assert_eq!(reader.model_id, "cheap");
         assert_eq!(reader.skills, Some(vec![]));
+
+        let mut illustrator = get(&store, "scientific_illustrator").await.unwrap();
+        illustrator.instructions = "replace rubric".into();
+        illustrator.skills = None;
+        let list = upsert(&store, illustrator).await.unwrap();
+        let illustrator = list
+            .iter()
+            .find(|specialist| specialist.id == "scientific_illustrator")
+            .unwrap();
+        assert_eq!(illustrator.instructions, SCIENTIFIC_ILLUSTRATOR_RUBRIC);
+        assert_eq!(
+            illustrator.skills,
+            Some(vec!["figure-composer".into(), "figure-style".into()])
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 

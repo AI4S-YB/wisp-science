@@ -3129,6 +3129,7 @@ test("settings page shows the saved provider", async ({ page }) => {
   await expect(providerSelect(page)).toHaveValue("openai");
   await expect(page.locator("label.settings-check", { hasText: "Supports image input" })).toHaveCSS("flex-direction", "row");
   await expect(page.locator("label.settings-check", { hasText: "Use for image analysis" })).toHaveCSS("flex-direction", "row");
+  await expect(page.locator("label.settings-check", { hasText: "Use for image generation" })).toHaveCSS("flex-direction", "row");
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
 });
 
@@ -3239,6 +3240,39 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   await expect(providerSelect(page)).toHaveValue("openai_responses");
   await expect(effort).toHaveValue("medium");
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
+});
+
+test("gpt-image-2 can be assigned for generation but not selected for chat", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
+  await opus.click();
+
+  await providerSelect(page).selectOption("openai_responses");
+  await page.getByLabel("API URL").fill("https://api.openai.com/v1");
+  await page.getByLabel("Model").fill("gpt-image-2");
+  await page.getByLabel("Use for image generation").check();
+  await page.getByRole("button", { name: "Save" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
+    useForImageGeneration: true,
+    profile: {
+      id: "opus",
+      provider: "openai_responses",
+      model: "gpt-image-2",
+      use_for_image_generation: true,
+    },
+  });
+
+  const imageModel = page.locator(".settings-list-row", { hasText: "opus-4.8" });
+  await expect(imageModel).toContainText("gpt-image-2");
+  await expect(imageModel).toContainText("image gen");
+  await expect(imageModel.getByRole("button", { name: "Use" })).toHaveCount(0);
+
+  await page.locator(".settings-head-close").click();
+  await page.locator(".model-picker-btn").click();
+  await expect(page.locator(".model-menu")).not.toContainText("gpt-image-2");
+  await expect(page.locator(".model-menu")).toContainText("deepseek-v4-pro");
 });
 
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
@@ -5501,6 +5535,7 @@ test("specialists page configures the builtin Reader and saves a custom speciali
   await openSettingsSection(page, "Specialists");
   await expect(page.getByText("Reviewer")).toBeVisible();
   await expect(page.getByText("Reader")).toBeVisible();
+  await expect(page.getByText("Scientific Illustrator")).toBeVisible();
   // Builtin rows have no remove button.
   await expect(page.locator(".settings-list-remove")).toHaveCount(0);
 
@@ -5614,7 +5649,9 @@ test("new session can pick a specialist and it locks after the first message", a
   await newSessionButton(page).click();
   let agentMenu = await openAgentMenu(page);
   await agentMenu.getByRole("button", { name: /^Specialist/ }).click();
-  await page.getByRole("menu", { name: "Specialist" }).getByRole("button", { name: "Paper hunter" }).click();
+  const specialistMenu = page.getByRole("menu", { name: "Specialist" });
+  await expect(specialistMenu.getByRole("button", { name: "Scientific Illustrator" })).toBeVisible();
+  await specialistMenu.getByRole("button", { name: "Paper hunter" }).click();
   await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
 
   await composer(page).fill("hello there");
