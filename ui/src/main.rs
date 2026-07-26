@@ -3658,6 +3658,10 @@ fn App() -> impl IntoView {
         }
         settings_busy.set(true);
         model_form_msg.set(Some((true, t(loc, "status.validating").into())));
+        // The backend probes with a test image when "supports images" is on,
+        // so both outcomes say which probe ran — a checked box was never
+        // proof that the model takes images.
+        let vision = cfg.supports_vision;
         spawn_local(async move {
             let res = invoke_timeout(
                 "validate_settings",
@@ -3675,17 +3679,22 @@ fn App() -> impl IntoView {
                     let raw = v
                         .as_string()
                         .unwrap_or_else(|| t(loc, "status.validation_succeeded").into());
-                    model_form_msg.set(Some((true, localize_backend(loc, &raw))));
+                    let mut msg = localize_backend(loc, &raw);
+                    if vision {
+                        msg.push_str(&t(loc, "status.vision_ok"));
+                    }
+                    model_form_msg.set(Some((true, msg)));
                 }
                 Err(err) => {
-                    model_form_msg.set(Some((
-                        false,
-                        tf(
-                            loc,
-                            "status.validation_failed",
-                            &[("msg", &localize_backend(loc, &js_error_text(err)))],
-                        ),
-                    )));
+                    let mut msg = tf(
+                        loc,
+                        "status.validation_failed",
+                        &[("msg", &localize_backend(loc, &js_error_text(err)))],
+                    );
+                    if vision {
+                        msg.push_str(&t(loc, "err.vision_probe_failed"));
+                    }
+                    model_form_msg.set(Some((false, msg)));
                 }
             }
             settings_busy.set(false);
