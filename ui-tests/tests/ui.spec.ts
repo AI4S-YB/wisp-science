@@ -2144,6 +2144,25 @@ test("monitor_run renders a live Run card inline without get_run polling", async
   await expect(card).toContainText("Cancelled");
 });
 
+test("image generation shows a placeholder and replaces it with the PNG", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("IMAGEGENPLACEHOLDER");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const card = page.getByTestId("image-generation-card");
+  await expect(card).toHaveAttribute("data-status", "running");
+  await expect(card.locator(".image-generation-spinner")).toBeVisible();
+  await expect(card.locator("img")).toHaveCount(0);
+  await expect(card).toContainText("figures/pathway.png");
+  await expect(page.locator('.step-name:text-is("generate_image")')).toHaveCount(0);
+
+  await expect(card).toHaveAttribute("data-status", "completed", { timeout: 3_000 });
+  const image = card.locator("img");
+  await expect(image).toBeVisible();
+  await expect(image).toHaveAttribute("src", /^data:image\/png;base64,/);
+  await expect(card.locator(".image-generation-spinner")).toHaveCount(0);
+});
+
 test("SSH failures show that automatic retry was stopped", async ({ page }) => {
   await enterApp(page);
   await selectRemoteContext(page);
@@ -3267,7 +3286,12 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("API URL").fill("https://api.openai.com/v1");
   await page.getByLabel("Model").fill("gpt-image-2");
+  await expect(page.getByLabel("Supports image input")).not.toBeChecked();
   await page.getByLabel("Use for image generation").check();
+  await page.getByRole("button", { name: "Valid" }).click();
+  await expect(page.locator(".settings-status")).toHaveText(
+    "Validated openai_responses with gpt-image-2",
+  );
   await page.getByRole("button", { name: "Save" }).click();
 
   await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({

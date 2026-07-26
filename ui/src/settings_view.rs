@@ -1514,6 +1514,10 @@ pub(super) fn SettingsView(
                                                 placeholder=move || t(locale.get(), "settings.model_ph")
                                                 on:input=move |ev| model_form.update(|o| if let Some(o)=o {
                                                     o.model = event_target_input(&ev).value();
+                                                    if o.model.trim().eq_ignore_ascii_case("gpt-image-2") {
+                                                        o.supports_vision = false;
+                                                        o.use_for_vision = false;
+                                                    }
                                                     apply_known_model_limits(o);
                                                 }) /></label>
                                         <label>{move || t(locale.get(), "settings.max_tokens")}

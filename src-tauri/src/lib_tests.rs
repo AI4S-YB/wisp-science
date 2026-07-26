@@ -14,7 +14,7 @@ use super::{
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::{atomic::AtomicBool, Arc};
 
 #[test]
 fn mcp_app_context_is_latest_only_and_session_scoped() {
@@ -102,6 +102,37 @@ fn image_attachments_are_loaded_for_model_input() {
     assert_eq!(images.len(), 1);
     assert_eq!(images[0].label, "Attached image: uploads/plot.PNG");
     assert!(images[0].data_url.starts_with("data:image/png;base64,"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn configured_image_generation_tool_is_available_without_a_specialist() {
+    let root = std::env::temp_dir().join(format!("wisp_image_tool_agent_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let skills = Arc::new(wisp_skills::SkillIndex::load(&[]));
+    let memory = Arc::new(wisp_core::MemoryManager::new(&root));
+    let mut agent = wisp_core::Agent::new(
+        wisp_llm::ProviderConfig::openai("http://127.0.0.1:9/v1", "sk-chat-test", "chat-model"),
+        skills,
+        memory,
+        root.clone(),
+        128_000,
+        4,
+        false,
+        None,
+    );
+
+    super::add_configured_image_generation_tool(
+        &mut agent,
+        Some((
+            "https://api.openai.com/v1".into(),
+            "gpt-image-2".into(),
+            "sk-image-test".into(),
+        )),
+        Some("none".into()),
+    );
+
+    assert!(agent.tools.get("generate_image").is_some());
     let _ = std::fs::remove_dir_all(root);
 }
 
