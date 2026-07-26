@@ -46,6 +46,7 @@ pub(super) fn Sidebar(
     new_session: Callback<web_sys::MouseEvent>,
     new_folder: Callback<web_sys::MouseEvent>,
     open_files: Callback<web_sys::MouseEvent>,
+    open_research_graph: Callback<web_sys::MouseEvent>,
     open_library: Callback<web_sys::MouseEvent>,
     load_demo: Callback<DemoInfo>,
     load_session: Callback<String>,
@@ -153,6 +154,7 @@ pub(super) fn Sidebar(
                 <button class="side-btn primary" title=move || t(locale.get(), "sidebar.new_session") on:click=move |ev| new_session.call(ev)><span class="gi plus"></span>{move || t(locale.get(), "sidebar.new_session")}</button>
                 <button class="side-btn" title=move || t(locale.get(), "sidebar.new_folder") on:click=move |ev| new_folder.call(ev)><span class="gi folder"></span>{move || t(locale.get(), "sidebar.new_folder")}</button>
                 <button class="side-btn" title=move || t(locale.get(), "sidebar.files") on:click=move |ev| open_files.call(ev)><span class="gi doc"></span>{move || t(locale.get(), "sidebar.files")}</button>
+                <button class="side-btn" title=move || t(locale.get(), "sidebar.graph") on:click=move |ev| open_research_graph.call(ev)>{compose_icon("branch")}{move || t(locale.get(), "sidebar.graph")}</button>
                 <button class="side-btn" title=move || t(locale.get(), "sidebar.library") on:click=move |ev| open_library.call(ev)>{compose_icon("star")}{move || t(locale.get(), "sidebar.library")}</button>
             </nav>
             {move || (!demo_mode.get()).then(|| {

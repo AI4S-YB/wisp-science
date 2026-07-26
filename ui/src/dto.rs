@@ -1583,7 +1583,6 @@ pub(crate) enum RightTab {
     File,
     Provenance,
     Hosts,
-    Graph,
     SideChat,
 }
 

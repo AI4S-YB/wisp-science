@@ -675,6 +675,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   ];
   let libraryItems: any[] = [];
   const libraryVersions: Record<string, any[]> = {};
+  const researchGraph = {
+    nodes: [
+      { id: "d1", kind: "decision", title: "Use DESeq2 over edgeR", ref_id: null, metadata_json: JSON.stringify({ rationale: "Better fit for the replicate design" }) },
+      { id: "p1", kind: "paper", title: "Love et al. 2014", ref_id: "10.1186/s13059-014-0550-8", metadata_json: JSON.stringify({ journal: "Genome Biology" }) },
+      { id: "a1", kind: "data_asset", title: "counts.tsv", ref_id: "data/counts.tsv", metadata_json: JSON.stringify({ rows: 24567 }) },
+      { id: "run:r1", kind: "run", title: "DESeq2 differential expression", ref_id: "r1", metadata_json: "{}" },
+      { id: "artifact:h1", kind: "artifact", title: "deseq2_results.tsv", ref_id: "h1", metadata_json: "{}" },
+    ],
+    edges: [
+      { source_id: "d1", target_id: "p1", relation: "cites", metadata_json: "{}" },
+      { source_id: "d1", target_id: "a1", relation: "applies to", metadata_json: "{}" },
+      { source_id: "run:r1", target_id: "artifact:h1", relation: "produced", metadata_json: "{}" },
+    ],
+  };
 
   (window as any).__TAURI__ = {
     core: {
@@ -689,6 +703,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           return value;
         };
         switch (cmd) {
+          case "get_research_graph":
+            return researchGraph;
           case "list_library_items":
             return libraryItems.map(({ base64: _base64, ...item }) => item);
           case "star_library_code": {

@@ -1963,6 +1963,38 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
   await expect(page.getByRole("menu", { name: "Reviewer model" })).toBeVisible();
 });
 
+test("project research graph opens from the sidebar in list and graph views", async ({ page }) => {
+  await enterApp(page);
+
+  const sidebar = page.locator(".sidebar");
+  const navLabels = await sidebar.locator(".nav > .side-btn").allTextContents();
+  expect(navLabels.indexOf("Research graph")).toBe(navLabels.indexOf("Library") - 1);
+
+  await sidebar.getByRole("button", { name: "Research graph", exact: true }).click();
+  const modal = page.getByTestId("research-graph-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText("5 nodes · 3 relationships");
+  await expect(modal.getByTestId("research-graph-list")).toBeVisible();
+  await expect(modal.getByText("Use DESeq2 over edgeR")).toBeVisible();
+  await expect(modal).toContainText("applies to");
+  await expect.poll(async () => (await invokeArgsList(page, "get_research_graph")).length).toBe(1);
+
+  await modal.getByRole("tab", { name: "Graph", exact: true }).click();
+  const canvas = modal.getByTestId("research-graph-canvas");
+  await expect(canvas).toBeVisible();
+  await expect(canvas.locator(".research-graph-node")).toHaveCount(5);
+  await expect(canvas.locator(".research-graph-edge")).toHaveCount(3);
+
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  const rightPanel = page.locator(".rightpane");
+  await rightPanel.getByRole("button", { name: "Add panel" }).click();
+  await expect(rightPanel.locator(".rp-tab-add-menu")
+    .getByRole("button", { name: /Research graph/ })).toHaveCount(0);
+});
+
 test("right panel shows execution contexts and runs", async ({ page }) => {
   await enterApp(page);
   await selectRemoteContext(page);

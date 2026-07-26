@@ -5099,7 +5099,7 @@ pub(super) fn modal_image_nav_targets(
     (prev, next)
 }
 
-pub(super) const ALL_RIGHT_TABS: [RightTab; 9] = [
+pub(super) const ALL_RIGHT_TABS: [RightTab; 8] = [
     RightTab::Artifacts,
     RightTab::Agents,
     RightTab::Notebook,
@@ -5107,7 +5107,6 @@ pub(super) const ALL_RIGHT_TABS: [RightTab; 9] = [
     RightTab::File,
     RightTab::Provenance,
     RightTab::Hosts,
-    RightTab::Graph,
     RightTab::SideChat,
 ];
 
