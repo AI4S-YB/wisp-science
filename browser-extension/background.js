@@ -193,6 +193,17 @@ async function runCommand(tabId, command) {
         });
         return { id: tab.id, url: tab.url, title: tab.title };
       }
+      if (command.method === "close") {
+        const ids = (command.tabIds ?? [command.tabId ?? tabId]).filter((id) => Number.isInteger(id));
+        const closed = [];
+        for (const id of ids) {
+          try {
+            await chrome.tabs.remove(id);
+            closed.push(id);
+          } catch (_) {}
+        }
+        return { closed, remaining: await browserTabs() };
+      }
       if (command.method === "switch") {
         const tab = await chrome.tabs.update(command.tabId || tabId, { active: true });
         await chrome.windows.update(tab.windowId, { focused: true });
