@@ -190,6 +190,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   let mockSpecialists: any[] = [
     { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
     { id: "reader", name: "Reader", icon: "search", color: "clay", description: "Searches project sessions", instructions: "reader rubric", model_id: "", skills: [], connectors: [], builtin: true },
+    { id: "scientific_illustrator", name: "Scientific Illustrator", icon: "image", color: "clay", description: "Creates scientific figures", instructions: "illustrator rubric", model_id: "", skills: ["figure-composer", "figure-style"], connectors: [], builtin: true },
   ];
   let sessionSpecialists: Record<string, string> = {};
   let mockModels = [
@@ -206,6 +207,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: true,
+      use_for_image_generation: false,
     },
     {
       id: "opus",
@@ -220,6 +222,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: false,
+      use_for_image_generation: false,
     },
   ];
   const activeHttpModelId = () => mockModels.find((model) => model.active)?.id ?? mockModels[0]?.id ?? "";
@@ -1567,13 +1570,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "save_model": {
             const profile = plain(arg("profile") ?? {});
             const useForVision = Boolean(arg("useForVision") ?? profile.use_for_vision);
+            const useForImageGeneration = Boolean(
+              arg("useForImageGeneration") ?? profile.use_for_image_generation,
+            );
             mockModels = mockModels.map((m) => m.id === profile.id ? {
               ...m,
               ...profile,
               use_for_vision: useForVision,
+              use_for_image_generation: useForImageGeneration,
             } : {
               ...m,
               use_for_vision: useForVision ? false : m.use_for_vision,
+              use_for_image_generation: useForImageGeneration
+                ? false
+                : m.use_for_image_generation,
             });
             return mockModels;
           }

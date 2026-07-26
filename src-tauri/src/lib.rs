@@ -36,6 +36,7 @@ mod desktop_lifecycle;
 mod dynamic_workflow;
 mod file_browser;
 mod harvest;
+mod image_generation_tool;
 mod library_commands;
 mod mcp_bridge;
 pub use mcp_bridge::run_mcp_bridge_cli;
@@ -4266,6 +4267,23 @@ async fn send_message_inner(
             load_memory_enabled(&state.store).await,
             vision_cfg.clone(),
         );
+        if specialist
+            .as_ref()
+            .is_some_and(|specialist| specialist.id == "scientific_illustrator")
+        {
+            std::fs::create_dir_all(ap.root.join("figures"))
+                .map_err(|error| format!("Failed to prepare figures directory: {error}"))?;
+            if let Some((api_url, model, api_key)) =
+                models::image_generation_config(&state.store).await
+            {
+                agent.add_tool(Box::new(image_generation_tool::GenerateImageTool::new(
+                    api_url,
+                    api_key,
+                    model,
+                    llm_proxy(),
+                )));
+            }
+        }
         agent.add_tool(Box::new(browser_bridge::BrowserSetupTool::new(
             state.browser_bridge.clone(),
         )));

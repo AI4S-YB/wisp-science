@@ -17,6 +17,14 @@ an ACP launch command in an HTTP model profile.
 
 For image workflows, mark an API profile as **Supports image input** and optionally **Use for image analysis**. Image attachments are sent directly to a visual input model. When the input model is non-visual, Wisp first calls the assigned vision model and passes its text observations to the input model. `view_image` and image reads use the assigned vision model in the same way. Raster image input supports PNG, JPEG, GIF, and WebP files up to 5 MiB.
 
+Image generation is a separate model role. Create an OpenAI profile with model
+ID `gpt-image-2`, then enable **Use for image generation**. The built-in
+**Scientific Illustrator** calls OpenAI's Image API and saves a PNG under
+`figures/` when that role is assigned. Without an assigned image-generation
+profile, the specialist creates SVG under `figures/` by default. Image-only
+profiles do not appear in chat, Reviewer, specialist, delegation, or side-chat
+model pickers.
+
 ## API providers
 
 | Provider | Use when | Required fields |

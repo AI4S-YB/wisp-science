@@ -1603,6 +1603,15 @@ pub(super) fn SettingsView(
                                                 <span>{move || t(locale.get(), "settings.use_for_vision")}</span>
                                             </label>
                                             <span class="hint span-2">{move || t(locale.get(), "settings.vision_hint")}</span>
+                                            <label class="settings-check span-2">
+                                                <input type="checkbox" data-testid="use-for-image-generation"
+                                                    prop:checked=move || model_form.get().map(|f| f.use_for_image_generation).unwrap_or(false)
+                                                    on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                        o.use_for_image_generation = event_target_checked(&ev);
+                                                    }) />
+                                                <span>{move || t(locale.get(), "settings.use_for_image_generation")}</span>
+                                            </label>
+                                            <span class="hint span-2">{move || t(locale.get(), "settings.image_generation_hint")}</span>
                                         </div>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_key")}
                                             <input type="password" id="model-form-api-key" prop:value=move || model_form_key.get()
@@ -1835,7 +1844,10 @@ pub(super) fn SettingsView(
                                                 let del_label = m.label.clone();
                                                 let edit = m.clone();
                                                 let is_active = m.active;
-                                                let can_delete = models.get().len() > 1;
+                                                let is_chat_model = m.is_chat_model();
+                                                let can_delete = models.get().iter().any(|other| {
+                                                    other.id != m.id && other.is_chat_model()
+                                                });
                                                 let show_sub = !m.model.is_empty() && m.model != m.label;
                                                 let drag_id = m.id.clone();
                                                 let drag_cls = m.id.clone();
@@ -1903,6 +1915,9 @@ pub(super) fn SettingsView(
                                                             <span class="settings-list-title">
                                                                 {m.label.clone()}
                                                                 {m.use_for_vision.then(|| view! { <span class="settings-cap-badge" title="vision">"vision"</span> })}
+                                                                {m.use_for_image_generation.then(|| view! {
+                                                                    <span class="settings-cap-badge" title="image generation">"image gen"</span>
+                                                                })}
                                                             </span>
                                                             {show_sub.then(|| view! {
                                                                 <span class="settings-list-sub">{m.model.clone()}</span>
@@ -1922,7 +1937,7 @@ pub(super) fn SettingsView(
                                                                         }));
                                                                     }>{compose_icon("close")}</button>
                                                             }})}
-                                                            {(!is_active).then(|| { let id = pick_id.clone(); view! {
+                                                            {(!is_active && is_chat_model).then(|| { let id = pick_id.clone(); view! {
                                                                 <button class="settings-list-use" type="button"
                                                                     on:click=move |ev| {
                                                                         ev.stop_propagation();
@@ -2086,7 +2101,7 @@ pub(super) fn SettingsView(
                                                             </option>
                                                         }
                                                     })}
-                                                {move || models.get().into_iter().map(|m| {
+                                                {move || models.get().into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let value = if specialist_form.get().is_some_and(|f| f.id == "reviewer") {
                                                         format!("http:{}", m.id)
                                                     } else {

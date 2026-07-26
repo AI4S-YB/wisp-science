@@ -44,11 +44,16 @@ pub struct ModelProfile {
     /// to image analysis. Serialized so the UI can restore the checkbox.
     #[serde(default)]
     pub use_for_vision: bool,
+    /// Computed on read / accepted on save; true when this profile is assigned
+    /// to the Scientific Illustrator's raster image-generation tool.
+    #[serde(default)]
+    pub use_for_image_generation: bool,
 }
 
 const PROFILES_KEY: &str = "model_profiles";
 const ACTIVE_KEY: &str = "active_model_id";
 const VISION_KEY: &str = "vision_model_id";
+const IMAGE_GENERATION_KEY: &str = "image_generation_model_id";
 const LEGACY_KEY_SECRET: &str = "api_key";
 const CUSTOM_CREDENTIALS_KEY: &str = "custom_credentials";
 const CUSTOM_CREDENTIAL_SECRET_PREFIX: &str = "custom_credential:";
@@ -473,6 +478,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         reasoning_effort,
         supports_vision: false,
         use_for_vision: false,
+        use_for_image_generation: false,
     };
     let profiles = vec![default];
     let _ = save_raw(store, &profiles).await;
@@ -492,10 +498,15 @@ async fn active_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Stri
         .ok()
         .flatten()
         .unwrap_or_default();
-    if profiles.iter().any(|p| p.id == want) {
+    if profiles.iter().any(|p| p.id == want && is_chat_model(p)) {
         want
     } else {
-        profiles.first().map(|p| p.id.clone()).unwrap_or_default()
+        profiles
+            .iter()
+            .find(|p| is_chat_model(p))
+            .or_else(|| profiles.first())
+            .map(|p| p.id.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -512,7 +523,10 @@ pub async fn session_profile_id(store: &wisp_store::Store, frame_id: &str) -> St
         .ok()
         .flatten()
         .unwrap_or_default();
-    if profiles.iter().any(|profile| profile.id == bound) {
+    if profiles
+        .iter()
+        .any(|profile| profile.id == bound && is_chat_model(profile))
+    {
         bound
     } else {
         active_id(store, &profiles).await
@@ -552,8 +566,19 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
     (p.provider, p.api_url, p.model, key_for(&p.id))
 }
 
+fn is_chat_model(p: &ModelProfile) -> bool {
+    !p.model.trim().eq_ignore_ascii_case("gpt-image-2")
+}
+
 fn can_describe_images(p: &ModelProfile) -> bool {
-    p.supports_vision
+    is_chat_model(p) && p.supports_vision
+}
+
+fn can_generate_images(p: &ModelProfile) -> bool {
+    matches!(
+        p.provider.trim(),
+        "openai" | "openai_compatible" | "openai_responses" | "openai-responses" | "responses"
+    ) && p.model.trim().eq_ignore_ascii_case("gpt-image-2")
 }
 
 async fn vision_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Option<String> {
@@ -567,6 +592,22 @@ async fn vision_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Opti
         .iter()
         .find(|p| p.id == want && can_describe_images(p))
         .or_else(|| profiles.iter().find(|p| can_describe_images(p)))
+        .map(|p| p.id.clone())
+}
+
+async fn image_generation_id(
+    store: &wisp_store::Store,
+    profiles: &[ModelProfile],
+) -> Option<String> {
+    let want = store
+        .get_setting(IMAGE_GENERATION_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    profiles
+        .iter()
+        .find(|p| p.id == want && can_generate_images(p))
         .map(|p| p.id.clone())
 }
 
@@ -586,6 +627,18 @@ pub async fn vision_config(
         p.max_tokens,
         p.reasoning_effort,
     ))
+}
+
+/// The explicitly assigned OpenAI image profile's `(api_url, model, api_key)`.
+/// Unlike vision, image generation has no implicit fallback: no assignment
+/// means the Scientific Illustrator deliberately uses SVG.
+pub async fn image_generation_config(
+    store: &wisp_store::Store,
+) -> Option<(String, String, String)> {
+    let profiles = ensure(store).await;
+    let id = image_generation_id(store, &profiles).await?;
+    let p = profiles.iter().find(|p| p.id == id)?;
+    Some((p.api_url.clone(), p.model.clone(), key_for(&p.id)))
 }
 
 /// Update the active profile's provider/api_url/model/label. The classic Settings
@@ -703,7 +756,7 @@ pub async fn profile_context_window(store: &wisp_store::Store, id: &str) -> Opti
     ensure(store)
         .await
         .iter()
-        .find(|profile| profile.id == id)
+        .find(|profile| profile.id == id && is_chat_model(profile))
         .map(|profile| effective_context_window(profile.context_window))
 }
 
@@ -715,6 +768,9 @@ pub async fn profile_llm(
 ) -> Option<(String, String, String, String, u64, String)> {
     let profiles = ensure(store).await;
     let p = profiles.iter().find(|p| p.id == id)?;
+    if !is_chat_model(p) {
+        return None;
+    }
     Some((
         p.provider.clone(),
         p.api_url.clone(),
@@ -760,19 +816,25 @@ async fn decorated(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
     let vision = vision_id(store, &profiles).await;
+    let image_generation = image_generation_id(store, &profiles).await;
     profiles
         .into_iter()
         .map(|mut p| {
             p.has_api_key = !key_for(&p.id).is_empty();
             p.active = p.id == id;
             p.use_for_vision = vision.as_deref() == Some(p.id.as_str());
+            p.use_for_image_generation = image_generation.as_deref() == Some(p.id.as_str());
             p
         })
         .collect()
 }
 
 pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
-    decorated(store).await
+    decorated(store)
+        .await
+        .into_iter()
+        .filter(is_chat_model)
+        .collect()
 }
 
 /// A short unique id derived from the label (or a counter) that isn't taken.
@@ -819,12 +881,16 @@ pub async fn save_model(
     mut profile: ModelProfile,
     key: Option<String>,
     use_for_vision: Option<bool>,
+    use_for_image_generation: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
     // Explicit top-level param: the flag nested inside `profile` was observed
     // arriving as false through the webview IPC boundary, losing the
     // assignment on save (#131 follow-up).
     let assign_vision = use_for_vision.unwrap_or(profile.use_for_vision);
+    let assign_image_generation =
+        use_for_image_generation.unwrap_or(profile.use_for_image_generation);
     profile.use_for_vision = assign_vision;
+    profile.use_for_image_generation = assign_image_generation;
     let mut profiles = ensure(&state.store).await;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
@@ -835,6 +901,9 @@ pub async fn save_model(
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
+    if assign_image_generation && !can_generate_images(&profile) {
+        return Err("Image generation currently supports only OpenAI gpt-image-2.".into());
+    }
     if profile.label.trim().is_empty() {
         profile.label = profile.model.clone();
     }
@@ -843,6 +912,9 @@ pub async fn save_model(
     }
     let id = profile.id.clone();
     let is_new = !profiles.iter().any(|p| p.id == id);
+    if !is_chat_model(&profile) && !profiles.iter().any(|p| p.id != id && is_chat_model(p)) {
+        return Err("At least one chat model is required.".into());
+    }
     if let Some(existing) = profiles.iter_mut().find(|p| p.id == id) {
         *existing = profile;
     } else {
@@ -867,6 +939,20 @@ pub async fn save_model(
             let _ = state.store.set_setting(VISION_KEY, "").await;
         }
     }
+    if assign_image_generation {
+        let _ = state.store.set_setting(IMAGE_GENERATION_KEY, &id).await;
+    } else {
+        let current = state
+            .store
+            .get_setting(IMAGE_GENERATION_KEY)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if current == id {
+            let _ = state.store.set_setting(IMAGE_GENERATION_KEY, "").await;
+        }
+    }
     if let Some(k) = key {
         let k = k.trim();
         if !k.is_empty() {
@@ -874,8 +960,21 @@ pub async fn save_model(
         }
     }
     // Land the user on a freshly added model so they can edit/use it right away.
-    if is_new {
+    if is_new && profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
         let _ = state.store.set_setting(ACTIVE_KEY, &id).await;
+    } else if !profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
+        let active = state
+            .store
+            .get_setting(ACTIVE_KEY)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if active == id {
+            if let Some(first) = profiles.iter().find(|p| is_chat_model(p)) {
+                let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
+            }
+        }
     }
     crate::clear_idle_agents(&state).await;
     Ok(decorated(&state.store).await)
@@ -887,8 +986,13 @@ pub async fn remove_model(
     id: String,
 ) -> Result<Vec<ModelProfile>, String> {
     let mut profiles = ensure(&state.store).await;
-    if profiles.len() <= 1 {
-        return Err("At least one model is required.".into());
+    if profiles
+        .iter()
+        .filter(|p| p.id != id && is_chat_model(p))
+        .count()
+        == 0
+    {
+        return Err("At least one chat model is required.".into());
     }
     profiles.retain(|p| p.id != id);
     save_raw(&state.store, &profiles).await?;
@@ -902,9 +1006,19 @@ pub async fn remove_model(
         .flatten()
         .unwrap_or_default();
     if cur == id {
-        if let Some(first) = profiles.first() {
+        if let Some(first) = profiles.iter().find(|p| is_chat_model(p)) {
             let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
         }
+    }
+    let image_generation = state
+        .store
+        .get_setting(IMAGE_GENERATION_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if image_generation == id {
+        let _ = state.store.set_setting(IMAGE_GENERATION_KEY, "").await;
     }
     crate::clear_idle_agents(&state).await;
     Ok(decorated(&state.store).await)
@@ -939,6 +1053,13 @@ pub async fn set_active_model(
     let profiles = ensure(&state.store).await;
     if !profiles.iter().any(|p| p.id == id) {
         return Err("Unknown model.".into());
+    }
+    if profiles
+        .iter()
+        .find(|p| p.id == id)
+        .is_some_and(|p| !is_chat_model(p))
+    {
+        return Err("Image generation models cannot be used for chat.".into());
     }
     if let Some(session_id) = session_id.filter(|value| !value.is_empty()) {
         let project = state.active(window.label());
@@ -976,6 +1097,7 @@ mod tests {
             reasoning_effort: String::new(),
             supports_vision: false,
             use_for_vision: false,
+            use_for_image_generation: false,
         }
     }
 
@@ -1081,15 +1203,20 @@ mod tests {
     #[test]
     fn use_for_vision_survives_deserialization() {
         // Repro for the "checkbox lost after save" report: the incoming
-        // command payload must keep use_for_vision.
+        // command payload must keep both role assignments.
         let p: ModelProfile = serde_json::from_str(
             r#"{"id":"m1","label":"l","provider":"anthropic","api_url":"u","model":"m",
                 "max_tokens":8192,"reasoning_effort":"medium",
-                "supports_vision":true,"use_for_vision":true}"#,
+                "supports_vision":true,"use_for_vision":true,
+                "use_for_image_generation":true}"#,
         )
         .unwrap();
         assert!(p.supports_vision);
         assert!(p.use_for_vision, "use_for_vision dropped on deserialize");
+        assert!(
+            p.use_for_image_generation,
+            "use_for_image_generation dropped on deserialize"
+        );
         assert_eq!(p.context_window, DEFAULT_CONTEXT_WINDOW);
     }
 
@@ -1126,6 +1253,92 @@ mod tests {
         assert!(can_describe_images(&profile));
         profile.supports_vision = false;
         assert!(!can_describe_images(&profile));
+        profile.supports_vision = true;
+        profile.model = "gpt-image-2".into();
+        assert!(!can_describe_images(&profile));
+    }
+
+    #[test]
+    fn image_generation_accepts_only_openai_gpt_image_2() {
+        let mut profile = test_profile("image", "image", "gpt-image-2");
+        profile.provider = "openai_responses".into();
+        assert!(can_generate_images(&profile));
+
+        profile.provider = "anthropic".into();
+        assert!(!can_generate_images(&profile));
+        profile.provider = "openai".into();
+        profile.model = "gpt-image-1".into();
+        assert!(!can_generate_images(&profile));
+    }
+
+    #[tokio::test]
+    async fn image_generation_requires_an_explicit_gpt_image_2_assignment() {
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_image_gen_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let chat = test_profile("chat", "chat", "gpt-5.5");
+        let mut image = test_profile("image", "image", "gpt-image-2");
+        image.provider = "openai_responses".into();
+        save_raw(&store, &[chat, image]).await.unwrap();
+
+        assert!(image_generation_config(&store).await.is_none());
+        store
+            .set_setting(IMAGE_GENERATION_KEY, "image")
+            .await
+            .unwrap();
+        let (url, model, _key) = image_generation_config(&store).await.unwrap();
+        assert_eq!(url, "u");
+        assert_eq!(model, "gpt-image-2");
+
+        let decorated = decorated(&store).await;
+        assert!(
+            decorated
+                .iter()
+                .find(|profile| profile.id == "image")
+                .unwrap()
+                .use_for_image_generation
+        );
+        assert_eq!(
+            delegation_profiles(&store)
+                .await
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
+            ["chat"]
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn image_generation_profile_is_never_the_active_chat_model() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_image_gen_active_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let chat = test_profile("chat", "chat", "gpt-5.5");
+        let image = test_profile("image", "image", "gpt-image-2");
+        save_raw(&store, &[chat, image]).await.unwrap();
+        store.set_setting(ACTIVE_KEY, "image").await.unwrap();
+
+        assert_eq!(active_profile_id(&store).await, "chat");
+        assert_eq!(profile_context_window(&store, "image").await, None);
+        let decorated = decorated(&store).await;
+        assert!(
+            decorated
+                .iter()
+                .find(|profile| profile.id == "chat")
+                .unwrap()
+                .active
+        );
+        assert!(
+            !decorated
+                .iter()
+                .find(|profile| profile.id == "image")
+                .unwrap()
+                .active
+        );
+        let _ = std::fs::remove_file(&tmp);
     }
 
     // The write-through cache must stay coherent: a set is readable without a

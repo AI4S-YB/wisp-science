@@ -30,7 +30,10 @@ const SKIP_DIRS: &[&str] = &[
 const MAX_ENTRIES: usize = 20_000;
 
 pub fn is_producing(tool: &str) -> bool {
-    matches!(tool, "python" | "r" | "shell" | "write" | "edit")
+    matches!(
+        tool,
+        "python" | "r" | "shell" | "write" | "edit" | "generate_image"
+    )
 }
 
 pub fn language_of(tool: &str) -> String {
@@ -46,7 +49,7 @@ pub fn language_of(tool: &str) -> String {
 pub fn source_of(tool: &str, args: &serde_json::Value) -> String {
     let key = match tool {
         "python" | "r" => "code",
-        "write" | "edit" => "path",
+        "write" | "edit" | "generate_image" => "path",
         _ => "cmd",
     };
     args.get(key)
@@ -169,7 +172,7 @@ mod tests {
 
     #[test]
     fn file_mutation_tools_are_producing_with_path_source() {
-        for tool in ["write", "edit"] {
+        for tool in ["write", "edit", "generate_image"] {
             assert!(is_producing(tool));
             assert_eq!(
                 source_of(tool, &serde_json::json!({"path": "results/table.csv"})),
