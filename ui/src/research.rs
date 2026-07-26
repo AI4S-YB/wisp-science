@@ -22,6 +22,22 @@ pub(super) struct GraphRow {
     pub(super) links: Vec<(String, String)>,
 }
 
+/// Parse a node's raw `metadata_json` into displayable `key: value` pairs.
+/// String values render bare; anything else renders as compact JSON. Empty,
+/// non-object, or unparseable metadata yields no pairs, so nothing renders.
+pub(super) fn metadata_pairs(metadata_json: &str) -> Vec<(String, String)> {
+    match serde_json::from_str::<serde_json::Value>(metadata_json) {
+        Ok(serde_json::Value::Object(map)) => map
+            .into_iter()
+            .map(|(key, value)| match value {
+                serde_json::Value::String(text) => (key, text),
+                other => (key, other.to_string()),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Bucket nodes by kind and hang each node's outgoing edges off it.
 ///
 /// Both endpoints are guaranteed to name a node in the same project — the store
@@ -107,6 +123,16 @@ pub(super) fn ResearchGraphPane(locale: Locale, graph: ResearchGraph) -> impl In
                                 {row.node.ref_id
                                     .filter(|id| !id.trim().is_empty())
                                     .map(|id| view! { <div class="graph-node-ref">{id}</div> })}
+                                {{
+                                    let meta = metadata_pairs(&row.node.metadata_json)
+                                        .into_iter()
+                                        .map(|(key, value)| format!("{key}: {value}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" · ");
+                                    (!meta.is_empty()).then(|| view! {
+                                        <div class="graph-node-ref graph-node-meta">{meta}</div>
+                                    })
+                                }}
                                 {(!row.links.is_empty()).then(|| view! {
                                     <ul class="graph-node-links">
                                         {row.links.into_iter().map(|(relation, target)| view! {
@@ -146,6 +172,7 @@ mod tests {
             kind: kind.into(),
             title: title.into(),
             ref_id: None,
+            metadata_json: "{}".into(),
         }
     }
 
@@ -154,6 +181,7 @@ mod tests {
             source_id: source.into(),
             target_id: target.into(),
             relation: relation.into(),
+            metadata_json: "{}".into(),
         }
     }
 
@@ -177,5 +205,32 @@ mod tests {
         );
         // The link hangs off the source only; the target repeats nothing.
         assert!(sections[1].1[0].links.is_empty());
+    }
+
+    #[test]
+    fn grouping_keeps_node_metadata() {
+        let mut asset = node("a1", "data_asset", "counts.tsv");
+        asset.metadata_json = r#"{"rows": 1204}"#.into();
+        let graph = ResearchGraph {
+            nodes: vec![asset],
+            edges: vec![],
+        };
+        let sections = group_graph(&graph);
+        assert_eq!(sections[0].1[0].node.metadata_json, r#"{"rows": 1204}"#);
+    }
+
+    #[test]
+    fn metadata_pairs_formats_values_and_skips_non_objects() {
+        assert_eq!(
+            metadata_pairs(r#"{"doi": "10.1/x", "rows": 1204, "tags": ["a"]}"#),
+            vec![
+                ("doi".to_string(), "10.1/x".to_string()),
+                ("rows".to_string(), "1204".to_string()),
+                ("tags".to_string(), r#"["a"]"#.to_string()),
+            ]
+        );
+        assert!(metadata_pairs("{}").is_empty());
+        assert!(metadata_pairs("not json").is_empty());
+        assert!(metadata_pairs(r#"["an", "array"]"#).is_empty());
     }
 }
