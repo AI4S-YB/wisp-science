@@ -14,7 +14,7 @@ use crate::text::{
 };
 use leptos::*;
 use serde_wasm_bindgen::to_value;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
 /// Pending "确定删除?" confirmation. Both models and ACP agents route through
@@ -138,6 +138,119 @@ mod effort_values_tests {
             Some(&["low", "medium", "high"][..])
         );
         assert_eq!(known_effort_values("openai", "deepseek-v4-pro"), None);
+    }
+}
+
+/// Category of a memory file name: `"Projects--2026-07-26.md"` → `Some("Projects")`.
+/// Plain files (`"2026-07-26.md"`) belong to the default category (`None`).
+/// ponytail: category lives in the file-name prefix — no store table; empty
+/// categories are session-local until their first note is saved.
+pub(crate) fn memory_category_of(name: &str) -> Option<&str> {
+    name.split_once("--")
+        .map(|(cat, _)| cat.trim())
+        .filter(|cat| !cat.is_empty())
+}
+
+/// Note label shown inside a category: the file name minus its category prefix.
+pub(crate) fn memory_note_label(name: &str) -> &str {
+    match memory_category_of(name) {
+        Some(_) => name.split_once("--").map(|(_, rest)| rest).unwrap_or(name),
+        None => name,
+    }
+}
+
+/// Group memory files into (category, note count): default category always
+/// first (even at 0), then named categories alphabetically. `extra` holds
+/// user-created categories that have no notes yet this session.
+pub(crate) fn memory_categories(
+    files: &[MemoryFile],
+    extra: &[String],
+) -> Vec<(Option<String>, usize)> {
+    let mut named: BTreeMap<String, usize> = BTreeMap::new();
+    let mut default_count = 0usize;
+    for f in files {
+        match memory_category_of(&f.name) {
+            Some(cat) => *named.entry(cat.to_string()).or_insert(0) += 1,
+            None => default_count += 1,
+        }
+    }
+    for cat in extra {
+        named.entry(cat.clone()).or_insert(0);
+    }
+    std::iter::once((None, default_count))
+        .chain(named.into_iter().map(|(cat, n)| (Some(cat), n)))
+        .collect()
+}
+
+/// A category becomes a file-name prefix, so it must be file-name safe and
+/// must not contain the `--` separator itself.
+pub(crate) fn valid_memory_category(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains("--")
+        && !name.contains(['/', '\\'])
+        && !name.contains("..")
+        && !name.starts_with('.')
+}
+
+#[cfg(test)]
+mod memory_category_tests {
+    use super::*;
+
+    fn f(name: &str) -> MemoryFile {
+        MemoryFile {
+            name: name.into(),
+            preview: String::new(),
+            bytes: 0,
+        }
+    }
+
+    #[test]
+    fn category_of_splits_on_double_dash() {
+        assert_eq!(memory_category_of("2026-07-26.md"), None);
+        assert_eq!(
+            memory_category_of("Projects--2026-07-26.md"),
+            Some("Projects")
+        );
+        assert_eq!(memory_category_of("--x.md"), None);
+        assert_eq!(memory_note_label("Projects--2026-07-26.md"), "2026-07-26.md");
+        assert_eq!(memory_note_label("2026-07-26.md"), "2026-07-26.md");
+    }
+
+    #[test]
+    fn categories_group_default_first_then_sorted() {
+        let files = [
+            f("2026-07-01.md"),
+            f("Projects--a.md"),
+            f("Projects--b.md"),
+            f("About--c.md"),
+        ];
+        let cats = memory_categories(&files, &["Zed".into(), "Projects".into()]);
+        assert_eq!(
+            cats,
+            vec![
+                (None, 1),
+                (Some("About".into()), 1),
+                (Some("Projects".into()), 2),
+                (Some("Zed".into()), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_file_list_still_has_default_category() {
+        assert_eq!(memory_categories(&[], &[]), vec![(None, 0)]);
+    }
+
+    #[test]
+    fn category_name_validation() {
+        assert!(valid_memory_category("Projects"));
+        assert!(valid_memory_category("About you"));
+        assert!(!valid_memory_category(""));
+        assert!(!valid_memory_category("a--b"));
+        assert!(!valid_memory_category("a/b"));
+        assert!(!valid_memory_category("a\\b"));
+        assert!(!valid_memory_category(".."));
+        assert!(!valid_memory_category(".hidden"));
     }
 }
 
@@ -404,6 +517,12 @@ pub(super) fn SettingsView(
         delete_confirm,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
+    // Two-column Memory pane: selected category (None = default), plus
+    // session-local categories created before their first note exists.
+    let memory_cat = create_rw_signal(None::<String>);
+    let memory_new_cats = create_rw_signal(Vec::<String>::new());
+    let memory_new_cat_open = create_rw_signal(false);
+    let memory_new_cat_name = create_rw_signal(String::new());
     let joining = create_rw_signal(false);
     let join_code = create_rw_signal(String::new());
     let join_busy = create_rw_signal(false);
@@ -2249,11 +2368,6 @@ pub(super) fn SettingsView(
                                             } />
                                         <span class="toggle-track" aria-hidden="true"></span>
                                     </label>
-                                    <button type="button" class="settings-add-btn" on:click=move |_| {
-                                        if let Some(today) = memory_view.get().map(|v| v.today_file) {
-                                            load_memory_file.call(today);
-                                        }
-                                    }>{move || t(locale.get(), "memory.add")}</button>
                                     <button type="button" class="memory-clear-btn" on:click=move |_| {
                                         spawn_local(async move {
                                             let v = invoke("clear_memory", JsValue::UNDEFINED).await;
@@ -2261,6 +2375,8 @@ pub(super) fn SettingsView(
                                                 memory_view.update(|o| if let Some(o)=o { o.files = files; });
                                                 memory_selected.set(None);
                                                 memory_editor.set(String::new());
+                                                memory_cat.set(None);
+                                                memory_new_cats.set(vec![]);
                                             }
                                         });
                                     }>{move || t(locale.get(), "memory.clear_all")}</button>
@@ -2284,26 +2400,106 @@ pub(super) fn SettingsView(
                                 </div>
                                 })
                             }}
-                            <div class="settings-list memory-file-list">
-                                <For each=move || memory_view.get().map(|v| v.files).unwrap_or_default() key=|f| f.name.clone() let:f>
-                                    {
-                                        let pick = f.name.clone();
-                                        view! {
-                                            <div class="settings-list-row settings-list-row-link"
-                                                on:click=move |_| load_memory_file.call(pick.clone())>
-                                                <div class="settings-list-main">
-                                                    <span class="settings-list-title">{f.name.clone()}</span>
-                                                    <span class="settings-list-sub">{format_bytes(f.bytes)}</span>
-                                                </div>
-                                                <span class="settings-list-chevron" aria-hidden="true">"›"</span>
-                                            </div>
+                            <div class="memory-split">
+                                <div class="memory-files">
+                                    <For each=move || {
+                                            let files = memory_view.get().map(|v| v.files).unwrap_or_default();
+                                            memory_categories(&files, &memory_new_cats.get())
                                         }
-                                    }
-                                </For>
+                                        key=|(cat, n)| (cat.clone(), *n) let:entry>
+                                        {
+                                            let (cat, count) = entry;
+                                            let cat_active = cat.clone();
+                                            let cat_label = cat.clone();
+                                            view! {
+                                                <button type="button" class="memory-file-row memory-cat-row"
+                                                    class:memory-file-row-active=move || memory_cat.get() == cat_active
+                                                    on:click=move |_| memory_cat.set(cat.clone())>
+                                                    <span class="memory-file-name">{move || match &cat_label {
+                                                        Some(c) => c.clone(),
+                                                        None => t(locale.get(), "memory.default_category"),
+                                                    }}</span>
+                                                    <span class="memory-file-meta">{count}</span>
+                                                </button>
+                                            }
+                                        }
+                                    </For>
+                                    {move || if memory_new_cat_open.get() {
+                                        view! {
+                                            <input class="memory-cat-input" type="text"
+                                                placeholder=move || t(locale.get(), "memory.new_category_placeholder")
+                                                prop:value=move || memory_new_cat_name.get()
+                                                on:input=move |ev| memory_new_cat_name.set(event_target_value(&ev))
+                                                on:keydown=move |ev| {
+                                                    if ev.key() == "Enter" {
+                                                        let name = memory_new_cat_name.get().trim().to_string();
+                                                        if valid_memory_category(&name) {
+                                                            memory_new_cats.update(|v| if !v.contains(&name) { v.push(name.clone()); });
+                                                            memory_cat.set(Some(name));
+                                                            memory_new_cat_name.set(String::new());
+                                                            memory_new_cat_open.set(false);
+                                                        }
+                                                    } else if ev.key() == "Escape" {
+                                                        ev.stop_propagation();
+                                                        memory_new_cat_name.set(String::new());
+                                                        memory_new_cat_open.set(false);
+                                                    }
+                                                } />
+                                        }.into_view()
+                                    } else {
+                                        view! {
+                                            <button type="button" class="memory-file-add"
+                                                on:click=move |_| memory_new_cat_open.set(true)>
+                                                {move || format!("+ {}", t(locale.get(), "memory.new_category"))}
+                                            </button>
+                                        }.into_view()
+                                    }}
+                                </div>
+                                <div class="memory-notes">
+                                    <div class="settings-list memory-file-list">
+                                        <For each=move || {
+                                                let sel = memory_cat.get();
+                                                memory_view.get().map(|v| v.files).unwrap_or_default()
+                                                    .into_iter()
+                                                    .filter(|f| memory_category_of(&f.name) == sel.as_deref())
+                                                    .collect::<Vec<_>>()
+                                            }
+                                            key=|f| f.name.clone() let:f>
+                                            {
+                                                let pick = f.name.clone();
+                                                view! {
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        on:click=move |_| load_memory_file.call(pick.clone())>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{memory_note_label(&f.name).to_string()}</span>
+                                                            <span class="settings-list-sub">{format_bytes(f.bytes)}</span>
+                                                        </div>
+                                                        <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    </div>
+                                                }
+                                            }
+                                        </For>
+                                    </div>
+                                    {move || {
+                                        let sel = memory_cat.get();
+                                        let empty = memory_view.get()
+                                            .map(|v| !v.files.iter().any(|f| memory_category_of(&f.name) == sel.as_deref()))
+                                            .unwrap_or(true);
+                                        empty.then(|| view! {
+                                            <p class="memory-empty">{move || t(locale.get(), "memory.empty")}</p>
+                                        })
+                                    }}
+                                    <button type="button" class="memory-file-add" on:click=move |_| {
+                                        if let Some(today) = memory_view.get().map(|v| v.today_file) {
+                                            let name = match memory_cat.get() {
+                                                Some(cat) => format!("{cat}--{today}"),
+                                                None => today,
+                                            };
+                                            load_memory_file.call(name);
+                                        }
+                                    }>{move || format!("+ {}", t(locale.get(), "memory.add"))}</button>
+                                </div>
                             </div>
-                            {move || memory_view.get().map(|v| v.files.is_empty().then(|| view! {
-                                <p class="memory-empty">{move || t(locale.get(), "memory.empty")}</p>
-                            })).into_view()}
                         </div>
                         }.into_view()
                     }
