@@ -6864,7 +6864,9 @@ fn App() -> impl IntoView {
         })}
         <div class="app"
             class:app-entering=move || app_shell_entering.get()
-            class:app-hidden=move || show_projects.get() && !show_settings.get() && modal_artifact.get().is_none()
+            // Onboarding lives in this shell, so hiding it on the projects
+            // landing swallowed the first-run overlay entirely.
+            class:app-hidden=move || show_projects.get() && !show_settings.get() && !show_onboarding.get() && modal_artifact.get().is_none()
             on:contextmenu=on_context_menu>
         <Sidebar
             state=SidebarState {
