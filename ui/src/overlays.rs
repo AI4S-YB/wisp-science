@@ -374,6 +374,16 @@ pub(super) fn OnboardingOverlay(
             <div class="modal onboard">
                 {match step {
                     0 => view! {
+                        <h2>{t(loc, "onboard.getkey.title")}</h2>
+                        <p class="hint">{t(loc, "onboard.getkey.body")}</p>
+                        <div class="onboard-form">
+                            <button type="button" class="linklike onboard-getkey"
+                                on:click=move |_| open_external_url(DEEPSEEK_KEY_URL.into())>
+                                {t(loc, "onboard.apikey.get_key")}
+                            </button>
+                        </div>
+                    }.into_view(),
+                    1 => view! {
                         <h2>{t(loc, "onboard.apikey.title")}</h2>
                         <p class="hint">{t(loc, "onboard.apikey.body")}</p>
                         <div class="onboard-form">
@@ -382,13 +392,9 @@ pub(super) fn OnboardingOverlay(
                                     prop:value=move || onboard_key.get()
                                     on:input=move |ev| onboard_key.set(event_target_value(&ev)) />
                             </label>
-                            <button type="button" class="linklike onboard-getkey"
-                                on:click=move |_| open_external_url(DEEPSEEK_KEY_URL.into())>
-                                {t(loc, "onboard.apikey.get_key")}
-                            </button>
                         </div>
                     }.into_view(),
-                    1 => view! {
+                    2 => view! {
                         <h2>{t(loc, "onboard.welcome.title")}</h2>
                         <p class="hint">{t(loc, "onboard.welcome.body")}</p>
                     }.into_view(),
@@ -398,7 +404,7 @@ pub(super) fn OnboardingOverlay(
                     }.into_view(),
                 }}
                 <div class="onboard-dots">
-                    {(0..3).map(|i| view! {
+                    {(0..4).map(|i| view! {
                         <span class="onboard-dot" class:active=move || onboard_step.get() == i></span>
                     }).collect_view()}
                 </div>
@@ -406,11 +412,11 @@ pub(super) fn OnboardingOverlay(
                     {if step > 0 {
                         view! { <button on:click=move |_| onboard_step.update(|s| *s = s.saturating_sub(1))>{move || t(locale.get(), "onboard.back")}</button> }.into_view()
                     } else { view! { <span></span> }.into_view() }}
-                    {if step < 2 {
+                    {if step < 3 {
                         view! { <button class="primary" on:click=move |_| {
-                            if step == 0 { save_onboard_key.call(()); }
+                            if step == 1 { save_onboard_key.call(()); }
                             onboard_step.update(|s| *s += 1);
-                        }>{move || t(locale.get(), if step == 0 && onboard_key.get().trim().is_empty() {
+                        }>{move || t(locale.get(), if step == 1 && onboard_key.get().trim().is_empty() {
                             "onboard.apikey.later"
                         } else { "onboard.next" })}</button> }.into_view()
                     } else {
