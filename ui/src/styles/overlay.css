@@ -31,6 +31,10 @@
 .onboard-dot.active { background: var(--clay); }
 .onboard-form { text-align: left; display: flex; flex-direction: column; gap: 12px; margin: 6px 0 2px; }
 .onboard-getkey { align-self: flex-start; font-size: 12.5px; }
+/* Two numbered sub-steps on the model page: get a key, then paste it. */
+.onboard-steps { text-align: left; margin: 6px 0 2px; padding-left: 22px; display: flex; flex-direction: column; gap: 14px; }
+.onboard-steps li::marker { color: var(--text-faint); font-size: 13px; }
+.onboard-steps .hint { text-align: left; margin: 0 0 6px; }
 
 @media (prefers-reduced-motion: reduce) {
   .ctx-menu { animation: none; }
