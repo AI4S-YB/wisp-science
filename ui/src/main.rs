@@ -1597,6 +1597,7 @@ fn App() -> impl IntoView {
     let running_cb = running;
     let pending_cb = pending_turns;
     let approval_cb = approval_pending;
+    let conversation_outlines_cb = conversation_outlines;
     // Desktop notification for task status (#327). The backend drops it while
     // any app window is focused or when disabled in settings, so callers just
     // fire on every done/error/approval event.
@@ -1751,6 +1752,7 @@ fn App() -> impl IntoView {
             AgentEvent::User { frame_id, text } => {
                 set_pet_activity(&frame_id, "running");
                 flush_now();
+                let outline_text = text.clone();
                 let model = session_model_label(
                     &models_cb.get_untracked(),
                     &session_models_cb.get_untracked(),
@@ -1758,7 +1760,20 @@ fn App() -> impl IntoView {
                 );
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     start_user_turn(v, text, model.clone());
-                })
+                });
+                conversation_outlines_cb.update(|outlines| {
+                    let outline = outlines.entry(frame_id).or_default();
+                    let user_index = outline
+                        .last()
+                        .map_or(0, |entry| entry.user_index.saturating_add(1));
+                    outline.push(SessionOutlineItem {
+                        user_index,
+                        seq: None,
+                        text: outline_text,
+                        sent_at: Some(now_secs()),
+                        response_at: None,
+                    });
+                });
             }
             AgentEvent::MessageBoundary { .. } => {}
             AgentEvent::Resources {
@@ -1781,6 +1796,21 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Text { frame_id, delta } => {
                 set_pet_activity(&frame_id, "running");
+                let needs_response_time = conversation_outlines_cb.with_untracked(|outlines| {
+                    outlines
+                        .get(&frame_id)
+                        .and_then(|outline| outline.last())
+                        .is_some_and(|entry| entry.response_at.is_none())
+                });
+                if needs_response_time {
+                    conversation_outlines_cb.update(|outlines| {
+                        if let Some(entry) =
+                            outlines.get_mut(&frame_id).and_then(|outline| outline.last_mut())
+                        {
+                            entry.response_at = Some(now_secs());
+                        }
+                    });
+                }
                 queue(frame_id, PendingDelta::Text(delta));
             }
             AgentEvent::Reasoning { frame_id, delta } => {
@@ -1947,6 +1977,14 @@ fn App() -> impl IntoView {
                 stop_reason: _,
             } => {
                 flush_now();
+                conversation_outlines_cb.update(|outlines| {
+                    if let Some(entry) = outlines
+                        .get_mut(&frame_id)
+                        .and_then(|outline| outline.last_mut())
+                    {
+                        entry.response_at = Some(now_secs());
+                    }
+                });
                 notify_desktop(&frame_id, "done", "");
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
                     strip_approval_pending(items);
@@ -1963,6 +2001,14 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Error { frame_id, message } => {
                 flush_now();
+                conversation_outlines_cb.update(|outlines| {
+                    if let Some(entry) = outlines
+                        .get_mut(&frame_id)
+                        .and_then(|outline| outline.last_mut())
+                    {
+                        entry.response_at = Some(now_secs());
+                    }
+                });
                 notify_desktop(&frame_id, "error", &message);
                 // A model that cannot take images leaves the attachment sitting
                 // in history, so every later send fails the same way. Toast the
@@ -7398,6 +7444,11 @@ fn App() -> impl IntoView {
                             use std::hash::{Hash, Hasher};
                             let arts_fp = artifacts.with(|a| artifacts_fingerprint(a));
                             let busy_now = busy.get();
+                            let outline = conversation_outline.get();
+                            let user_offset = active_session
+                                .get()
+                                .and_then(|id| transcript_pages.get().get(&id).copied())
+                                .map_or(0, |page| page.user_offset);
                             let requested_start = if busy_now {
                                 usize::MAX
                             } else {
@@ -7470,14 +7521,22 @@ fn App() -> impl IntoView {
                                     let compact_assistant = commentary
                                         || (busy_now
                                             && matches!(&list[i], ChatItem::Assistant { .. }));
+                                    let timestamp = transcript_item_timestamp(
+                                        list,
+                                        i,
+                                        user_offset,
+                                        &outline,
+                                    );
                                     let mut fp = list[i].fingerprint();
                                     // Assistant markdown embeds artifact chips (index + label).
                                     if matches!(&list[i], ChatItem::Assistant { .. }) { fp ^= arts_fp; }
                                     fp ^= (commentary as u64) << 63;
                                     fp ^= (compact_assistant as u64) << 62;
+                                    fp ^= timestamp.unwrap_or_default() as u64;
                                     rows.push((i, fp, ThreadRow::Item {
                                         i,
                                         item: list[i].clone(),
+                                        timestamp,
                                         commentary,
                                         compact_assistant,
                                     }));
@@ -7493,6 +7552,7 @@ fn App() -> impl IntoView {
                                 ThreadRow::Item {
                                     i,
                                     item,
+                                    timestamp,
                                     commentary,
                                     compact_assistant,
                                 } => {
@@ -7526,7 +7586,7 @@ fn App() -> impl IntoView {
                                             data-ui-index=i.to_string()
                                             data-user-index=data_user_index>
                                             {render_item(
-                                                i, &item, &arts, on_artifact_select, on_file_link,
+                                                i, &item, timestamp, &arts, on_artifact_select, on_file_link,
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
                                                 respond_confirm, on_resume, on_queue,
                                             )}
@@ -7617,6 +7677,7 @@ fn App() -> impl IntoView {
                                 };
                                 let aria_label = label.clone();
                                 let title = label.clone();
+                                let sent_at = entry.sent_at.filter(|timestamp| *timestamp > 0);
                                 view! {
                                     <button
                                         type="button"
@@ -7648,7 +7709,25 @@ fn App() -> impl IntoView {
                                         <span class="conversation-outline-number" aria-hidden="true">
                                             {target + 1}
                                         </span>
-                                        <span class="conversation-outline-text">{label}</span>
+                                        <span class="conversation-outline-copy">
+                                            <span class="conversation-outline-text">{label}</span>
+                                            {sent_at.map(|timestamp| {
+                                                let compact = format_message_time(timestamp);
+                                                view! {
+                                                    <time
+                                                        class="conversation-outline-time"
+                                                        data-timestamp=timestamp.to_string()
+                                                        title=move || tf(
+                                                            locale.get(),
+                                                            "msg.sent_at",
+                                                            &[("time", &format_message_datetime(timestamp, locale.get()))],
+                                                        )
+                                                    >
+                                                        {compact}
+                                                    </time>
+                                                }
+                                            })}
+                                        </span>
                                     </button>
                                 }
                             })
@@ -10830,6 +10909,7 @@ enum ThreadRow {
     Item {
         i: usize,
         item: ChatItem,
+        timestamp: Option<i64>,
         commentary: bool,
         compact_assistant: bool,
     },
@@ -11311,6 +11391,7 @@ fn RunMonitorCard(
 fn render_item(
     ui_index: usize,
     item: &ChatItem,
+    timestamp: Option<i64>,
     artifacts: &[Artifact],
     on_artifact: Callback<usize>,
     on_file: Callback<ModalArtifact>,
@@ -11330,6 +11411,7 @@ fn render_item(
         ChatItem::User(s) => view! {
             <UserMessage
                 text=s.clone()
+                timestamp=timestamp
                 ui_index=ui_index
                 busy=busy
                 can_modify=can_modify
@@ -11385,6 +11467,7 @@ fn render_item(
             <AssistantMessage
                 text=text.clone()
                 model=model.clone()
+                timestamp=timestamp
                 resources=resources.clone()
                 artifacts=artifacts.to_vec()
                 source_item=ui_index

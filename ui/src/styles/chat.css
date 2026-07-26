@@ -288,9 +288,14 @@
   font-size: 10px; font-variant-numeric: tabular-nums;
 }
 .conversation-outline-item.active .conversation-outline-number { background: var(--clay); color: var(--on-clay); }
+.conversation-outline-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .conversation-outline-text {
   display: -webkit-box; overflow: hidden; font-size: 12.5px; line-height: 1.45;
   overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.conversation-outline-time {
+  color: var(--text-faint); font-family: var(--font-mono); font-size: 10px;
+  font-variant-numeric: tabular-nums; line-height: 1.3;
 }
 
 .transcript-page-control { display: flex; justify-content: center; }
@@ -308,6 +313,10 @@
 
 .msg { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .msg .role { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.msg .message-time {
+  color: var(--text-faint); font-family: var(--font-mono); font-size: 10.5px;
+  font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; text-transform: none;
+}
 /* overflow-wrap:anywhere so protein/DNA runs without spaces cannot blow out the column */
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; box-sizing: border-box; line-height: 1.55; font-size: 14.5px; font-family: var(--font-ui); }
 .msg.user { align-self: flex-end; width: auto; max-width: min(78%, 760px); min-width: 0; }
@@ -318,6 +327,7 @@
 }
 /* 长消息默认截断（截断在 Rust 侧做，避免 line-clamp 在 padding 区漏出半行） */
 .msg.user .body-toggle { align-self: flex-end; margin-top: -4px; opacity: 1; }
+.msg.user .user-message-time { align-self: flex-end; margin: -2px 4px -3px 0; }
 .msg.user.queued .role { color: var(--clay); }
 .msg.user.queued .body { border-style: dashed; color: var(--text-muted); background: color-mix(in srgb, var(--bg-panel) 70%, var(--clay) 6%); }
 .msg.user.outline-target .body { box-shadow: inset 0 0 0 1px var(--clay), 0 0 0 3px var(--clay-soft); }

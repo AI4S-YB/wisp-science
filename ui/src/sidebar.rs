@@ -228,7 +228,7 @@ pub(super) fn Sidebar(
                     if sort_by.get() == "name" {
                         list.sort_by(|a, b| a.title.trim().to_lowercase().cmp(&b.title.trim().to_lowercase()));
                     }
-                    // "newest" keeps the backend's created_at DESC order.
+                    // "newest" keeps the backend's latest-activity-first order.
                     // Pinned sessions are pulled out of whatever grouping is active
                     // and shown in one block at the very top. The backend guarantees
                     // they arrive on the first page even when older than the window.

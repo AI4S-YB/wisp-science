@@ -992,6 +992,10 @@ pub(crate) struct SessionOutlineItem {
     #[serde(default)]
     pub(crate) seq: Option<i64>,
     pub(crate) text: String,
+    #[serde(default)]
+    pub(crate) sent_at: Option<i64>,
+    #[serde(default)]
+    pub(crate) response_at: Option<i64>,
 }
 
 #[derive(Deserialize, Clone)]

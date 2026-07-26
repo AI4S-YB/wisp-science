@@ -2043,7 +2043,7 @@ mod tests {
         let sessions = store.list_sessions("p").await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].1, "Fix the renderer crash");
-        assert_eq!(sessions[0].2, 1780221600); // keeps Codex chronology
+        assert_eq!(sessions[0].2, 1780221780); // latest imported Codex activity
         let folders = store.list_folders("p").await.unwrap();
         assert_eq!(folders.len(), 1);
         assert_eq!(folders[0].1, "codex");

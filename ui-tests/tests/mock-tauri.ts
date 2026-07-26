@@ -908,9 +908,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               const before = arg("beforeSeq");
               ((window as any).__transcriptPageCalls ??= []).push(before ?? null);
               const outline = before == null && mockLongPages === 0
-                ? Array.from({ length: 20 }, (_, index) => ({
+                  ? Array.from({ length: 20 }, (_, index) => ({
                     user_index: index,
                     seq: 1 + index * 4,
+                    sent_at: 1783478400 + index * 60,
+                    response_at: 1783478430 + index * 60,
                     text: index === 0
                       ? "Oldest loaded question"
                       : index < 10

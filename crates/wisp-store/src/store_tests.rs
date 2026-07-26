@@ -996,16 +996,87 @@ async fn last_user_message_session_ignores_later_assistant_activity() {
 }
 
 #[tokio::test]
+async fn session_history_and_outline_use_message_times() {
+    let tmp = std::env::temp_dir().join(format!("wisp_activity_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_frame("older", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .create_frame("newer", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    store.set_frame_timestamps("older", 100, 100).await.unwrap();
+    store.set_frame_timestamps("newer", 200, 200).await.unwrap();
+
+    let mut older_question = Message::user("older question");
+    older_question.ts = 100;
+    let mut older_reply = Message::assistant("older reply");
+    older_reply.ts = 110;
+    let mut newer_question = Message::user("newer question");
+    newer_question.ts = 200;
+    let mut newer_reply = Message::assistant("newer reply");
+    newer_reply.ts = 210;
+    let mut resumed_question = Message::user("resumed question");
+    resumed_question.ts = 300;
+    let mut resumed_reply = Message::assistant("resumed reply");
+    resumed_reply.ts = 310;
+
+    store
+        .append_message("older", 1, &older_question)
+        .await
+        .unwrap();
+    store
+        .append_message("older", 2, &older_reply)
+        .await
+        .unwrap();
+    store
+        .append_message("newer", 1, &newer_question)
+        .await
+        .unwrap();
+    store
+        .append_message("newer", 2, &newer_reply)
+        .await
+        .unwrap();
+    store
+        .append_message("older", 3, &resumed_question)
+        .await
+        .unwrap();
+    store
+        .append_message("older", 4, &resumed_reply)
+        .await
+        .unwrap();
+
+    let sessions = store.list_sessions("p").await.unwrap();
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|(id, _, activity_at, _)| (id.as_str(), *activity_at))
+            .collect::<Vec<_>>(),
+        [("older", 310), ("newer", 210)]
+    );
+    assert_eq!(
+        store.load_session_user_messages("older").await.unwrap(),
+        vec![
+            (1, "older question".into(), 100, Some(110)),
+            (3, "resumed question".into(), 300, Some(310)),
+        ]
+    );
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn session_pages_are_stable_when_timestamps_match() {
     let tmp = std::env::temp_dir().join(format!("wisp_pages_{}.sqlite", uuid::Uuid::new_v4()));
     let store = Store::open(&tmp).await.unwrap();
     store.create_project("p", "proj", "").await.unwrap();
     for id in ["a", "b", "c"] {
         store.create_frame(id, "p", "OPERON", "m").await.unwrap();
-        store
-            .append_message(id, 1, &Message::user(id))
-            .await
-            .unwrap();
+        let mut message = Message::user(id);
+        message.ts = 10;
+        store.append_message(id, 1, &message).await.unwrap();
     }
 
     let first = store.list_sessions_page("p", None, 2).await.unwrap();
@@ -1202,14 +1273,17 @@ async fn transcript_pages_keep_complete_user_turns_and_matching_events() {
     assert_eq!(earlier.user_offset, 0);
     assert_eq!(earlier.reviews[0].0, 2);
     assert!(earlier.ui_events.last().unwrap().contains(r#""seq":2"#));
+    let outline = store.load_session_user_messages("f").await.unwrap();
     assert_eq!(
-        store.load_session_user_messages("f").await.unwrap(),
-        vec![
-            (1, "one".to_string()),
-            (3, "two".to_string()),
-            (5, "three".to_string()),
-        ]
+        outline
+            .iter()
+            .map(|(seq, text, _, _)| (*seq, text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "one"), (3, "two"), (5, "three"),]
     );
+    assert!(outline
+        .iter()
+        .all(|(_, _, sent_at, response_at)| *sent_at > 0 && response_at.is_some()));
     let _ = std::fs::remove_file(tmp);
 }
 
