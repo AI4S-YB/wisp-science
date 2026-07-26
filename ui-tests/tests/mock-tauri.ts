@@ -58,6 +58,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const mockResourceSession = query.get("mockResourceSession") === "1";
   const mockMcpAppSession = query.get("mockMcpAppSession") === "1";
   const mockOAuthPending = query.get("mockOAuthPending") === "1";
+  const mockOnboarding = query.get("mockOnboarding") === "1";
   const mockSessions: any[] = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
@@ -1609,7 +1610,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "get_project_settings":
             return { name: project.name, description: "", agent_context: "" };
           case "get_onboarding_state":
-            return { show: false, has_api_key: true };
+            return mockOnboarding ? { show: true, has_api_key: false } : { show: false, has_api_key: true };
           case "get_capabilities":
             return {
               skills,

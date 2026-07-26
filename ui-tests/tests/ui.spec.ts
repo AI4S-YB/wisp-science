@@ -3242,6 +3242,22 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
 });
 
+test("onboarding key setup adds the flash model before the pro model", async ({ page }) => {
+  await page.goto("/?mockOnboarding=1");
+  await expect(page.locator(".onboard-overlay")).toBeVisible();
+  await page.getByLabel("API key (stored in OS keyring)").fill("sk-onboard");
+  await page.getByRole("button", { name: "Next" }).click();
+  // Order matters: save_model activates each new profile, so pro must land
+  // last for the user to start on it.
+  await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .filter((c: any) => c.cmd === "save_model")
+    .map((c: any) => {
+      const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
+      const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
+      return profile.model;
+    }))).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+});
+
 test("gpt-image-2 can be assigned for generation but not selected for chat", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");
@@ -3280,7 +3296,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
 test("editing API URL keeps provider state and display aligned", async ({ page }) => {
@@ -3289,12 +3305,20 @@ test("editing API URL keeps provider state and display aligned", async ({ page }
   await page.getByLabel("API URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
 test("settings can validate current API config", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
+  await page.getByRole("button", { name: "Valid" }).click();
+  // The mock profile has "supports images" on, so validation probes with a
+  // test image and says so.
+  await expect(page.locator(".settings-status")).toHaveText(
+    "Validated openai with deepseek-v4-pro — the test image was accepted.",
+  );
+
+  await page.getByLabel("Supports image input").uncheck();
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
@@ -3308,7 +3332,7 @@ test("editing a saved model validates with that model profile id", async ({ page
   await expect(page.getByLabel("Model ID")).toHaveValue("opus-4.8");
 
   await page.getByRole("button", { name: "Valid" }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
   await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
     profileId: "opus",
     key: "",

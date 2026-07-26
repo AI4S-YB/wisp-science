@@ -561,9 +561,17 @@ pub(super) async fn validate_settings(
         "validating settings"
     );
     let provider = wisp_llm::build(cfg);
+    // "Supports images" is checked by hand, so probe with a real image rather
+    // than trusting the box — otherwise the first pasted screenshot is what
+    // discovers the model can't take one.
+    let probe = if settings.supports_vision {
+        vision_probe_message()
+    } else {
+        Message::user("Reply with OK.")
+    };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        provider.complete(&[Message::user("Reply with OK.")], &[]),
+        provider.complete(&[probe], &[]),
     )
     .await
     .map_err(|_| {
@@ -571,7 +579,7 @@ pub(super) async fn validate_settings(
         "Validation timed out after 30s".to_string()
     })?;
     if let Err(e) = result {
-        tracing::warn!(target: "wisp", error = %e, "settings validation failed");
+        tracing::warn!(target: "wisp", error = %e, vision = settings.supports_vision, "settings validation failed");
         return Err(format!("{e}"));
     }
 
@@ -582,13 +590,53 @@ pub(super) async fn validate_settings(
     ))
 }
 
+/// 16x16 PNG — small enough to be free, large enough that vision APIs with a
+/// minimum-dimension rule don't reject it for the wrong reason.
+fn vision_probe_message() -> Message {
+    use wisp_llm::message::{Content, ImageUrl, Part};
+    const PROBE_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mM4EWBDEmIY1TCqYfhqAABNl1QQCkyLAQAAAABJRU5ErkJggg==";
+    let mut msg = Message::user("");
+    msg.content = Content::Parts(vec![
+        Part::Text {
+            kind: "text".into(),
+            text: "Reply with OK.".into(),
+        },
+        Part::Image {
+            kind: "image_url".into(),
+            image_url: ImageUrl {
+                url: format!("data:image/png;base64,{PROBE_PNG}"),
+            },
+        },
+    ]);
+    msg
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{merged_scimaster_config, sync_scimaster_config_at, validate_max_iter};
+    use super::{
+        merged_scimaster_config, sync_scimaster_config_at, validate_max_iter, vision_probe_message,
+    };
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn vision_probe_sends_a_decodable_png_part() {
+        let v = serde_json::to_value(vision_probe_message()).unwrap();
+        let parts = v["content"].as_array().expect("multipart content");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"].as_str().unwrap();
+        let b64 = url
+            .strip_prefix("data:image/png;base64,")
+            .expect("data URI");
+        // A probe that isn't a real image would fail on vision models too, and
+        // that false negative is exactly what this check is meant to prevent.
+        let bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    }
 
     #[test]
     fn scimaster_config_merge_sets_key_and_defaults() {

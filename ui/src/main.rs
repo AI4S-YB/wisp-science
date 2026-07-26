@@ -49,7 +49,7 @@ use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
-    dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
+    dom_value, event_target_checked, event_target_value, file_kind, format_bytes, DEEPSEEK_FLASH_MODEL,
     format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
     note_composition_end, opens_in_system_browser, parent_path, provider_defaults, provider_value,
     runtime_language, tool_card_label, unique_dom_id, user_message_presentation,
@@ -1263,7 +1263,6 @@ fn App() -> impl IntoView {
     let bootstrap = create_rw_signal::<Option<BootstrapStatus>>(None);
     let show_onboarding = create_rw_signal(false);
     let onboard_step = create_rw_signal(0usize);
-    let onboard_provider = create_rw_signal("openai".to_string());
     let onboard_key = create_rw_signal(String::new());
 
     create_effect(move |_| {
@@ -3661,6 +3660,10 @@ fn App() -> impl IntoView {
         }
         settings_busy.set(true);
         model_form_msg.set(Some((true, t(loc, "status.validating").into())));
+        // The backend probes with a test image when "supports images" is on,
+        // so both outcomes say which probe ran — a checked box was never
+        // proof that the model takes images.
+        let vision = cfg.supports_vision;
         spawn_local(async move {
             let res = invoke_timeout(
                 "validate_settings",
@@ -3678,17 +3681,22 @@ fn App() -> impl IntoView {
                     let raw = v
                         .as_string()
                         .unwrap_or_else(|| t(loc, "status.validation_succeeded").into());
-                    model_form_msg.set(Some((true, localize_backend(loc, &raw))));
+                    let mut msg = localize_backend(loc, &raw);
+                    if vision {
+                        msg.push_str(&t(loc, "status.vision_ok"));
+                    }
+                    model_form_msg.set(Some((true, msg)));
                 }
                 Err(err) => {
-                    model_form_msg.set(Some((
-                        false,
-                        tf(
-                            loc,
-                            "status.validation_failed",
-                            &[("msg", &localize_backend(loc, &js_error_text(err)))],
-                        ),
-                    )));
+                    let mut msg = tf(
+                        loc,
+                        "status.validation_failed",
+                        &[("msg", &localize_backend(loc, &js_error_text(err)))],
+                    );
+                    if vision {
+                        msg.push_str(&t(loc, "err.vision_probe_failed"));
+                    }
+                    model_form_msg.set(Some((false, msg)));
                 }
             }
             settings_busy.set(false);
@@ -4562,38 +4570,44 @@ fn App() -> impl IntoView {
     });
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
 
-    // Onboarding step 0: save the entered key as a new model (DeepSeek defaults),
-    // reusing the same `save_model` command as Settings. Blank key = skip.
+    // Onboarding step 0: save the entered key as DeepSeek models (flash for
+    // cheap reading work, pro for everything else), reusing the same
+    // `save_model` command as Settings. Blank key = skip.
+    // ponytail: onboarding is DeepSeek-only; other providers go through Settings › Models.
     let save_onboard_key = Callback::new(move |_| {
         let key = onboard_key.get();
         if key.trim().is_empty() {
             return;
         }
-        let provider = provider_value(&onboard_provider.get()).to_string();
-        let (api_url, model) = provider_defaults(&provider);
-        let profile = serde_json::json!({
-            "id": "",
-            "label": "",
-            "provider": provider,
-            "api_url": api_url,
-            "model": model,
-            "max_tokens": 8192,
-            "reasoning_effort": "",
-            "supports_vision": false,
-            "use_for_vision": false,
-            "use_for_image_generation": false,
-        });
+        let provider = "openai".to_string();
+        let (api_url, pro) = provider_defaults(&provider);
+        // `save_model` makes every newly created profile the active one, so
+        // the model the user should land on has to be saved last.
+        let wanted = [DEEPSEEK_FLASH_MODEL, pro];
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({
-                "profile": profile,
-                "key": Some(key),
-                "useForVision": false,
-                "useForImageGeneration": false,
-            }))
-            .unwrap();
-            if let Ok(v) = invoke_checked("save_model", arg).await {
-                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                    models.set(list);
+            for model in wanted {
+                let arg = to_value(&serde_json::json!({
+                    "profile": {
+                        "id": "",
+                        "label": "",
+                        "provider": provider,
+                        "api_url": api_url,
+                        "model": model,
+                        "max_tokens": 8192,
+                        "reasoning_effort": "",
+                        "supports_vision": false,
+                        "use_for_vision": false,
+                        "use_for_image_generation": false,
+                    },
+                    "key": Some(key.clone()),
+                    "useForVision": false,
+                    "useForImageGeneration": false,
+                }))
+                .unwrap();
+                if let Ok(v) = invoke_checked("save_model", arg).await {
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                        models.set(list);
+                    }
                 }
             }
             onboard_key.set(String::new());
@@ -6868,7 +6882,9 @@ fn App() -> impl IntoView {
         })}
         <div class="app"
             class:app-entering=move || app_shell_entering.get()
-            class:app-hidden=move || show_projects.get() && !show_settings.get() && modal_artifact.get().is_none()
+            // Onboarding lives in this shell, so hiding it on the projects
+            // landing swallowed the first-run overlay entirely.
+            class:app-hidden=move || show_projects.get() && !show_settings.get() && !show_onboarding.get() && modal_artifact.get().is_none()
             on:contextmenu=on_context_menu>
         <Sidebar
             state=SidebarState {
@@ -10921,7 +10937,7 @@ fn App() -> impl IntoView {
         />
         <OnboardingOverlay
             locale=locale show_onboarding=show_onboarding onboard_step=onboard_step
-            onboard_provider=onboard_provider onboard_key=onboard_key
+            onboard_key=onboard_key
             save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)
         />
