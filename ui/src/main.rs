@@ -1548,8 +1548,6 @@ fn App() -> impl IntoView {
             if update.update_available {
                 update_banner.set(Some(AvailableUpdate {
                     version: update.latest_version,
-                    notes: update.notes,
-                    release_url: update.release_url,
                 }));
             }
         }
@@ -3172,10 +3170,14 @@ fn App() -> impl IntoView {
         let loc = locale;
         let modal = update_check_modal;
         let status_msg = status;
+        let banner = update_banner;
         spawn_local(async move {
             match invoke_checked("check_for_updates", JsValue::UNDEFINED).await {
                 Ok(v) => match serde_wasm_bindgen::from_value::<UpdateCheck>(v) {
                     Ok(update) if update.update_available => {
+                        banner.set(Some(AvailableUpdate {
+                            version: update.latest_version.clone(),
+                        }));
                         let text = tf(
                             loc.get(),
                             "status.update_available",
@@ -3190,6 +3192,7 @@ fn App() -> impl IntoView {
                         }));
                     }
                     Ok(update) => {
+                        banner.set(None);
                         let text = tf(
                             loc.get(),
                             "status.up_to_date",
@@ -6971,13 +6974,7 @@ fn App() -> impl IntoView {
                 update_banner,
             }
             open_update=Callback::new(move |_| {
-                if let Some(u) = update_banner.get() {
-                    update_check_modal.set(Some(UpdateCheckModal::Available {
-                        version: u.version,
-                        notes: u.notes,
-                        release_url: u.release_url,
-                    }));
-                }
+                run_update_check();
             })
             toggle_proj_menu=Callback::new(toggle_proj_menu)
             open_proj_settings=Callback::new(open_proj_settings)

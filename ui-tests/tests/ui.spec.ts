@@ -3487,6 +3487,39 @@ test("check for updates shows an available-update modal before opening releases"
   });
 });
 
+test("stale update card refreshes to the latest release before opening it (#521)", async ({ page }) => {
+  await enterApp(page);
+  await setMockUpdateCheck(page, {
+    current_version: "0.23.0",
+    latest_version: "0.24.0",
+    update_available: true,
+    release_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.24.0",
+  });
+
+  await page.keyboard.press("Control+p");
+  const input = page.locator("#action-palette-input");
+  await input.fill("check for updates");
+  await input.press("Enter");
+  let modal = page.getByTestId("update-check-modal");
+  await expect(modal).toContainText("Wisp 0.24.0 is available.");
+  await modal.getByRole("button", { name: "Later" }).click();
+  await expect(page.getByTestId("update-card")).toContainText("v0.24.0");
+
+  await setMockUpdateCheck(page, {
+    latest_version: "0.25.0",
+    release_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.25.0",
+  });
+  await page.getByTestId("update-card").click();
+
+  modal = page.getByTestId("update-check-modal");
+  await expect(modal).toContainText("Wisp 0.25.0 is available.");
+  await expect(page.getByTestId("update-card")).toContainText("v0.25.0");
+  await modal.getByTestId("update-check-open-releases").click();
+  await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({
+    url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.25.0",
+  });
+});
+
 test("command palette check for updates also shows the result modal", async ({ page }) => {
   await enterApp(page);
   await setMockUpdateCheck(page, {

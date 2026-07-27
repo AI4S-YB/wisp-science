@@ -446,8 +446,6 @@ pub(super) enum UpdateCheckModal {
 #[derive(Clone)]
 pub(super) struct AvailableUpdate {
     pub(super) version: String,
-    pub(super) notes: String,
-    pub(super) release_url: String,
 }
 
 /// First open vs after a failed probe (failed phase must not keep probing).
