@@ -588,6 +588,25 @@ impl AcpToolEnvelope {
     }
 }
 
+/// Tool name marking a persisted plan snapshot. Deliberately outside the `acp:`
+/// prefix so plan rows never land in the ACP tool transcript or review evidence.
+pub(crate) const PLAN_TOOL_NAME: &str = "wisp:plan";
+
+/// The turn's final plan, stored in the ACP entry shape so the UI parses live
+/// and reloaded plans with one function.
+///
+/// ponytail: one plan row per turn that produced one, so a reloaded session
+/// shows how the plan evolved. Collapsing to "latest only" would need a
+/// cross-turn delete pass and would lose that history.
+fn plan_message(seq: i64, payload: &serde_json::Value) -> Option<Message> {
+    let entries = payload.get("entries").filter(|value| value.is_array())?;
+    Some(Message::tool(
+        format!("plan-{seq}"),
+        PLAN_TOOL_NAME,
+        serde_json::json!({ "v": 1, "source": "acp", "entries": entries }).to_string(),
+    ))
+}
+
 fn json_value_text(value: Option<&serde_json::Value>) -> String {
     let Some(value) = value else {
         return String::new();
@@ -819,6 +838,8 @@ async fn run_acp_turn_with_kind(
     let mut assistant = String::new();
     let mut reasoning = String::new();
     let mut tools: Vec<AcpToolEnvelope> = Vec::new();
+    // Plans are revised in place during a turn; only the last one is persisted.
+    let mut plan: Option<serde_json::Value> = None;
     let outcome = loop {
         tokio::select! {
             result = &mut prompt => break result.map_err(|error| error.to_string())?,
@@ -838,6 +859,9 @@ async fn run_acp_turn_with_kind(
                     } else {
                         if matches!(kind, AcpUpdateKind::ToolCall | AcpUpdateKind::ToolCallUpdate) {
                             upsert_acp_tool_envelope(&mut tools, &payload);
+                        }
+                        if kind == AcpUpdateKind::Plan {
+                            plan = Some(payload.clone());
                         }
                         let _ = app.emit("acp-session-update", serde_json::json!({
                             "frameId": frame_id,
@@ -902,6 +926,9 @@ async fn run_acp_turn_with_kind(
                     ) {
                         upsert_acp_tool_envelope(&mut tools, &payload);
                     }
+                    if kind == AcpUpdateKind::Plan {
+                        plan = Some(payload.clone());
+                    }
                     let _ = app.emit(
                         "acp-session-update",
                         serde_json::json!({
@@ -923,6 +950,17 @@ async fn run_acp_turn_with_kind(
         state
             .store
             .append_message(frame_id, next_seq, &tool.to_message())
+            .await
+            .map_err(|error| error.to_string())?;
+        next_seq += 1;
+    }
+    if let Some(message) = plan
+        .as_ref()
+        .and_then(|payload| plan_message(next_seq, payload))
+    {
+        state
+            .store
+            .append_message(frame_id, next_seq, &message)
             .await
             .map_err(|error| error.to_string())?;
         next_seq += 1;
@@ -1362,5 +1400,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(restored, tools[0]);
+    }
+
+    #[test]
+    fn plan_message_keeps_entries_structured() {
+        let payload = serde_json::json!({
+            "entries": [{ "content": "read", "status": "in_progress", "priority": "high" }]
+        });
+        let message = plan_message(7, &payload).unwrap();
+        assert_eq!(message.tool_name.as_deref(), Some(PLAN_TOOL_NAME));
+        // Not an `acp:` tool row, so it never re-enters the ACP tool transcript.
+        assert!(AcpToolEnvelope::from_tool_message(
+            message.tool_name.as_deref(),
+            &message.content.as_text()
+        )
+        .is_none());
+        let body: serde_json::Value =
+            serde_json::from_str(&message.content.as_text()).expect("plan body is JSON");
+        assert_eq!(body["source"], "acp");
+        assert_eq!(body["entries"][0]["status"], "in_progress");
+        assert_eq!(body["entries"][0]["priority"], "high");
+        // A plan update without entries is not worth a transcript row.
+        assert!(plan_message(7, &serde_json::json!({})).is_none());
     }
 }

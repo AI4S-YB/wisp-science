@@ -276,6 +276,20 @@
               items: [
                 { role: "user", text: "查找文献 FX-cell", tool_name: null, ok: null },
                 { role: "reasoning", text: "Search PubMed and preprints for FX-cell literature.", tool_name: null, ok: null },
+                {
+                  role: "plan",
+                  text: JSON.stringify({
+                    v: 1,
+                    source: "acp",
+                    entries: [
+                      { content: "Search PubMed for FX-cell", status: "completed", priority: "medium" },
+                      { content: "Screen the hits and write report.csv", status: "in_progress", priority: "high" },
+                      { content: "Summarize the findings", status: "pending", priority: "low" },
+                    ],
+                  }),
+                  tool_name: null,
+                  ok: null,
+                },
                 { role: "tool", text: "12 hits written to report.csv", tool_name: "python", ok: true },
                 { role: "tool", text: "", tool_name: "monitor_run", ok: true, input: "r1" },
                 { role: "tool", text: "", tool_name: "monitor_run", ok: true, input: "r2" },
