@@ -11700,6 +11700,10 @@ fn RunMonitorCard(
     let locale = use_locale();
     let fallback = serde_json::from_str::<RunRecord>(&tool_output).ok();
     let lookup_id = run_id.clone();
+    // Outside the card closure on purpose: the run list refresh re-renders the
+    // body every few seconds, which would snap a native `<details>` shut while
+    // the user is reading it.
+    let env_open = create_rw_signal(false);
     view! {
         {move || {
             let run = runs
@@ -11803,8 +11807,12 @@ fn RunMonitorCard(
                         </div>
                     })}
                     {(!env_pairs.is_empty()).then(|| view! {
-                        <details class="run-monitor-env" data-testid="run-monitor-env">
-                            <summary>{t(locale.get(), "runs.environment")}</summary>
+                        <details class="run-monitor-env" data-testid="run-monitor-env"
+                            open=env_open.get()>
+                            <summary on:click=move |event| {
+                                event.prevent_default();
+                                env_open.update(|open| *open = !*open);
+                            }>{t(locale.get(), "runs.environment")}</summary>
                             <dl>
                                 {env_pairs.into_iter().map(|(key, value)| view! {
                                     <dt>{key}</dt>
