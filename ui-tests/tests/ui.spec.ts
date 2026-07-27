@@ -482,7 +482,7 @@ test("ACP turns retain explicitly selected Wisp skills", async ({ page }) => {
   await newSessionButton(page).click();
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /Test ACP Agent/ }).click();
-  await composer(page).fill("/alpha");
+  await composer(page).pressSequentially("/alpha");
   await page.locator(".mention-menu .mention-item").first().click();
   await composer(page).fill("use this skill");
   await page.getByRole("button", { name: "Send" }).click();
@@ -680,19 +680,25 @@ test("composer @ # and / add typed context references", async ({ page }) => {
   await enterApp(page);
   const composerInput = composer(page);
 
-  await composerInput.fill("@");
+  await composerInput.press("@");
   await expect(page.locator(".mention-menu")).toContainText("nif3.treefile");
   await page.locator(".mention-menu .mention-item").first().click();
+  await expect(composerInput).toHaveValue("");
+  await expect(composerInput).toBeFocused();
 
-  await composerInput.fill("#Current");
+  await composerInput.pressSequentially("#Current");
   await expect(page.locator(".mention-menu")).toContainText("Current analysis");
   await page.locator(".mention-menu .mention-item").first().click();
+  await expect(composerInput).toHaveValue("");
+  await expect(composerInput).toBeFocused();
 
-  await composerInput.fill("#project");
+  await composerInput.pressSequentially("#project");
   await expect(page.locator(".mention-menu")).toContainText("Search every session in wisp-science");
   await page.locator(".mention-menu .mention-item").first().click();
+  await expect(composerInput).toHaveValue("");
+  await expect(composerInput).toBeFocused();
 
-  await composerInput.fill("/alpha");
+  await composerInput.pressSequentially("/alpha");
   await expect(page.locator(".mention-menu")).toContainText("alphafold2");
   await page.locator(".mention-menu .mention-item").first().click();
 
@@ -713,6 +719,50 @@ test("composer @ # and / add typed context references", async ({ page }) => {
   await expect(page.locator('.msg.user [data-reference-kind="project"]')).toContainText("wisp-science");
   await expect(page.locator('.msg.user [data-reference-kind="skill"]')).toContainText("alphafold2");
   await expect(page.locator(".msg.user .body")).not.toContainText("Selected skills:");
+});
+
+test("composer picker follows manual caret insertions and ignores pasted text", async ({ page }) => {
+  await enterApp(page);
+  const composerInput = composer(page);
+
+  await composerInput.fill("已有文字");
+  await composerInput.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+  });
+  await composerInput.press("@");
+  await expect(page.locator(".mention-menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const original = "比较当前结果和旧结果";
+  await composerInput.fill(original);
+  await composerInput.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    textarea.focus();
+    textarea.setSelectionRange(2, 2);
+  });
+  await composerInput.pressSequentially("#Current");
+  await expect(page.locator(".mention-menu")).toContainText("Current analysis");
+  await page.locator(".mention-menu .mention-item").first().click();
+  await expect(composerInput).toHaveValue(original);
+  await expect.poll(() => composerInput.evaluate((element) =>
+    (element as HTMLTextAreaElement).selectionStart
+  )).toBe(2);
+
+  await composerInput.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    textarea.value = "#Current pasted";
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    textarea.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      data: "#Current pasted",
+      inputType: "insertFromPaste",
+    }));
+  });
+  await expect(page.locator(".mention-menu")).toHaveCount(0);
+  await composerInput.press("x");
+  await expect(page.locator(".mention-menu")).toHaveCount(0);
 });
 
 test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async ({ page }) => {
@@ -4789,7 +4839,7 @@ test("Escape closes settings and unwinds the composer picker before the right pa
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await expect(page.locator(".rightpane")).toBeVisible();
-  await composer(page).fill("@");
+  await composer(page).press("@");
   await expect(page.locator(".mention-menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator(".mention-menu")).toHaveCount(0);
