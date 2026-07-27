@@ -1012,7 +1012,13 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
         "docx" => "docx",
         "xlsx" => "xlsx",
         "pptx" => "pptx",
-        "bib" => "text",
+        // ponytail: LaTeX sources open as plain text, not code. The vendored
+        // highlight.js is the common bundle with no `latex` grammar, and asking
+        // it for one throws; the `latex` preview kind is KaTeX for inline
+        // formulas, which chokes on a whole document. Typesetting a .tex file is
+        // a separate project — vendor a latex grammar first if highlighting is
+        // wanted.
+        "bib" | "tex" | "latex" => "text",
         "html" | "htm" => "html",
         "nwk" | "newick" | "treefile" | "tre" => "text",
         "ipynb" => "notebook",
@@ -1290,6 +1296,11 @@ mod md_catalog_tests {
         assert_eq!(file_kind("results.xlsx"), Some("xlsx"));
         assert_eq!(file_kind("talk.pptx"), Some("pptx"));
         assert_eq!(file_kind("references.bib"), Some("text"));
+        assert_eq!(file_kind("paper.tex"), Some("text"));
+        assert_eq!(file_kind("paper.latex"), Some("text"));
+        // The text preview reads its language off code_lang, which must keep
+        // saying "no grammar" so the highlighter is never asked for `latex`.
+        assert_eq!(code_lang("paper.tex"), None);
     }
 
     #[test]
