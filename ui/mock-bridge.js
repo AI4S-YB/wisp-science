@@ -166,8 +166,6 @@
         // call sites.
         const args = rawArgs instanceof Map ? Object.fromEntries(rawArgs) : rawArgs;
         switch (cmd) {
-          case "list_sessions":
-            return sessions;
           case "list_sessions_page": {
             const cursor = args?.cursor;
             const start = cursor ? sessions.findIndex((item) => item.id === cursor.id) + 1 : 0;
@@ -540,7 +538,6 @@
             }`;
           }
           case "set_settings":
-          case "set_api_key":
           case "new_session":
             return `s-${Math.random().toString(36).slice(2)}`;
           case "set_credential": {
@@ -600,8 +597,6 @@
           case "set_memory_enabled":
             memoryEnabled = !!args?.enabled;
             return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
-          case "list_memory":
-            return memoryFiles;
           case "write_memory_file": {
             const existing = memoryFiles.find((f) => f.name === args?.name);
             const content = args?.content ?? "";
