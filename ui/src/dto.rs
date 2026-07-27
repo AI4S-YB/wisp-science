@@ -1766,8 +1766,8 @@ pub(crate) struct DynamicAgentWorkflowSummary {
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct AgentWorkflowVersionConflict {
+    #[allow(dead_code)]
     pub(crate) workflow_id: String,
     pub(crate) expected_version: i64,
     pub(crate) actual_version: i64,
@@ -1778,6 +1778,10 @@ pub(crate) struct AgentWorkflowVersionConflict {
 pub(crate) struct DynamicWorkflowCommandError {
     pub(crate) code: String,
     pub(crate) message: String,
+    /// The backend skips this key entirely for non-conflict errors
+    /// (`skip_serializing_if = "Option::is_none"`), so it needs a default or
+    /// every other error fails to parse.
+    #[serde(default)]
     pub(crate) version_conflict: Option<AgentWorkflowVersionConflict>,
 }
 

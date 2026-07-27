@@ -2,7 +2,7 @@
 
 use crate::bindings::invoke_checked;
 use crate::dto::*;
-use crate::i18n::{t, Locale};
+use crate::i18n::{t, tf, Locale};
 use crate::text::{dom_value, event_target_checked, event_target_value, pretty_json};
 use leptos::{ev, *};
 use serde_wasm_bindgen::to_value;
@@ -337,10 +337,29 @@ fn js_error_text(error: JsValue) -> String {
         .unwrap_or_else(|| "Unknown Agent workflow error".into())
 }
 
-fn dynamic_command_error(error: JsValue) -> (String, bool) {
+fn dynamic_command_error(locale: Locale, error: JsValue) -> (String, bool) {
     serde_wasm_bindgen::from_value::<DynamicWorkflowCommandError>(error.clone())
-        .map(|error| (error.message, error.code == "version_conflict"))
+        .map(|parsed| command_error_text(locale, parsed))
         .unwrap_or_else(|_| (js_error_text(error), false))
+}
+
+/// Message plus "was this a version conflict?". The backend's own conflict
+/// message is version-free ("changed in another window") but it ships the two
+/// versions alongside — when they are there, name them.
+fn command_error_text(locale: Locale, error: DynamicWorkflowCommandError) -> (String, bool) {
+    let conflict = error.code == "version_conflict";
+    let message = match error.version_conflict.filter(|_| conflict) {
+        Some(versions) => tf(
+            locale,
+            "agents.error.version_conflict",
+            &[
+                ("expected", &versions.expected_version.to_string()),
+                ("actual", &versions.actual_version.to_string()),
+            ],
+        ),
+        None => error.message,
+    };
+    (message, conflict)
 }
 
 #[derive(Clone)]
@@ -880,7 +899,7 @@ fn dynamic_editor(
                     refresh_agent_workflows(state);
                 }
                 Err(error) => {
-                    let (message, conflict) = dynamic_command_error(error);
+                    let (message, conflict) = dynamic_command_error(locale.get_untracked(), error);
                     if conflict {
                         if let Ok(value) = invoke_checked(
                             "list_agent_workflows",
@@ -1433,6 +1452,37 @@ pub(super) fn agent_workflows_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_conflict_message_names_both_versions() {
+        let (message, conflict) = command_error_text(
+            Locale::En,
+            DynamicWorkflowCommandError {
+                code: "version_conflict".into(),
+                message: "Agent plan changed in another window; refresh and try again.".into(),
+                version_conflict: Some(AgentWorkflowVersionConflict {
+                    workflow_id: "wf1".into(),
+                    expected_version: 3,
+                    actual_version: 5,
+                }),
+            },
+        );
+        assert!(conflict);
+        assert!(message.contains("v3") && message.contains("v5"), "{message}");
+        assert!(!message.contains('{'), "unsubstituted placeholder: {message}");
+
+        // Any other failure keeps the backend's own message.
+        let (message, conflict) = command_error_text(
+            Locale::En,
+            DynamicWorkflowCommandError {
+                code: "invalid_proposal".into(),
+                message: "task ids must be unique".into(),
+                version_conflict: None,
+            },
+        );
+        assert!(!conflict);
+        assert_eq!(message, "task ids must be unique");
+    }
 
     #[test]
     fn arbitrary_tasks_round_trip() {
