@@ -73,6 +73,7 @@ const PANE_RESIZER_WIDTH: f64 = 5.0;
 const SIDEBAR_RESIZER_WIDTH: f64 = 10.0;
 const THEME_STORAGE_KEY: &str = "wisp-theme";
 const SIDE_CHAT_SCROLLER_ID: &str = "side-chat-scroller";
+const SIDE_CHAT_INPUT_ID: &str = "side-chat-input";
 
 /// Let component-owned inner surfaces consume Escape before the app-level
 /// stack sees it. The listener is capture-phase and owner-scoped, so it does
@@ -923,6 +924,7 @@ fn App() -> impl IntoView {
     // backend queue item so edit/cancel/cut-in target the same row.
     let queue_seq = create_rw_signal(0u64);
     let side_chat_input = create_rw_signal(String::new());
+    let side_chat_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
     let side_chat_items = create_rw_signal::<Vec<ChatItem>>(vec![]);
     let side_chat_busy = create_rw_signal(false);
     let side_chat_model_menu_open = create_rw_signal(false);
@@ -1375,6 +1377,7 @@ fn App() -> impl IntoView {
         });
         side_chat_items.set(restored.unwrap_or_default());
         side_chat_input.set(String::new());
+        side_chat_quotes.set(vec![]);
         side_chat_model_menu_open.set(false);
         // ponytail: busy is a global flag, so we clear it on switch to drop a
         // stale spinner. Trade-off: returning to a session whose request is
@@ -2863,13 +2866,17 @@ fn App() -> impl IntoView {
             finish_pending_turn(pending_turns, running, &id);
         });
     });
-    let send_side_chat = move |question: String| {
-        let question = question.trim().to_string();
+    let send_side_chat = move |request: (String, Vec<ComposerQuote>, bool)| {
+        let (question, quotes, clear_draft) = request;
+        let question = message_with_read_only_quotes(&question, &quotes);
         if question.is_empty() || side_chat_busy.get() {
             return;
         }
         ensure_right_tab(RightTab::SideChat, show_right, open_right_tabs, right_tab);
-        side_chat_input.set(String::new());
+        if clear_draft {
+            side_chat_input.set(String::new());
+            side_chat_quotes.set(vec![]);
+        }
         side_chat_items.update(|v| v.push(ChatItem::User(question.clone())));
         side_chat_busy.set(true);
         let sid = active_session.get();
@@ -5484,20 +5491,35 @@ fn App() -> impl IntoView {
                     items.push(ComposerQuote::from_selection(text, source.clone()))
                 });
                 clear_selection();
-                if source.as_deref() == center_file.get_untracked().as_deref() {
+                if selection_targets_center_file(
+                    source.as_deref(),
+                    center_file.get_untracked().as_deref(),
+                ) {
                     center_split.set(true);
                     show_right.set(false);
                 }
                 focus_composer();
                 return;
             }
-            if action == "explainSelection" {
-                let question = message_with_quotes(
-                    &t(locale.get(), "selection.explain_prompt"),
-                    &[ComposerQuote::plain(payload)],
-                );
+            if action == "quoteSelectionSideChat" {
+                let (source, text) = payload
+                    .split_once('\u{1e}')
+                    .unwrap_or(("", payload.as_str()));
+                let source = (!source.is_empty()).then(|| source.to_string());
+                side_chat_quotes
+                    .update(|items| items.push(ComposerQuote::from_selection(text, source)));
                 clear_selection();
-                send_side_chat(question);
+                ensure_right_tab(RightTab::SideChat, show_right, open_right_tabs, right_tab);
+                focus_element_soon(SIDE_CHAT_INPUT_ID);
+                return;
+            }
+            if action == "explainSelection" {
+                clear_selection();
+                send_side_chat((
+                    t(locale.get(), "selection.explain_prompt").into(),
+                    vec![ComposerQuote::plain(payload)],
+                    false,
+                ));
                 return;
             }
             if action == "downloadFile" {
@@ -7747,6 +7769,8 @@ fn App() -> impl IntoView {
                 let quote = text.clone();
                 let quote_source = source.clone();
                 let quote_source_for_click = quote_source.clone();
+                let side_quote = text.clone();
+                let side_quote_source = source.clone();
                 let explain = text.clone();
                 let annotate_text = text.clone();
                 let annotate_source = source.clone();
@@ -7828,14 +7852,20 @@ fn App() -> impl IntoView {
                                 ));
                                 selection_popup.set(None);
                                 clear_selection();
-                                if quote_source_for_click.as_ref() == center_file.get_untracked().as_ref() {
+                                if selection_targets_center_file(
+                                    quote_source_for_click.as_deref(),
+                                    center_file.get_untracked().as_deref(),
+                                ) {
                                     center_split.set(true);
                                     show_right.set(false);
                                 }
                                 focus_composer();
                             }>
                             {compose_icon("plus")}
-                            <span>{move || if quote_source.as_ref() == center_file.get().as_ref() {
+                            <span>{move || if selection_targets_center_file(
+                                quote_source.as_deref(),
+                                center_file.get().as_deref(),
+                            ) {
                                 t(locale.get(), "selection.ask_ai")
                             } else {
                                 t(locale.get(), "selection.add_to_chat")
@@ -7843,13 +7873,34 @@ fn App() -> impl IntoView {
                         </button>
                         <button type="button" class="selection-popup-btn"
                             on:click=move |_| {
-                                let question = message_with_quotes(
-                                    &t(locale.get(), "selection.explain_prompt"),
-                                    &[ComposerQuote::plain(explain.clone())],
-                                );
+                                side_chat_quotes.update(|items| items.push(
+                                    ComposerQuote::from_selection(
+                                        side_quote.clone(),
+                                        side_quote_source.clone(),
+                                    )
+                                ));
                                 selection_popup.set(None);
                                 clear_selection();
-                                send_side_chat(question);
+                                ensure_right_tab(
+                                    RightTab::SideChat,
+                                    show_right,
+                                    open_right_tabs,
+                                    right_tab,
+                                );
+                                focus_element_soon(SIDE_CHAT_INPUT_ID);
+                            }>
+                            {compose_icon("chat")}
+                            <span>{t(locale.get(), "selection.quote_side_chat")}</span>
+                        </button>
+                        <button type="button" class="selection-popup-btn"
+                            on:click=move |_| {
+                                selection_popup.set(None);
+                                clear_selection();
+                                send_side_chat((
+                                    t(locale.get(), "selection.explain_prompt").into(),
+                                    vec![ComposerQuote::plain(explain.clone())],
+                                    false,
+                                ));
                             }>
                             {compose_icon("chat")}
                             <span>{t(locale.get(), "selection.explain")}</span>
@@ -9583,7 +9634,7 @@ fn App() -> impl IntoView {
                                                 } else {
                                                     input.set(String::new());
                                                     attachments.set(vec![]);
-                                                    send_side_chat(q);
+                                                    send_side_chat((q, vec![], false));
                                                 }
                                             }>
                                             <span class="compose-item-icon">{compose_icon("chat")}</span>
@@ -10616,7 +10667,38 @@ fn App() -> impl IntoView {
                                         })}
                                     </div>
                                     <div class="sidechat-composer">
+                                        {move || (!side_chat_quotes.get().is_empty()).then(|| view! {
+                                            <div class="composer-attachments composer-reference-chips sidechat-quotes">
+                                                {side_chat_quotes.get().into_iter().enumerate().map(|(idx, quote)| {
+                                                    let label = quote_label(&quote.text);
+                                                    let title = quote.source.as_ref().map_or_else(
+                                                        || quote.text.clone(),
+                                                        |source| format!("{source}\n\n{}", quote.text),
+                                                    );
+                                                    let source = quote.source.clone();
+                                                    view! {
+                                                        <div class="composer-attachment-row composer-reference-card quote"
+                                                            data-testid="sidechat-quote" title=title>
+                                                            <span class="composer-attachment-icon">{compose_icon("chat")}</span>
+                                                            <span class="composer-attachment-copy">
+                                                                <span class="composer-attachment ready">{label}</span>
+                                                                <span class="composer-attachment-meta">{move || source.clone().unwrap_or_else(|| t(locale.get(), "attachment.quote").into())}</span>
+                                                            </span>
+                                                            <button type="button" class="composer-attachment-remove"
+                                                                title=move || t(locale.get(), "composer.remove_attachment")
+                                                                aria-label=move || t(locale.get(), "composer.remove_attachment")
+                                                                on:click=move |_| side_chat_quotes.update(|items| {
+                                                                    if idx < items.len() {
+                                                                        items.remove(idx);
+                                                                    }
+                                                                })>{compose_icon("close")}</button>
+                                                        </div>
+                                                    }
+                                                }).collect_view()}
+                                            </div>
+                                        })}
                                         <textarea
+                                            id=SIDE_CHAT_INPUT_ID
                                             prop:value=move || side_chat_input.get()
                                             prop:placeholder=move || t(locale.get(), "sidechat.placeholder")
                                             on:input=move |ev| side_chat_input.set(event_target_value(&ev))
@@ -10624,7 +10706,11 @@ fn App() -> impl IntoView {
                                                 if ime_composing(&ev) { return; }
                                                 if ev.key() == "Enter" && !ev.shift_key() {
                                                     ev.prevent_default();
-                                                    send_side_chat(side_chat_input.get());
+                                                    send_side_chat((
+                                                        side_chat_input.get(),
+                                                        side_chat_quotes.get(),
+                                                        true,
+                                                    ));
                                                 }
                                             }
                                         ></textarea>
@@ -10696,8 +10782,14 @@ fn App() -> impl IntoView {
                                                 </div>
                                             })}
                                             <button type="button" class="sidechat-send"
-                                                disabled=move || side_chat_busy.get() || side_chat_input.get().trim().is_empty()
-                                                on:click=move |_| send_side_chat(side_chat_input.get())>
+                                                disabled=move || side_chat_busy.get()
+                                                    || (side_chat_input.get().trim().is_empty()
+                                                        && side_chat_quotes.get().is_empty())
+                                                on:click=move |_| send_side_chat((
+                                                    side_chat_input.get(),
+                                                    side_chat_quotes.get(),
+                                                    true,
+                                                ))>
                                                 {move || t(locale.get(), "composer.send")}
                                             </button>
                                         </div>

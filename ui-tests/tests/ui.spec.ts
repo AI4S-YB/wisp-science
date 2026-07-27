@@ -47,6 +47,37 @@ function composer(page: Page) {
   return page.locator("#composer-input");
 }
 
+async function selectAssistantReplyText(
+  page: Page,
+  eventType: "mouseup" | "contextmenu" = "mouseup",
+) {
+  return page.evaluate((type) => {
+    const body = document.querySelector(".msg.assistant .body");
+    if (!body) return "";
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let node: Text | null = null;
+    while (walker.nextNode()) {
+      const candidate = walker.currentNode as Text;
+      if (candidate.data.trim().length > 20) {
+        node = candidate;
+        break;
+      }
+    }
+    if (!node) return "";
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    body.dispatchEvent(new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: type === "contextmenu" ? 2 : 0,
+    }));
+    return node.data.trim();
+  }, eventType);
+}
+
 function newSessionButton(page: Page) {
   return page.locator(".sidebar").getByRole("button", { name: "New session" });
 }
@@ -1215,6 +1246,77 @@ test("side chat stays at the latest message after sending and switching tabs", a
   await panel.getByRole("button", { name: "Send" }).click();
   await expect(panel.getByText("Side answer: latest side follow-up")).toBeVisible();
   await expect.poll(bottomGap).toBeLessThan(8);
+});
+
+test("transcript selections add to the main composer without closing the right pane", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("STEPSDEMO");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  const panel = page.locator(".rightpane");
+  await expect(panel).toBeVisible();
+
+  const selected = await selectAssistantReplyText(page);
+  expect(selected.length).toBeGreaterThan(20);
+  const popup = page.locator(".selection-popup");
+  await expect(popup.getByRole("button", { name: "Add to chat" })).toBeVisible();
+  await expect(popup.getByRole("button", { name: "Ask AI in the conversation" })).toHaveCount(0);
+  await expect(popup.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
+  await popup.getByRole("button", { name: "Add to chat" }).click();
+  await expect(page.locator(".composer-reference-chips .quote").last())
+    .toContainText(selected.slice(0, 30));
+  await expect(panel).toBeVisible();
+
+  // The native-style context menu mirrors the popup and must use the same
+  // explicit source check instead of treating an absent source as a center file.
+  await selectAssistantReplyText(page, "contextmenu");
+  const menu = page.locator(".ctx-menu");
+  await expect(menu.getByRole("button", { name: "Add to chat" })).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Ask AI in the conversation" })).toHaveCount(0);
+  await expect(menu.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
+  await menu.getByRole("button", { name: "Add to chat" }).click();
+  await expect(page.locator(".composer-reference-chips .quote")).toHaveCount(2);
+  await expect(panel).toBeVisible();
+});
+
+test("selected text can be staged as a removable side-chat quote", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("STEPSDEMO");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
+
+  const selected = await selectAssistantReplyText(page);
+  await page.locator(".selection-popup")
+    .getByRole("button", { name: "Quote in side chat" })
+    .click();
+
+  const panel = page.locator(".rightpane");
+  await expect(panel.locator(".sidechat-in-pane")).toBeVisible();
+  const quote = panel.getByTestId("sidechat-quote");
+  await expect(quote).toContainText(selected.slice(0, 30));
+  const input = panel.getByPlaceholder("Follow up…");
+  await expect(input).toBeFocused();
+
+  // Removing the staged quote leaves the side-chat draft untouched.
+  await quote.getByRole("button", { name: "Remove attachment" }).click();
+  await expect(panel.getByTestId("sidechat-quote")).toHaveCount(0);
+
+  await selectAssistantReplyText(page);
+  await page.locator(".selection-popup")
+    .getByRole("button", { name: "Quote in side chat" })
+    .click();
+  await input.fill("Why is this important?");
+  await panel.getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "side_chat")).toMatchObject({
+    question: expect.stringContaining("Why is this important?"),
+  });
+  const args = await lastInvokeArgs(page, "side_chat");
+  expect(args.question).toContain(`> ${selected}`);
+  expect(args.question).not.toContain("AI source-edit instruction");
+  await expect(panel.getByTestId("sidechat-quote")).toHaveCount(0);
+  await expect(input).toHaveValue("");
 });
 
 test("branch in new session starts a new frame from the current session", async ({ page }) => {
@@ -4709,11 +4811,13 @@ test("selecting preview text quotes it into chat and saves a review annotation",
   await expect(preview.locator("h1")).toHaveText("Differential expression report");
   await expect(preview).toHaveAttribute("data-file-path", "artifact:art-markdown");
 
-  // Selecting inside the preview raises the quote popup with all three actions.
+  // Selecting inside the preview offers both conversation destinations plus
+  // the preview-specific review action.
   await selectCenterPreviewText(page);
   const popup = page.locator(".selection-popup");
   await expect(popup).toBeVisible();
   await expect(popup.getByRole("button", { name: "Ask AI in the conversation" })).toBeVisible();
+  await expect(popup.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
   await expect(popup.getByRole("button", { name: "Add to review" })).toBeVisible();
 
   // The AI handoff opens the conversation and attaches the selection as a

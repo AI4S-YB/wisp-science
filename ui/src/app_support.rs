@@ -302,6 +302,16 @@ impl ComposerQuote {
     }
 }
 
+/// True only when a selection has a real source and that source is the active
+/// center preview. Comparing the two `Option`s directly would also make
+/// `(None, None)` match, misclassifying an ordinary transcript selection.
+pub(super) fn selection_targets_center_file(
+    source: Option<&str>,
+    center_file: Option<&str>,
+) -> bool {
+    matches!((source, center_file), (Some(source), Some(center_file)) if source == center_file)
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) enum CommandPaletteItem {
     Project(ProjectSummary),
@@ -2735,7 +2745,11 @@ fn prompt_safe_source(source: &str) -> String {
 /// blockquotes. Workspace selections retain their target path and carry a
 /// stable action hint, so change requests lead to a real tool edit rather than
 /// a suggested replacement code block.
-pub(super) fn message_with_quotes(text: &str, quotes: &[ComposerQuote]) -> String {
+fn message_with_quotes_inner(
+    text: &str,
+    quotes: &[ComposerQuote],
+    include_edit_instruction: bool,
+) -> String {
     if quotes.is_empty() {
         return text.trim().to_string();
     }
@@ -2759,24 +2773,36 @@ pub(super) fn message_with_quotes(text: &str, quotes: &[ComposerQuote]) -> Strin
         out.push('\n');
     }
     out.push_str(text.trim());
-    let mut editable_sources = quotes
-        .iter()
-        .filter_map(ComposerQuote::workspace_source)
-        .map(prompt_safe_source)
-        .collect::<Vec<_>>();
-    editable_sources.sort();
-    editable_sources.dedup();
-    if !editable_sources.is_empty() {
-        out.push_str("\n\nAI source-edit instruction: If the user requests a change, read the selected workspace file first, modify it directly with the edit tool for a focused in-place change (use write only for a whole-file replacement), and verify the saved result. Do not only return a replacement code block. Target file");
-        out.push_str(if editable_sources.len() == 1 {
-            ": `"
-        } else {
-            "s: `"
-        });
-        out.push_str(&editable_sources.join("`, `"));
-        out.push('`');
+    if include_edit_instruction {
+        let mut editable_sources = quotes
+            .iter()
+            .filter_map(ComposerQuote::workspace_source)
+            .map(prompt_safe_source)
+            .collect::<Vec<_>>();
+        editable_sources.sort();
+        editable_sources.dedup();
+        if !editable_sources.is_empty() {
+            out.push_str("\n\nAI source-edit instruction: If the user requests a change, read the selected workspace file first, modify it directly with the edit tool for a focused in-place change (use write only for a whole-file replacement), and verify the saved result. Do not only return a replacement code block. Target file");
+            out.push_str(if editable_sources.len() == 1 {
+                ": `"
+            } else {
+                "s: `"
+            });
+            out.push_str(&editable_sources.join("`, `"));
+            out.push('`');
+        }
     }
     out.trim_end().to_string()
+}
+
+pub(super) fn message_with_quotes(text: &str, quotes: &[ComposerQuote]) -> String {
+    message_with_quotes_inner(text, quotes, true)
+}
+
+/// Side chat is intentionally read-only. It still needs the source label for
+/// useful context, but must not inherit the main composer's file-edit command.
+pub(super) fn message_with_read_only_quotes(text: &str, quotes: &[ComposerQuote]) -> String {
+    message_with_quotes_inner(text, quotes, false)
 }
 
 /// Chip label for a quoted selection: first line, capped at 40 chars.
@@ -3859,10 +3885,11 @@ pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Op
 mod start_user_turn_tests {
     use super::{
         append_assistant_delta, append_reasoning_delta, completed_activity_end,
-        composer_text_from_user_message, is_commentary_at, message_with_attachments,
-        is_image_generation_tool, is_tool_activity, message_with_composer_context,
-        message_with_quotes, process_item_insert_index, runtime_object_quote, start_user_turn,
-        trailing_queue_start, ComposerQuote, ComposerReferenceChip,
+        composer_text_from_user_message, is_commentary_at, is_image_generation_tool,
+        is_tool_activity, message_with_attachments, message_with_composer_context,
+        message_with_quotes, message_with_read_only_quotes, process_item_insert_index,
+        runtime_object_quote, selection_targets_center_file, start_user_turn, trailing_queue_start,
+        ComposerQuote, ComposerReferenceChip,
     };
     use crate::dto::ChatItem;
 
@@ -3944,6 +3971,32 @@ mod start_user_turn_tests {
             message_with_quotes("", &[ComposerQuote::plain("ctx")]),
             "> ctx"
         );
+    }
+
+    #[test]
+    fn center_selection_match_requires_two_real_paths() {
+        assert!(selection_targets_center_file(
+            Some("analysis.R"),
+            Some("analysis.R")
+        ));
+        assert!(!selection_targets_center_file(None, None));
+        assert!(!selection_targets_center_file(Some("analysis.R"), None));
+        assert!(!selection_targets_center_file(None, Some("analysis.R")));
+    }
+
+    #[test]
+    fn read_only_quotes_keep_source_without_edit_instruction() {
+        let message = message_with_read_only_quotes(
+            "这是什么意思?",
+            &[ComposerQuote::from_selection(
+                "plot(1:3)",
+                Some("analysis.R".into()),
+            )],
+        );
+        assert!(message.starts_with(
+            "Selected excerpt from workspace file `analysis.R`:\n> plot(1:3)\n\n这是什么意思?"
+        ));
+        assert!(!message.contains("AI source-edit instruction"));
     }
 
     #[test]

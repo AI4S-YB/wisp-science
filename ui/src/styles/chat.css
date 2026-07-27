@@ -1070,6 +1070,8 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .sidechat-answer.error { color: var(--err); }
 .sidechat-thinking { color: var(--text-faint); font-size: 13px; }
 .sidechat-composer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--border); background: var(--bg-app); }
+.sidechat-quotes { flex-direction: column; align-items: stretch; flex-wrap: nowrap; max-height: 132px; margin: 0 0 8px; padding: 2px 4px 2px 0; overflow-y: auto; }
+.sidechat-quotes .composer-attachment-row { width: 100%; min-height: 44px; box-sizing: border-box; }
 .sidechat-composer textarea { width: 100%; min-height: 78px; max-height: 180px; resize: vertical; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; padding: 10px 11px; outline: none; }
 .sidechat-composer textarea:focus { border-color: color-mix(in srgb, var(--clay) 45%, var(--border-strong)); box-shadow: 0 0 0 3px var(--focus-ring); }
 .sidechat-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
