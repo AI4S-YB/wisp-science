@@ -1,4 +1,4 @@
-use crate::app_support::SessionTransferMode;
+use crate::app_support::{selection_targets_center_file, SessionTransferMode};
 use crate::i18n::{self, Locale};
 use crate::window_capture_escape;
 use leptos::*;
@@ -357,21 +357,23 @@ pub fn build(
             // offers everything in one menu instead of stacking popups.
             let source = closest(&target, "[data-file-path]")
                 .and_then(|el| el.get_attribute("data-file-path"))
-                .unwrap_or_default();
-            let quote_label = if source.as_str() == center_file.unwrap_or_default() {
+                .filter(|source| !source.is_empty());
+            let quote_label = if selection_targets_center_file(source.as_deref(), center_file) {
                 i18n::t(locale, "selection.ask_ai")
             } else {
                 i18n::t(locale, "selection.add_to_chat")
             };
+            let quote_payload = format!("{}\u{1e}{text}", source.as_deref().unwrap_or_default());
             return Some(CtxMenu {
                 x,
                 y,
                 items: vec![
                     item("copy", i18n::t(locale, "ctx.copy"), text.clone()),
+                    item("quoteSelection", quote_label, quote_payload.clone()),
                     item(
-                        "quoteSelection",
-                        quote_label,
-                        format!("{source}\u{1e}{text}"),
+                        "quoteSelectionSideChat",
+                        i18n::t(locale, "selection.quote_side_chat"),
+                        quote_payload,
                     ),
                     item(
                         "explainSelection",

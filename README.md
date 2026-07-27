@@ -278,6 +278,12 @@ keeps it highlighted and asks whether to add the crop to chat while staying in
 the preview, or add it and jump back to the conversation. The crop is not
 attached until you choose an action.
 
+Text selected in a conversation or file preview can be added to the main
+composer, quoted into **Side chat**, or explained immediately in Side chat.
+Quoting opens the Side chat tab with a removable reference card and waits for
+your question before sending. Side chat remains a read-only, temporary Q&A
+surface and does not alter the main conversation or edit workspace files.
+
 `@` also reaches compute. Naming an execution context (`@CPU1`) points the turn
 at that server and turns it on for the conversation, so you do not have to
 enable it in the compute menu first — local compute needs no toggle and is
