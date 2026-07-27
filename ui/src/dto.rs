@@ -906,7 +906,6 @@ pub(crate) struct AcpPermissionRequest {
 pub(crate) struct SessionInfo {
     pub(crate) id: String,
     pub(crate) title: String,
-    #[allow(dead_code)]
     pub(crate) ts: i64,
     #[serde(default)]
     pub(crate) folder_id: Option<String>,
@@ -1105,7 +1104,6 @@ pub(crate) struct Artifact {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct FileContent {
     pub(crate) path: String,
     pub(crate) mime: String,
@@ -1231,7 +1229,6 @@ pub(crate) struct ModelProfile {
     pub(crate) api_url: String,
     #[serde(default)]
     pub(crate) model: String,
-    #[allow(dead_code)]
     #[serde(default)]
     pub(crate) has_api_key: bool,
     #[serde(default)]
@@ -1326,7 +1323,6 @@ pub(crate) struct RecentSession {
     pub(crate) id: String,
     pub(crate) project_id: String,
     pub(crate) title: String,
-    #[allow(dead_code)]
     #[serde(default)]
     pub(crate) ts: i64,
     #[serde(default)]
@@ -1488,7 +1484,6 @@ fn default_model_context_window() -> u64 {
 }
 
 #[derive(Deserialize, Clone)]
-#[allow(dead_code)]
 pub(crate) struct MemoryFile {
     pub(crate) name: String,
     pub(crate) preview: String,

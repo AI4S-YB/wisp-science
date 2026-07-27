@@ -49,7 +49,6 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-meta { color: var(--text-faint); font-size: 13px; }
 .proj-card .pc-when { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
 .proj-card .pc-sync-state { color: var(--ok); font-size: 11px; font-weight: 600; }
-.proj-card .pc-hint { color: var(--text-muted); font-size: 13px; line-height: 1.45; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-card.proj-recent { align-items: center; }
 .proj-card.proj-recent .pc-name-row { margin-top: 0; }
 .pc-dot { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
