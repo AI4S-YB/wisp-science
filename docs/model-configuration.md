@@ -15,7 +15,19 @@ agent**. External coding agents (Codex / Claude via ACP) are configured under
 **Settings → Models → ACP Agents** — see [ACP Agents](acp-agents.md). Do not put
 an ACP launch command in an HTTP model profile.
 
-For image workflows, mark an API profile as **Supports image input** and optionally **Use for image analysis**. Image attachments are sent directly to a visual input model. When the input model is non-visual, Wisp first calls the assigned vision model and passes its text observations to the input model. `view_image` and image reads use the assigned vision model in the same way. Raster image input supports PNG, JPEG, GIF, and WebP files up to 5 MiB.
+For image workflows, mark an API profile as **Supports image input** and
+optionally **Use for image analysis**. Image attachments are sent directly to a
+visual input model. When the input model is non-visual, Wisp first calls the
+assigned vision model and passes its text observations to the input model.
+`view_image` and image reads use the assigned vision model in the same way.
+Raster image input supports PNG, JPEG, GIF, and WebP files up to 5 MiB.
+
+When switching a populated conversation to a non-visual model, the confirmation
+explains that previously sent images will be omitted from future requests to
+that model. This substitution happens only while preparing the API request; it
+does not delete or rewrite the saved conversation. A new image attached after
+the switch is analyzed through the assigned vision model. Without an assigned
+vision model, Wisp rejects that new image before starting the main model turn.
 
 Image generation is a separate model role. Create an OpenAI profile with model
 ID `gpt-image-2`, then enable **Use for image generation**. The built-in
@@ -35,6 +47,13 @@ uses the assigned image-generation profile to create PNG if present. Otherwise
 it uses the same SVG -> PNG preview -> SVG correction workflow and delivers SVG
 under `figures/`. Image-only profiles do not appear in chat, Reviewer,
 specialist, delegation, or side-chat model pickers.
+
+An image-generation assignment does not also provide image analysis.
+`gpt-image-2` may consume an input image for editing, but its Image API returns
+generated pixels rather than the textual observations required by `view_image`
+and a non-visual chat model. Configure a chat/Responses profile with **Supports
+image input** and **Use for image analysis** for that role; it may use the same
+provider credentials, but it remains a separate API capability.
 
 The **Valid** action checks `gpt-image-2` access through OpenAI's model metadata
 endpoint. It does not send the image-only model to Responses/Chat Completions

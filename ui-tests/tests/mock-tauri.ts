@@ -205,8 +205,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       max_tokens: 4096,
       context_window: 128000,
       reasoning_effort: "",
-      supports_vision: true,
-      use_for_vision: true,
+      supports_vision: query.get("mockTextOnlyModel") !== "1",
+      use_for_vision: query.get("mockTextOnlyModel") !== "1",
       use_for_image_generation: false,
     },
     {
