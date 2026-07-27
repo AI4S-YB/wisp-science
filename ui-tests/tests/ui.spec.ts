@@ -1275,6 +1275,24 @@ test("workspace file context menu attaches its path to the composer", async ({ p
   await expect(composer(page)).toHaveValue("");
 });
 
+test("workspace file can be registered as an artifact", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  const file = page.locator('.fb-row[data-workspace-path="report.csv"]');
+  await expect(file).toBeVisible();
+
+  await file.click({ button: "right" });
+  await page.getByRole("button", { name: "Register as artifact" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "register_artifact")).toMatchObject({
+    path: "report.csv",
+  });
+  await expect(page.locator("#copy-toast")).toHaveText("Registered report.csv as an artifact");
+
+  await page.getByRole("button", { name: /^Artifacts/ }).click();
+  await expect(page.locator('.rp-tile[data-artifact-name="report.csv"]')).toBeVisible();
+});
+
 test("Files creates, renames, deletes, and refreshes local entries", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();
@@ -1986,6 +2004,14 @@ test("project research graph opens from the sidebar in list and graph views", as
   await expect(modal.getByTestId("research-graph-list")).toBeVisible();
   await expect(modal.getByText("Use DESeq2 over edgeR")).toBeVisible();
   await expect(modal).toContainText("applies to");
+  await expect(modal).toContainText("confidence: high");
+  await modal.getByRole("button", { name: "cites: Love et al. 2014" }).click();
+  const edgeDetail = modal.getByTestId("research-edge-detail");
+  await expect(edgeDetail).toContainText("Use DESeq2 over edgeR → Love et al. 2014");
+  await expect(edgeDetail).toContainText("confidence");
+  await expect(edgeDetail).toContainText("high");
+  await edgeDetail.getByRole("button", { name: "Close relationship details" }).click();
+  await expect(edgeDetail).toHaveCount(0);
   await expect.poll(async () => (await invokeArgsList(page, "get_research_graph")).length).toBe(1);
 
   await modal.getByRole("tab", { name: "Graph", exact: true }).click();
@@ -1993,6 +2019,10 @@ test("project research graph opens from the sidebar in list and graph views", as
   await expect(canvas).toBeVisible();
   await expect(canvas.locator(".research-graph-node")).toHaveCount(5);
   await expect(canvas.locator(".research-graph-edge")).toHaveCount(3);
+  const metadataEdge = canvas.getByRole("button", { name: /cites.*confidence: high/ });
+  await expect(metadataEdge.locator("title")).toContainText("evidence: Methods section");
+  await metadataEdge.click();
+  await expect(modal.getByTestId("research-edge-detail")).toContainText("Methods section");
 
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);

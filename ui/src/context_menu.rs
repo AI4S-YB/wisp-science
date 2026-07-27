@@ -530,6 +530,11 @@ pub fn build(
                         path.clone(),
                     ),
                     item(
+                        "registerWorkspaceArtifact",
+                        i18n::t(locale, "ctx.register_artifact"),
+                        path.clone(),
+                    ),
+                    item(
                         "downloadFile",
                         i18n::t(locale, "artifact.download"),
                         path.clone(),

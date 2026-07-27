@@ -1561,8 +1561,6 @@ pub(crate) struct ResearchEdge {
     pub(crate) source_id: String,
     pub(crate) target_id: String,
     pub(crate) relation: String,
-    // Carried through so the wire shape matches the store; nothing renders it yet.
-    #[allow(dead_code)]
     pub(crate) metadata_json: String,
 }
 

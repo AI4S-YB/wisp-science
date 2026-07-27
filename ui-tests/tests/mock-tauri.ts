@@ -684,7 +684,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       { id: "artifact:h1", kind: "artifact", title: "deseq2_results.tsv", ref_id: "h1", metadata_json: "{}" },
     ],
     edges: [
-      { source_id: "d1", target_id: "p1", relation: "cites", metadata_json: "{}" },
+      { source_id: "d1", target_id: "p1", relation: "cites", metadata_json: JSON.stringify({ confidence: "high", evidence: "Methods section" }) },
       { source_id: "d1", target_id: "a1", relation: "applies to", metadata_json: "{}" },
       { source_id: "run:r1", target_id: "artifact:h1", relation: "produced", metadata_json: "{}" },
     ],
@@ -2043,6 +2043,25 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               path: `uploads/${arg("filename") ?? "upload.csv"}`,
               ts: 1,
             };
+          case "register_artifact": {
+            const path = String(arg("path") ?? "");
+            const name = path.split(/[\\/]/).pop() || "file";
+            const artifact = {
+              id: `art-registered-${artifacts.length + 1}`,
+              name,
+              kind: name.toLowerCase().endsWith(".csv") ? "text/csv" : "application/octet-stream",
+              path: `/mock/root/${path}`,
+              ts: Math.floor(Date.now() / 1000),
+              project_id: activeProjectId,
+              project_name: activeProjectId === "other" ? "Other project" : project.name,
+              session_id: "s-current",
+              session_title: "Current analysis",
+              size_bytes: null,
+              origin: "artifact",
+            };
+            artifacts.unshift(artifact);
+            return artifact;
+          }
           case "set_settings": {
             const next = plain(arg("settings") ?? {});
             mockPetEnabled = Boolean(next.pet_enabled);
