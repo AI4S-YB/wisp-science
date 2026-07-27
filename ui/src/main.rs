@@ -9724,7 +9724,25 @@ fn App() -> impl IntoView {
                                                             }
                                                         }).collect_view()
                                                     } else {
-                                                        file_entries.get().into_iter().map(|e| {
+                                                        let entries = file_entries.get();
+                                                        if entries.is_empty() {
+                                                            // Nothing listed also covers "the tab
+                                                            // was opened before a project was", so
+                                                            // the whole block re-runs the sidebar
+                                                            // Files action instead of just saying
+                                                            // the folder is empty.
+                                                            return view! {
+                                                                <button type="button" class="rp-empty rp-empty-clickable"
+                                                                    title=t(loc, "right.browse_files")
+                                                                    on:click=open_files>
+                                                                    <span class="rp-empty-icon"></span>
+                                                                    <div class="rp-empty-title">{t(loc, "right.no_file.title")}</div>
+                                                                    <p>{t(loc, "right.no_file.body")}</p>
+                                                                    <span class="rp-empty-action">{t(loc, "right.browse_files")}</span>
+                                                                </button>
+                                                            }.into_view();
+                                                        }
+                                                        entries.into_iter().map(|e| {
                                                             let name = e.name.clone();
                                                             let full = join_path(&file_cwd.get(), &name);
                                                             if e.is_dir {
