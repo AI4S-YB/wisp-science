@@ -505,8 +505,14 @@ valuable suggestions:
   worker, with POSIX-only `resource`/`/proc`/`SIGINT` machinery dropped for
   Windows.
 
-See `LICENSE` (Apache-2.0). Upstream notices are preserved in their respective
-directories.
+## License
+
+Except where otherwise noted, Wisp Science is licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE). Third-party and vendored
+components remain under their respective licenses; upstream notices are
+preserved in their directories, and the Apache License 2.0 text is retained in
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt). Earlier releases remain
+available under the license published with those releases.
 
 ## Citation
 

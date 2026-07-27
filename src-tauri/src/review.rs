@@ -22,8 +22,8 @@ pub enum ReviewBackendConfig {
     },
 }
 
-/// Reviewer system prompt. Self-authored (an Apache-2.0 repo must not bundle
-/// the upstream proprietary REVIEWER prompt) — captures the same job: trace the
+/// Reviewer system prompt. Self-authored (the repository must not bundle the
+/// upstream proprietary REVIEWER prompt) — captures the same job: trace the
 /// transcript, don't recompute; a finding needs transcript evidence.
 pub const REVIEWER_RUBRIC: &str = "\
 You are a REVIEWER. You are given a transcript of another agent's working \

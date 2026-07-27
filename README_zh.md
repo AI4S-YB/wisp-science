@@ -347,7 +347,13 @@ Assistant 对话形式打开。打开时会把内置的 `assets_*.tar.gz` 解压
 - `kernels/kernel_worker.py` 协议改编自上游 operon kernel worker；为支持
   Windows，移除了仅适用于 POSIX 的 `resource`、`/proc` 和 `SIGINT` 机制。
 
-许可证见 `LICENSE`（Apache-2.0）。上游声明保留在各自目录中。
+## 许可证
+
+除另有说明外，Wisp Science 采用
+[GNU Affero 通用公共许可证 v3.0（仅此版本）](LICENSE)。第三方及 vendored
+组件继续适用各自的许可证；上游声明保留在对应目录中，Apache License 2.0
+全文保留于 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt)。更早发布的
+版本继续适用其发布时附带的许可证。
 
 ## 引用
 

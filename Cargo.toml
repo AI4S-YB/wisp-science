@@ -20,7 +20,7 @@ default-members = ["crates/wisp-cli"]
 version = "0.25.0"
 edition = "2021"
 rust-version = "1.88"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
 authors = ["wisp-science contributors"]
 repository = "https://github.com/xuzhougeng/wisp-science"
 

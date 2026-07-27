@@ -3,7 +3,7 @@ name = "wisp-ui"
 description = "wisp-science desktop UI (Leptos CSR, built by Trunk, loaded in the Tauri WebView2)."
 version = "0.25.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
 
 [[bin]]
 name = "wisp-ui"
