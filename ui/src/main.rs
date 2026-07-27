@@ -2261,6 +2261,13 @@ fn App() -> impl IntoView {
                     status_cb.set(t(locale_cb.get(), "status.review_done"));
                 }
             }
+            // Deliberately ignored, not forgotten: `edit` emits Diff from
+            // `before()` — ahead of the write, and even when the edit then
+            // fails — and emits FileChanged for the same path from `run()`
+            // once the bytes land. Refreshing on Diff would just reload the
+            // pre-edit file. It stays in the enum because dropping a variant
+            // from a tagged enum breaks deserialization of the events the
+            // backend still sends.
             AgentEvent::Diff { .. } => {}
             AgentEvent::FileChanged { path, .. } => {
                 let root = project_info_cb.get_untracked().map(|project| project.root);
