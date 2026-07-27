@@ -1,6 +1,6 @@
 use crate::app_support::{
     allow_drop, bucket_sessions_by_date, compose_icon, drag_session_id, load_view_pref,
-    save_view_pref, start_session_drag, AvailableUpdate, FolderModal,
+    nest_branch_sessions, save_view_pref, start_session_drag, AvailableUpdate, FolderModal,
 };
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
@@ -247,12 +247,16 @@ pub(super) fn Sidebar(
                     if !pinned.is_empty() {
                         list.retain(|s| !s.pinned);
                     }
+                    // Branch sessions (#531) are lifted out of the flat list and drawn
+                    // nested under the session they were forked from, in whatever group
+                    // that session lands in.
+                    let (list, branch_kids) = nest_branch_sessions(&list);
                     let group = group_by.get();
                     // Whether any folder exists — used to keep the "ungrouped" drop
                     // zone available (so a session can be dragged out of a folder) without
                     // reading drag_session here, which would rebuild the whole list mid-drag.
                     let has_folders = !folder_list.is_empty();
-                    let make = move |s: &SessionInfo| {
+                    let item = move |s: &SessionInfo| {
                         let id = s.id.clone();
                         let id_active = id.clone();
                         let id_attr = id.clone();
@@ -319,6 +323,20 @@ pub(super) fn Sidebar(
                                         ev.stop_propagation();
                                         show_actions.call((ev, id_actions.clone(), title_actions.clone(), pinned));
                                     }>"⋯"</button>
+                            </div>
+                        }.into_view()
+                    };
+                    let make = move |s: &SessionInfo| {
+                        let kids = branch_kids.get(&s.id).cloned().unwrap_or_default();
+                        if kids.is_empty() {
+                            return item(s);
+                        }
+                        view! {
+                            <div class="side-branch-group">
+                                {item(s)}
+                                <div class="side-branch-kids">
+                                    {kids.iter().map(&item).collect_view()}
+                                </div>
                             </div>
                         }.into_view()
                     };

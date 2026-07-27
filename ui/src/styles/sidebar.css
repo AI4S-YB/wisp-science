@@ -242,6 +242,7 @@ button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; 
   .sidebar .side-folder .gi { margin: 0; }
   .sidebar .side-folder-sessions { padding-left: 0; }
   .sidebar .side-folder-sessions .side-item { padding-left: 8px; }
+  .sidebar .side-branch-kids { margin-left: 0; padding-left: 4px; }
   .sidebar .side-foot { padding-top: 8px; }
   .sidebar .nav { gap: 4px; }
 }

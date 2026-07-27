@@ -674,6 +674,14 @@ impl Store {
         sqlx::query("CREATE INDEX IF NOT EXISTS ix_frames_folder ON frames(folder_id)")
             .execute(pool)
             .await?;
+        // Which session a branch was forked from, so the sidebar can nest it under
+        // its source. Deliberately NOT root_frame_id (that one cascades deletes) and
+        // NOT parent_frame_id (parent_frame_id = id is the "root session" marker).
+        if !Self::has_column(pool, "frames", "branched_from").await? {
+            sqlx::query("ALTER TABLE frames ADD COLUMN branched_from TEXT")
+                .execute(pool)
+                .await?;
+        }
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS execution_log (\

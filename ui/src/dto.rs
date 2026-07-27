@@ -956,6 +956,9 @@ pub(crate) struct SessionInfo {
     pub(crate) ts: i64,
     #[serde(default)]
     pub(crate) folder_id: Option<String>,
+    /// Source session this one was branched from; nested under it in the sidebar.
+    #[serde(default)]
+    pub(crate) branched_from: Option<String>,
     #[serde(default)]
     pub(crate) pinned: bool,
 }

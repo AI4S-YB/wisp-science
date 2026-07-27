@@ -11,6 +11,8 @@
     { id: "s1", title: "查找文献, FX-cell", ts: 1719900000, folder_id: "d1" },
     { id: "s2", title: "我确认下你你有什么skill", ts: 1719890000 },
     { id: "s3", title: "你能做啥", ts: 1719880000, pinned: true },
+    { id: "s4", title: "Branch: 换个思路再试一次", ts: 1719885000, branched_from: "s2" },
+    { id: "s5", title: "Branch: 再分一支", ts: 1719884000, branched_from: "s4" },
   ];
   const folders = [{ id: "d1", name: "Research" }];
   let libraryItems = [
