@@ -31,6 +31,8 @@ pub(super) async fn branch_session(
     let _project_activity = state.begin_project_activity(&ap.id)?;
     let id = create_session_frame(&state.store, &ap.id).await?;
     if let Some(source) = session_id.as_deref().filter(|s| !s.is_empty()) {
+        // Display-only lineage so the sidebar can nest this branch under its source.
+        let _ = state.store.set_session_branched_from(&id, source).await;
         let model_id = models::session_profile_id(&state.store, source).await;
         state
             .store
@@ -104,24 +106,26 @@ pub(super) async fn list_sessions_page(
     let mut items: Vec<SessionInfo> = pinned_rows
         .into_iter()
         .filter(|(id, ..)| !page_ids.contains(id))
-        .map(|(id, title, ts, folder_id)| SessionInfo {
+        .map(|(id, title, ts, folder_id, branched_from)| SessionInfo {
             running: running.contains(&id),
             pinned: true,
             id,
             title,
             ts,
             folder_id,
+            branched_from,
         })
         .collect();
     items.extend(
         rows.into_iter()
-            .map(|(id, title, ts, folder_id)| SessionInfo {
+            .map(|(id, title, ts, folder_id, branched_from)| SessionInfo {
                 running: running.contains(&id),
                 pinned: pinned_ids.contains(&id),
                 id,
                 title,
                 ts,
                 folder_id,
+                branched_from,
             }),
     );
     Ok(SessionPage {

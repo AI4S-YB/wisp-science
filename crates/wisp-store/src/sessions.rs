@@ -784,11 +784,11 @@ impl Store {
     /// Root frames that have at least one user turn, most recently active first,
     /// each with a title derived from its first user message. Used to populate
     /// the UI's session-history sidebar. Returns
-    /// `(frame_id, title, activity_at, folder_id)`.
+    /// `(frame_id, title, activity_at, folder_id, branched_from)`.
     pub async fn list_sessions(
         &self,
         project_id: &str,
-    ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+    ) -> Result<Vec<(String, String, i64, Option<String>, Option<String>)>> {
         self.list_sessions_page(project_id, None, usize::MAX).await
     }
 
@@ -800,14 +800,14 @@ impl Store {
         project_id: &str,
         cursor: Option<(i64, &str)>,
         limit: usize,
-    ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+    ) -> Result<Vec<(String, String, i64, Option<String>, Option<String>)>> {
         let cursor_ts = cursor.map(|value| value.0);
         let cursor_id = cursor.map(|value| value.1);
         let rows = sqlx::query(
             "SELECT * FROM ( \
                 SELECT f.id AS id, \
                     COALESCE((SELECT MAX(NULLIF(m.ts, 0)) FROM messages m WHERE m.frame_id = f.id), f.updated_at) AS activity_at, \
-                    f.title AS custom_title, f.folder_id AS folder_id, \
+                    f.title AS custom_title, f.folder_id AS folder_id, f.branched_from AS branched_from, \
                     (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
                 FROM frames f \
                 WHERE f.project_id = ? AND f.parent_frame_id = f.id \
@@ -829,26 +829,27 @@ impl Store {
             let id: String = row.try_get("id")?;
             let activity_at: i64 = row.try_get("activity_at")?;
             let folder_id: Option<String> = row.try_get("folder_id")?;
+            let branched_from: Option<String> = row.try_get("branched_from")?;
             let custom_title: Option<String> = row.try_get("custom_title")?;
             let first_user: Option<String> = row.try_get("first_user")?;
             let title = session_display_title(custom_title, first_user);
-            out.push((id, title, activity_at, folder_id));
+            out.push((id, title, activity_at, folder_id, branched_from));
         }
         Ok(out)
     }
 
     /// Pinned root frames for a project, newest first. Returned as
-    /// `(frame_id, title, activity_at, folder_id)` like `list_sessions_page`,
+    /// `(frame_id, title, activity_at, folder_id, branched_from)` like `list_sessions_page`,
     /// but unpaginated so the sidebar's "Pinned" section is complete regardless
     /// of how far the keyset history has been scrolled.
     pub async fn list_pinned_sessions(
         &self,
         project_id: &str,
-    ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+    ) -> Result<Vec<(String, String, i64, Option<String>, Option<String>)>> {
         let rows = sqlx::query(
             "SELECT f.id AS id, \
                 COALESCE((SELECT MAX(NULLIF(m.ts, 0)) FROM messages m WHERE m.frame_id = f.id), f.updated_at) AS activity_at, \
-                f.title AS custom_title, f.folder_id AS folder_id, \
+                f.title AS custom_title, f.folder_id AS folder_id, f.branched_from AS branched_from, \
                 (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id AND COALESCE(f.pinned, 0) = 1 \
@@ -863,6 +864,7 @@ impl Store {
             let id: String = row.try_get("id")?;
             let activity_at: i64 = row.try_get("activity_at")?;
             let folder_id: Option<String> = row.try_get("folder_id")?;
+            let branched_from: Option<String> = row.try_get("branched_from")?;
             let custom_title: Option<String> = row.try_get("custom_title")?;
             let first_user: Option<String> = row.try_get("first_user")?;
             out.push((
@@ -870,6 +872,7 @@ impl Store {
                 session_display_title(custom_title, first_user),
                 activity_at,
                 folder_id,
+                branched_from,
             ));
         }
         Ok(out)
@@ -1187,6 +1190,17 @@ impl Store {
             anyhow::bail!("Folder not found");
         }
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Record which session a branch was forked from. Purely a display link for
+    /// the sidebar's nesting — it does not affect loading, deleting, or context.
+    pub async fn set_session_branched_from(&self, frame_id: &str, source_id: &str) -> Result<()> {
+        sqlx::query("UPDATE frames SET branched_from=? WHERE id=?")
+            .bind(source_id)
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

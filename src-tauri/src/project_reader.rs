@@ -134,7 +134,7 @@ pub async fn read_references(
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Project '{project_id}' no longer exists."))?;
-        for (id, title, _, _) in store
+        for (id, title, ..) in store
             .list_sessions(project_id)
             .await
             .map_err(|error| error.to_string())?

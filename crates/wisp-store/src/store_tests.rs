@@ -1004,7 +1004,7 @@ async fn session_history_and_outline_use_message_times() {
     assert_eq!(
         sessions
             .iter()
-            .map(|(id, _, activity_at, _)| (id.as_str(), *activity_at))
+            .map(|(id, _, activity_at, ..)| (id.as_str(), *activity_at))
             .collect::<Vec<_>>(),
         [("older", 310), ("newer", 210)]
     );
@@ -1043,6 +1043,40 @@ async fn session_pages_are_stable_when_timestamps_match() {
         .map(|row| row.0.as_str())
         .collect::<Vec<_>>();
     assert_eq!(ids, vec!["c", "b", "a"]);
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn branched_from_survives_listing() {
+    let tmp = std::env::temp_dir().join(format!("wisp_branched_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for id in ["main", "fork"] {
+        store.create_frame(id, "p", "OPERON", "m").await.unwrap();
+        store
+            .append_message(id, 1, &Message::user(id))
+            .await
+            .unwrap();
+    }
+    store
+        .set_session_branched_from("fork", "main")
+        .await
+        .unwrap();
+
+    let listed = store.list_sessions("p").await.unwrap();
+    let source = |id: &str| {
+        listed
+            .iter()
+            .find(|row| row.0 == id)
+            .map(|row| row.4.clone())
+            .unwrap()
+    };
+    assert_eq!(source("fork").as_deref(), Some("main"));
+    assert_eq!(source("main"), None);
+
+    store.set_session_pinned("fork", "p", true).await.unwrap();
+    let pinned = store.list_pinned_sessions("p").await.unwrap();
+    assert_eq!(pinned[0].4.as_deref(), Some("main"));
     let _ = std::fs::remove_file(tmp);
 }
 

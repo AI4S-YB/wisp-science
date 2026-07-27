@@ -705,6 +705,9 @@ struct SessionInfo {
     ts: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     folder_id: Option<String>,
+    /// Source session this one was branched from; the sidebar nests on it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branched_from: Option<String>,
     running: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,

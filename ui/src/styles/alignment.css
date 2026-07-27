@@ -106,6 +106,9 @@
 .folder-actions { position: static; flex: 0 0 auto; transform: none; margin: -3px -5px -3px 0; }
 .side-folder-sessions { display: flex; flex-direction: column; gap: 1px; padding-left: 12px; }
 .side-folder-sessions .side-item { padding-left: 18px; }
+/* Branch sessions nested under the session they were forked from (#531). */
+.side-branch-group { display: flex; flex-direction: column; gap: 1px; }
+.side-branch-kids { display: flex; flex-direction: column; gap: 1px; margin-left: 12px; padding-left: 8px; border-left: 1px solid var(--border); }
 .side-ungrouped { display: flex; flex-direction: column; gap: 1px; min-height: 24px; border-radius: 8px; border: 1px solid transparent; }
 .side-ungrouped.drop-target { background: var(--clay-soft); border-color: var(--clay); }
 .side-item.ses.dragging { opacity: .45; cursor: grabbing; }

@@ -5859,6 +5859,98 @@ pub(super) fn refresh_folders(folders: RwSignal<Vec<FolderInfo>>) {
     });
 }
 
+/// Split the sidebar list into top-level sessions plus, per session id, the
+/// branches forked from it — the sidebar draws those nested underneath (#531).
+///
+/// A branch only nests when its source is in the same visible list *and* the
+/// same folder; otherwise it stays top-level, so nothing silently disappears
+/// when the source is on an older page or was dragged elsewhere. Branches of
+/// branches flatten onto the topmost visible source: one level of indent only.
+pub(super) fn nest_branch_sessions(
+    list: &[SessionInfo],
+) -> (Vec<SessionInfo>, HashMap<String, Vec<SessionInfo>>) {
+    let by_id: HashMap<&str, &SessionInfo> =
+        list.iter().map(|s| (s.id.as_str(), s)).collect();
+    let visible_source = |s: &SessionInfo| -> Option<String> {
+        let mut cur = s;
+        let mut hops = 0;
+        loop {
+            let Some(src) = cur.branched_from.as_deref().and_then(|id| by_id.get(id)) else {
+                break;
+            };
+            if src.folder_id != cur.folder_id {
+                return None;
+            }
+            cur = src;
+            hops += 1;
+            // ponytail: hop cap is the cycle guard; real branch chains are short.
+            if hops > 16 {
+                return None;
+            }
+        }
+        (cur.id != s.id).then(|| cur.id.clone())
+    };
+    let mut top = Vec::new();
+    let mut branches: HashMap<String, Vec<SessionInfo>> = HashMap::new();
+    for s in list {
+        match visible_source(s) {
+            Some(source) => branches.entry(source).or_default().push(s.clone()),
+            None => top.push(s.clone()),
+        }
+    }
+    (top, branches)
+}
+
+#[cfg(test)]
+mod branch_nesting_tests {
+    use super::*;
+
+    fn ses(id: &str, branched_from: Option<&str>, folder: Option<&str>) -> SessionInfo {
+        SessionInfo {
+            id: id.into(),
+            title: id.into(),
+            ts: 0,
+            folder_id: folder.map(Into::into),
+            branched_from: branched_from.map(Into::into),
+            pinned: false,
+        }
+    }
+
+    #[test]
+    fn branches_nest_under_their_visible_source() {
+        let list = vec![
+            ses("main", None, None),
+            ses("b1", Some("main"), None),
+            ses("b2", Some("b1"), None),
+            ses("other", None, None),
+        ];
+        let (top, branches) = nest_branch_sessions(&list);
+        assert_eq!(
+            top.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["main", "other"]
+        );
+        // Branch-of-a-branch flattens onto the topmost visible source.
+        assert_eq!(
+            branches["main"].iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["b1", "b2"]
+        );
+    }
+
+    #[test]
+    fn branch_stays_top_level_when_source_is_absent_or_elsewhere() {
+        let list = vec![
+            ses("orphan", Some("gone"), None),
+            ses("main", None, None),
+            ses("moved", Some("main"), Some("f1")),
+            ses("cycle-a", Some("cycle-b"), None),
+            ses("cycle-b", Some("cycle-a"), None),
+        ];
+        let (top, branches) = nest_branch_sessions(&list);
+        assert!(branches.is_empty());
+        assert_eq!(top.len(), list.len());
+    }
+}
+
 pub(super) fn bucket_sessions_by_date(
     list: &[SessionInfo],
 ) -> (Vec<SessionInfo>, Vec<SessionInfo>) {
