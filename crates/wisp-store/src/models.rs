@@ -76,7 +76,22 @@ pub struct MessageResourceLink {
     pub mime_type: String,
     pub status: String,
     pub error: Option<String>,
+    pub created_artifact: bool,
+    pub created_version: bool,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileUndo {
+    pub frame_id: String,
+    pub user_message_seq: i64,
+    pub path: String,
+    pub before_exists: bool,
+    pub before_snapshot_path: Option<String>,
+    pub before_checksum: Option<String>,
+    pub after_checksum: Option<String>,
+    pub reversible: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]

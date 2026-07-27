@@ -23,6 +23,7 @@ mod resources;
 mod runs;
 pub mod secrets;
 mod sessions;
+mod turn_undo;
 
 pub use acp_sessions::AcpSessionBinding;
 pub use agent_workflow_attempts::{
@@ -84,6 +85,7 @@ const FRAME_SEEN_MIGRATION: &str = "0022_frame_seen";
 const SESSION_PINNED_MIGRATION: &str = "0023_session_pinned";
 const CODEX_IMPORTS_MIGRATION: &str = "0024_codex_imports";
 const EXTERNAL_SESSION_CACHE_MIGRATION: &str = "0025_external_session_cache";
+const TURN_FILE_UNDO_MIGRATION: &str = "0026_turn_file_undo";
 
 #[derive(Clone)]
 pub struct Store {
@@ -354,6 +356,35 @@ impl Store {
             .await?;
             Self::record_migration(pool, EXTERNAL_SESSION_CACHE_MIGRATION).await?;
         }
+        if !Self::migration_applied(pool, TURN_FILE_UNDO_MIGRATION).await? {
+            Self::add_columns_if_missing(
+                pool,
+                "message_resource_links",
+                &[
+                    ("created_artifact", "INTEGER NOT NULL DEFAULT 0"),
+                    ("created_version", "INTEGER NOT NULL DEFAULT 0"),
+                ],
+            )
+            .await?;
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS turn_file_undo (\
+                 frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+                 user_message_seq INTEGER NOT NULL, path TEXT NOT NULL, \
+                 before_exists INTEGER NOT NULL, before_snapshot_path TEXT, \
+                 before_checksum TEXT, after_checksum TEXT, reversible INTEGER NOT NULL, \
+                 reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, \
+                 PRIMARY KEY(frame_id,user_message_seq,path))",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS ix_turn_file_undo_turn \
+                 ON turn_file_undo(frame_id,user_message_seq)",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, TURN_FILE_UNDO_MIGRATION).await?;
+        }
         Ok(())
     }
 
@@ -559,7 +590,8 @@ impl Store {
              artifact_id TEXT REFERENCES artifacts(id) ON DELETE SET NULL, \
              artifact_version_id TEXT REFERENCES artifact_versions(id) ON DELETE SET NULL, \
              display_name TEXT NOT NULL, resource_kind TEXT NOT NULL, mime_type TEXT NOT NULL, \
-             status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL, \
+             status TEXT NOT NULL, error TEXT, created_artifact INTEGER NOT NULL DEFAULT 0, \
+             created_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, \
              UNIQUE(frame_id,message_seq,ordinal))",
         )
         .execute(pool)

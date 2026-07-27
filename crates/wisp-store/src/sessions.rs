@@ -50,6 +50,13 @@ async fn delete_session_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -
     .bind(frame_id)
     .execute(&mut **tx)
     .await?;
+    sqlx::query(
+        "DELETE FROM turn_file_undo \
+         WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+    )
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
 
     sqlx::query(
         "DELETE FROM research_edges WHERE source_id IN (\
@@ -413,6 +420,10 @@ impl Store {
             .bind(frame_id)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM turn_file_undo WHERE frame_id=?")
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
         sqlx::query("DELETE FROM messages WHERE frame_id=?")
             .bind(frame_id)
             .execute(&self.pool)
@@ -434,35 +445,61 @@ impl Store {
 
     /// Drop persisted turns after `keep` (seq is 1-based; keep=3 retains seq 1..=3).
     pub async fn truncate_messages(&self, frame_id: &str, keep: i64) -> Result<()> {
-        sqlx::query("DELETE FROM message_resource_links WHERE frame_id=? AND message_seq>?")
-            .bind(frame_id)
-            .bind(keep)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query(
-            "DELETE FROM session_ui_events WHERE frame_id=? AND seq > COALESCE((\
-             SELECT MAX(seq) FROM session_ui_events WHERE frame_id=? \
-             AND json_extract(event_json,'$.kind')='MessageBoundary' \
-             AND CAST(json_extract(event_json,'$.seq') AS INTEGER)<=?), 0)",
-        )
-        .bind(frame_id)
-        .bind(frame_id)
-        .bind(keep)
-        .execute(&self.pool)
-        .await?;
-        sqlx::query("DELETE FROM session_reviews WHERE frame_id = ? AND message_seq > ?")
-            .bind(frame_id)
-            .bind(keep)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM messages WHERE frame_id = ? AND seq > ?")
-            .bind(frame_id)
-            .bind(keep)
-            .execute(&self.pool)
-            .await?;
+        let mut tx = self.begin_write().await?;
+        truncate_message_rows(&mut tx, frame_id, keep).await?;
+        tx.commit().await?;
         Ok(())
     }
 
+    pub(crate) async fn truncate_message_rows(
+        tx: &mut Transaction<'_, Sqlite>,
+        frame_id: &str,
+        keep: i64,
+    ) -> Result<()> {
+        truncate_message_rows(tx, frame_id, keep).await
+    }
+}
+
+async fn truncate_message_rows(
+    tx: &mut Transaction<'_, Sqlite>,
+    frame_id: &str,
+    keep: i64,
+) -> Result<()> {
+    sqlx::query("DELETE FROM message_resource_links WHERE frame_id=? AND message_seq>?")
+        .bind(frame_id)
+        .bind(keep)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(
+        "DELETE FROM session_ui_events WHERE frame_id=? AND seq > COALESCE((\
+             SELECT MAX(seq) FROM session_ui_events WHERE frame_id=? \
+             AND json_extract(event_json,'$.kind')='MessageBoundary' \
+             AND CAST(json_extract(event_json,'$.seq') AS INTEGER)<=?), 0)",
+    )
+    .bind(frame_id)
+    .bind(frame_id)
+    .bind(keep)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query("DELETE FROM session_reviews WHERE frame_id = ? AND message_seq > ?")
+        .bind(frame_id)
+        .bind(keep)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM messages WHERE frame_id = ? AND seq > ?")
+        .bind(frame_id)
+        .bind(keep)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM turn_file_undo WHERE frame_id = ? AND user_message_seq > ?")
+        .bind(frame_id)
+        .bind(keep)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+impl Store {
     /// Load all messages for a frame, ordered by sequence.
     pub async fn load_messages(&self, frame_id: &str) -> Result<Vec<Message>> {
         Ok(self

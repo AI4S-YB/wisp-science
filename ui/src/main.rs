@@ -786,6 +786,9 @@ fn App() -> impl IntoView {
     let conversation_outline_open = create_rw_signal(false);
     let conversation_outline_selected = create_rw_signal::<Option<usize>>(None);
     let busy = create_rw_signal(false);
+    let turn_undo_dialog = create_rw_signal::<Option<TurnUndoDialog>>(None);
+    let turn_undo_busy = create_rw_signal(false);
+    let turn_undo_error = create_rw_signal::<Option<String>>(None);
     // Interrupting a running turn (especially a language runtime) is not instant, so
     // keep track of the session whose Stop click is waiting for the backend.
     let stopping_session = create_rw_signal::<Option<String>>(None);
@@ -2954,6 +2957,131 @@ fn App() -> impl IntoView {
         }
         rewind_to_user_item(ui_index);
     };
+    let undo_message = Callback::new(move |assistant_ui_index: usize| {
+        if busy.get() || turn_undo_busy.get() {
+            return;
+        }
+        let list = items.get();
+        let Some(user_ui_index) = list
+            .get(..assistant_ui_index)
+            .and_then(|prefix| {
+                prefix
+                    .iter()
+                    .rposition(|item| matches!(item, ChatItem::User(_)))
+            })
+        else {
+            return;
+        };
+        let Some(ChatItem::User(text)) = list.get(user_ui_index) else {
+            return;
+        };
+        let Some(session_id) = active_session.get().filter(|id| !id.is_empty()) else {
+            return;
+        };
+        let Some(local_user_index) = user_message_index(&list, user_ui_index) else {
+            return;
+        };
+        let user_index = local_user_index
+            + transcript_pages
+                .with(|pages| pages.get(&session_id).copied())
+                .map_or(0, |page| page.user_offset);
+        let draft = composer_text_from_user_message(text);
+
+        turn_undo_busy.set(true);
+        turn_undo_error.set(None);
+        spawn_local(async move {
+            let args = to_value(&tauri_args::turn_undo(&session_id, user_index)).unwrap();
+            match invoke_checked("preview_turn_undo", args).await {
+                Ok(value) => {
+                    match serde_wasm_bindgen::from_value::<TurnUndoPreview>(value) {
+                        Ok(preview)
+                            if active_session.get_untracked().as_deref()
+                                == Some(session_id.as_str()) =>
+                        {
+                            turn_undo_dialog.set(Some(TurnUndoDialog {
+                                session_id,
+                                user_index,
+                                user_ui_index,
+                                draft,
+                                preview,
+                            }));
+                        }
+                        Ok(_) => {}
+                        Err(error) => show_toast(&error.to_string()),
+                    }
+                }
+                Err(error) => show_toast(&localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                )),
+            }
+            turn_undo_busy.set(false);
+        });
+    });
+    let confirm_turn_undo = Callback::new(move |_: ()| {
+        if turn_undo_busy.get() {
+            return;
+        }
+        let Some(dialog) = turn_undo_dialog.get() else {
+            return;
+        };
+        turn_undo_busy.set(true);
+        turn_undo_error.set(None);
+        spawn_local(async move {
+            let args =
+                to_value(&tauri_args::turn_undo(&dialog.session_id, dialog.user_index)).unwrap();
+            match invoke_checked("undo_turn", args).await {
+                Ok(_) => {
+                    if active_session.get_untracked().as_deref()
+                        == Some(dialog.session_id.as_str())
+                    {
+                        let updated = items.with_untracked(|rows| {
+                            rows.iter()
+                                .take(dialog.user_ui_index)
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        });
+                        items.set(updated.clone());
+                        transcripts.update(|all| {
+                            all.insert(dialog.session_id.clone(), updated);
+                        });
+                        conversation_outlines.update(|outlines| {
+                            if let Some(outline) = outlines.get_mut(&dialog.session_id) {
+                                outline.retain(|entry| entry.user_index < dialog.user_index);
+                            }
+                        });
+                        attachments.set(vec![]);
+                        composer_references.set(vec![]);
+                        composer_quotes.set(vec![]);
+                        input.set(dialog.draft);
+                        let artifact_args = to_value(
+                            &serde_json::json!({ "sessionId": dialog.session_id.clone() }),
+                        )
+                        .unwrap();
+                        if let Ok(value) =
+                            invoke_checked("list_artifacts", artifact_args).await
+                        {
+                            if let Ok(rows) =
+                                serde_wasm_bindgen::from_value::<Vec<ArtifactInfo>>(value)
+                            {
+                                db_artifacts.set(rows);
+                            }
+                        }
+                        refresh_session_history();
+                        focus_composer();
+                    }
+                    turn_undo_dialog.set(None);
+                }
+                Err(error) => {
+                    turn_undo_error.set(Some(localize_backend(
+                        locale.get_untracked(),
+                        &js_error_text(error),
+                    )));
+                }
+            }
+            turn_undo_busy.set(false);
+        });
+    });
     let branch_message = {
         let locale = locale;
         let status = status;
@@ -5783,6 +5911,12 @@ fn App() -> impl IntoView {
         }
 
         // --- overlays (most interrupting first) ---
+        if turn_undo_dialog.get().is_some() && !turn_undo_busy.get() {
+            ev.prevent_default();
+            turn_undo_dialog.set(None);
+            turn_undo_error.set(None);
+            return;
+        }
         if ui_confirm.get().is_some() {
             ev.prevent_default();
             ui_confirm.set(None);
@@ -7825,6 +7959,7 @@ fn App() -> impl IntoView {
                             use std::hash::{Hash, Hasher};
                             let arts_fp = artifacts.with(|a| artifacts_fingerprint(a));
                             let busy_now = busy.get();
+                            let native_session = active_acp_agent_id.get().is_none();
                             let outline = conversation_outline.get();
                             let user_offset = active_session
                                 .get()
@@ -7845,7 +7980,23 @@ fn App() -> impl IntoView {
                             items.with(|list| {
                             // Queued user turns live after the active turn and
                             // must not make its process group look historical.
-                            let last = trailing_queue_start(list).saturating_sub(1);
+                            let queue_start = trailing_queue_start(list);
+                            let last = queue_start.saturating_sub(1);
+                            let undo_index = (!busy_now
+                                && native_session
+                                && queue_start == list.len())
+                                .then(|| {
+                                    list.iter().enumerate().rev().find_map(|(index, item)| {
+                                        matches!(
+                                            item,
+                                            ChatItem::Assistant { text, .. }
+                                                if !text.trim().is_empty()
+                                                    && !text.starts_with("Error: ")
+                                        )
+                                        .then_some(index)
+                                    })
+                                })
+                                .flatten();
                             // Keep process layers separate while the turn runs;
                             // once complete, fold commentary + reasoning + tools
                             // into one activity summary before the final answer.
@@ -7902,6 +8053,7 @@ fn App() -> impl IntoView {
                                     let compact_assistant = commentary
                                         || (busy_now
                                             && matches!(&list[i], ChatItem::Assistant { .. }));
+                                    let can_undo = !compact_assistant && undo_index == Some(i);
                                     let timestamp = transcript_item_timestamp(
                                         list,
                                         i,
@@ -7913,6 +8065,7 @@ fn App() -> impl IntoView {
                                     if matches!(&list[i], ChatItem::Assistant { .. }) { fp ^= arts_fp; }
                                     fp ^= (commentary as u64) << 63;
                                     fp ^= (compact_assistant as u64) << 62;
+                                    fp ^= (can_undo as u64) << 61;
                                     fp ^= timestamp.unwrap_or_default() as u64;
                                     rows.push((i, fp, ThreadRow::Item {
                                         i,
@@ -7920,6 +8073,7 @@ fn App() -> impl IntoView {
                                         timestamp,
                                         commentary,
                                         compact_assistant,
+                                        can_undo,
                                     }));
                                     i += 1;
                                 }
@@ -7936,6 +8090,7 @@ fn App() -> impl IntoView {
                                     timestamp,
                                     commentary,
                                     compact_assistant,
+                                    can_undo,
                                 } => {
                                     let arts = artifacts.get_untracked();
                                     let sid = active_session.get().unwrap_or_default();
@@ -7968,7 +8123,7 @@ fn App() -> impl IntoView {
                                             data-user-index=data_user_index>
                                             {render_item(
                                                 i, &item, timestamp, &arts, on_artifact_select, on_file_link,
-                                                run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
+                                                run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), can_undo, edit_message, branch_message, undo_message, sid,
                                                 respond_confirm, on_resume, on_queue,
                                                 plan_mode_active, on_plan_decision,
                                             )}
@@ -10868,6 +11023,105 @@ fn App() -> impl IntoView {
             }.into_view()
         })}
 
+        {move || turn_undo_dialog.get().map(|dialog| {
+            let restore_files = dialog.preview.restore_files.clone();
+            let remove_files = dialog.preview.remove_files.clone();
+            let remove_artifacts = dialog.preview.remove_artifacts.clone();
+            let unsupported_files = dialog.preview.unsupported_files.clone();
+            let conflicts = dialog.preview.conflicts.clone();
+            let has_text_changes = !restore_files.is_empty() || !remove_files.is_empty();
+            let can_confirm = conflicts.is_empty();
+            view! {
+                <div class="overlay">
+                    <div
+                        class="modal confirm-modal turn-undo-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="turn-undo-title"
+                        data-testid="turn-undo-modal"
+                    >
+                        <h2 id="turn-undo-title">{move || t(locale.get(), "undo.title")}</h2>
+                        <div class="turn-undo-scroll">
+                            <p class="turn-undo-body">{move || t(locale.get(), "undo.body")}</p>
+                            <div class="turn-undo-warning">
+                                {move || t(locale.get(), "undo.binary_warning")}
+                            </div>
+                            {(!has_text_changes).then(|| view! {
+                                <p class="turn-undo-empty">
+                                    {move || t(locale.get(), "undo.no_text_changes")}
+                                </p>
+                            })}
+                            {(!restore_files.is_empty()).then(|| view! {
+                                <section class="turn-undo-section">
+                                    <h3>{move || t(locale.get(), "undo.restore_files")}</h3>
+                                    <ul>{restore_files.into_iter().map(|path| view! {
+                                        <li><code>{path}</code></li>
+                                    }).collect_view()}</ul>
+                                </section>
+                            })}
+                            {(!remove_files.is_empty()).then(|| view! {
+                                <section class="turn-undo-section">
+                                    <h3>{move || t(locale.get(), "undo.remove_files")}</h3>
+                                    <ul>{remove_files.into_iter().map(|path| view! {
+                                        <li><code>{path}</code></li>
+                                    }).collect_view()}</ul>
+                                </section>
+                            })}
+                            {(!remove_artifacts.is_empty()).then(|| view! {
+                                <section class="turn-undo-section">
+                                    <h3>{move || t(locale.get(), "undo.remove_artifacts")}</h3>
+                                    <ul>{remove_artifacts.into_iter().map(|name| view! {
+                                        <li><code>{name}</code></li>
+                                    }).collect_view()}</ul>
+                                </section>
+                            })}
+                            {(!unsupported_files.is_empty()).then(|| view! {
+                                <section class="turn-undo-section unsupported">
+                                    <h3>{move || t(locale.get(), "undo.unsupported_files")}</h3>
+                                    <ul>{unsupported_files.into_iter().map(|path| view! {
+                                        <li><code>{path}</code></li>
+                                    }).collect_view()}</ul>
+                                </section>
+                            })}
+                            {(!conflicts.is_empty()).then(|| view! {
+                                <section class="turn-undo-section conflicts">
+                                    <h3>{move || t(locale.get(), "undo.conflicts")}</h3>
+                                    <ul>{conflicts.into_iter().map(|path| view! {
+                                        <li><code>{path}</code></li>
+                                    }).collect_view()}</ul>
+                                </section>
+                            })}
+                            {move || turn_undo_error.get().map(|error| view! {
+                                <div class="turn-undo-error" role="alert">{error}</div>
+                            })}
+                        </div>
+                        <div class="row">
+                            <button
+                                disabled=move || turn_undo_busy.get()
+                                on:click=move |_| {
+                                    turn_undo_dialog.set(None);
+                                    turn_undo_error.set(None);
+                                }
+                            >
+                                {move || t(locale.get(), "settings.cancel")}
+                            </button>
+                            <button
+                                class="primary"
+                                disabled=move || turn_undo_busy.get() || !can_confirm
+                                on:click=move |_| confirm_turn_undo.call(())
+                            >
+                                {move || if turn_undo_busy.get() {
+                                    t(locale.get(), "undo.working")
+                                } else {
+                                    t(locale.get(), "undo.confirm")
+                                }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }.into_view()
+        })}
+
         {move || ui_confirm.get().map(|action| {
             let action_ok = action.clone();
             let message = match &action {
@@ -11361,6 +11615,7 @@ enum ThreadRow {
         timestamp: Option<i64>,
         commentary: bool,
         compact_assistant: bool,
+        can_undo: bool,
     },
     Steps {
         items: Vec<ChatItem>,
@@ -11937,8 +12192,10 @@ fn render_item(
     busy: ReadSignal<bool>,
     compact_assistant: bool,
     can_modify: bool,
+    can_undo: bool,
     on_edit: impl Fn(usize) + Clone + 'static,
     on_branch: impl Fn(usize) + Clone + 'static,
+    on_undo: Callback<usize>,
     session_id: String,
     on_approval: Callback<(String, bool, Option<String>, String)>,
     on_resume: Callback<usize>,
@@ -12014,6 +12271,8 @@ fn render_item(
                 on_artifact=on_artifact
                 on_file=on_file
                 on_copy=Callback::new(copy_text)
+                can_undo=can_undo
+                on_undo=on_undo
             />
         }.into_view(),
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),

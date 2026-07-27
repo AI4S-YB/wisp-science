@@ -69,6 +69,7 @@ mod ssh_guard;
 mod ssh_hosts;
 mod ssh_master;
 mod terminal_sessions;
+mod turn_undo;
 mod workspace_manifest;
 mod wsl_contexts;
 
@@ -4590,14 +4591,45 @@ async fn send_message_inner(
         (handle, tx)
     };
 
+    let undo_user_seq = if resume {
+        state
+            .store
+            .load_messages_with_seq(&frame_id)
+            .await
+            .ok()
+            .and_then(|messages| {
+                messages
+                    .into_iter()
+                    .rev()
+                    .find(|(_, message)| {
+                        message.role == wisp_llm::Role::User
+                            && message.tool_name.as_deref()
+                                != Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+                    })
+                    .map(|(seq, _)| seq)
+            })
+    } else {
+        Some(start_seq + 1)
+    };
     let (prov_handle, prov_tx) = {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<wisp_core::ProvenanceRecord>();
         let store = state.store.clone();
         let app_data = state.app_data.clone();
         let fid = frame_id.clone();
+        let undo_root = ap.root.clone();
         let handle = tokio::spawn(async move {
             let mut env_hash: Option<String> = None;
             while let Some(rec) = rx.recv().await {
+                if let Some(user_seq) = undo_user_seq {
+                    turn_undo::persist_provenance_changes(
+                        &store,
+                        &undo_root,
+                        &fid,
+                        user_seq,
+                        &rec.file_changes,
+                    )
+                    .await;
+                }
                 if rec.language != "r" && env_hash.is_none() {
                     env_hash = capture_env(&store, &app_data).await;
                 }
@@ -6080,6 +6112,8 @@ pub fn run() {
             project_commands::update_project,
             session_commands::load_session,
             session_commands::rewind_session,
+            turn_undo::preview_turn_undo,
+            turn_undo::undo_turn,
             skill_commands::list_skills,
             skill_commands::set_skill_tags,
             skill_commands::set_skills_enabled,

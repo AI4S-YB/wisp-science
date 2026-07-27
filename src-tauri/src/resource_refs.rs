@@ -372,10 +372,12 @@ async fn bind_resolved(
         .latest_artifact_version(&artifact_id)
         .await
         .map_err(|error| error.to_string())?;
-    let version_id = if let Some(version) =
-        current.filter(|version| version.checksum.as_deref() == Some(checksum.as_str()))
+    let created_artifact = current.is_none();
+    let (version_id, created_version) = if let Some(version) = current
+        .as_ref()
+        .filter(|version| version.checksum.as_deref() == Some(checksum.as_str()))
     {
-        version.id
+        (version.id.clone(), false)
     } else {
         let version_id = store
             .save_artifact(
@@ -392,7 +394,7 @@ async fn bind_resolved(
             .set_artifact_version_file_metadata(&version_id, bytes.len() as i64, &checksum)
             .await
             .map_err(|error| error.to_string())?;
-        version_id
+        (version_id, true)
     };
     Ok(MessageResourceLink {
         id: uuid::Uuid::new_v4().to_string(),
@@ -407,6 +409,8 @@ async fn bind_resolved(
         mime_type: resolved.mime_type,
         status: "ready".into(),
         error: None,
+        created_artifact,
+        created_version,
         created_at: chrono::Utc::now().timestamp(),
     })
 }
@@ -504,6 +508,8 @@ fn failed_link(frame_id: &str, resource: &MarkdownResource, error: String) -> Me
         mime_type: "application/octet-stream".into(),
         status: "unresolved".into(),
         error: Some(error),
+        created_artifact: false,
+        created_version: false,
         created_at: chrono::Utc::now().timestamp(),
     }
 }
