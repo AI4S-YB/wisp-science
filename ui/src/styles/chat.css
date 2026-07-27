@@ -139,6 +139,9 @@
 .plan-card-body { padding: 14px 16px; color: var(--text); font-size: 13px; line-height: 1.62; }
 .plan-card-body > :first-child { margin-top: 0; }
 .plan-card-body > :last-child { margin-bottom: 0; }
+.plan-card-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--bg-sunken); }
+.plan-card-actions button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 10.5px; cursor: pointer; }
+.plan-card-actions button.primary { border-color: var(--clay); background: var(--clay); color: var(--on-clay); }
 
 .topbar {
   position: relative; z-index: 20; display: flex; align-items: center; gap: 12px;

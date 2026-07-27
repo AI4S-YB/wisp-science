@@ -468,6 +468,97 @@ fn acp_plan_text(payload: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
+/// ACP has no flag marking a mode as "plans without executing"; agents name it
+/// themselves (`plan`, `plan_mode`, …), so match the id.
+fn is_plan_mode_id(id: &str) -> bool {
+    id.to_ascii_lowercase().contains("plan")
+}
+
+/// `(plan mode, mode to return to)` from a session's `availableModes`, or `None`
+/// for agents that expose no plan mode — the plan toggle stays hidden for those.
+fn plan_mode_pair(state: Option<&serde_json::Value>) -> Option<(String, String)> {
+    let ids: Vec<&str> = state?
+        .get("availableModes")?
+        .as_array()?
+        .iter()
+        .filter_map(|mode| mode.get("id")?.as_str())
+        .collect();
+    let plan = ids.iter().find(|id| is_plan_mode_id(id))?;
+    let exit = ids
+        .iter()
+        .find(|id| **id == "default")
+        .or_else(|| ids.iter().find(|id| !is_plan_mode_id(id)))?;
+    Some((plan.to_string(), exit.to_string()))
+}
+
+fn acp_current_mode_id(state: Option<&serde_json::Value>) -> Option<&str> {
+    state?.get("currentModeId")?.as_str()
+}
+
+#[cfg(test)]
+mod plan_mode_tests {
+    use super::plan_mode_pair;
+
+    fn state(ids: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "availableModes": ids.iter().map(|id| serde_json::json!({ "id": id })).collect::<Vec<_>>()
+        })
+    }
+
+    #[test]
+    fn pairs_plan_mode_with_the_mode_to_return_to() {
+        let modes = state(&["default", "plan", "acceptEdits"]);
+        assert_eq!(
+            plan_mode_pair(Some(&modes)),
+            Some(("plan".into(), "default".into()))
+        );
+        // No `default`: fall back to the first mode that is not a plan mode.
+        let modes = state(&["plan_mode", "yolo"]);
+        assert_eq!(
+            plan_mode_pair(Some(&modes)),
+            Some(("plan_mode".into(), "yolo".into()))
+        );
+    }
+
+    #[test]
+    fn no_pair_means_no_plan_toggle() {
+        assert_eq!(plan_mode_pair(None), None);
+        assert_eq!(plan_mode_pair(Some(&state(&["default", "yolo"]))), None);
+        assert_eq!(plan_mode_pair(Some(&state(&["plan"]))), None);
+        assert_eq!(plan_mode_pair(Some(&serde_json::json!({}))), None);
+    }
+}
+
+/// `session/set_mode` returns no state, so the applied id is merged locally to
+/// preserve the `availableModes` captured from the initial SessionModeState.
+/// Returns whether the agent accepted the switch.
+async fn apply_acp_mode(
+    modes: RwSignal<HashMap<String, serde_json::Value>>,
+    frame_id: String,
+    mode_id: String,
+) -> bool {
+    let args = to_value(&serde_json::json!({
+        "frameId": frame_id.clone(),
+        "modeId": mode_id,
+    }))
+    .unwrap();
+    if let Ok(value) = invoke_checked("set_acp_session_mode", args).await {
+        if let Some(applied) = value.as_string() {
+            modes.update(|all| {
+                let entry = all.entry(frame_id).or_insert_with(|| serde_json::json!({}));
+                if let serde_json::Value::Object(map) = entry {
+                    map.insert("currentModeId".into(), serde_json::Value::String(applied));
+                }
+            });
+            return true;
+        }
+    }
+    // Notify anyway so a control that already moved optimistically (the plan
+    // checkbox, the mode select) snaps back to the mode the agent is really in.
+    modes.update(|_| {});
+    false
+}
+
 fn acp_select_options(option: &serde_json::Value) -> Vec<(String, String)> {
     let mut result = Vec::new();
     for row in option
@@ -4391,6 +4482,52 @@ fn App() -> impl IntoView {
         )
     };
 
+    // Plan mode is an ACP session mode, so the plan card's action bar only makes
+    // sense while the bound agent is actually in it.
+    let plan_mode_active = Signal::derive(move || {
+        let Some(session_id) = active_session.get() else {
+            return false;
+        };
+        acp_session_modes.with(|all| {
+            acp_current_mode_id(all.get(&session_id)).is_some_and(is_plan_mode_id)
+        })
+    });
+
+    // ponytail: an ACP plan update is a todo list with no id to approve, so
+    // "approve" is the mode switch plus one ordinary turn. Upgrade to a
+    // structured approval only if ACP ever gains a plan-decision request.
+    let on_plan_decision = Callback::new(move |approve: bool| {
+        let loc = locale.get_untracked();
+        if !approve {
+            focus_composer();
+            show_toast(&t(loc, "plan.modify_hint"));
+            return;
+        }
+        let Some(session_id) = active_session.get_untracked() else {
+            return;
+        };
+        let exit_mode = acp_session_modes
+            .with_untracked(|all| plan_mode_pair(all.get(&session_id)))
+            .map(|(_, exit)| exit);
+        spawn_local(async move {
+            // Await the mode switch before sending: `session/set_mode` and
+            // `session/prompt` are separate calls, and a prompt that lands first
+            // just makes the agent re-plan.
+            if let Some(exit_mode) = exit_mode {
+                if !apply_acp_mode(acp_session_modes, session_id, exit_mode).await {
+                    return;
+                }
+            }
+            // A draft in the composer is the user's own go-ahead; only fill in a
+            // default so approving never discards what they typed.
+            if input.get_untracked().trim().is_empty() {
+                input.set(t(loc, "plan.approve").into());
+            }
+            send.call(ComposerSendAction::Normal);
+            show_toast(&t(loc, "plan.executing"));
+        });
+    });
+
     let on_sidebar_resize_start = move |ev: web_sys::MouseEvent| {
         ev.prevent_default();
         sidebar_dragging.set(true);
@@ -7748,6 +7885,7 @@ fn App() -> impl IntoView {
                                                 i, &item, timestamp, &arts, on_artifact_select, on_file_link,
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
                                                 respond_confirm, on_resume, on_queue,
+                                                plan_mode_active, on_plan_decision,
                                             )}
                                         </div>
                                     }.into_view()
@@ -8347,6 +8485,36 @@ fn App() -> impl IntoView {
                                 }></div>
                                 <div class="compose-menu agent-menu" role="menu"
                                     aria-label=move || t(locale.get(), "composer.agent_options")>
+                                    {move || {
+                                        // Shortcut for the plan/default pair of the ACP mode picker
+                                        // in the model menu; agents without a plan mode get no row.
+                                        let session_id = active_session.get()?;
+                                        let (plan_mode, exit_mode) = acp_session_modes
+                                            .with(|all| plan_mode_pair(all.get(&session_id)))?;
+                                        let on_plan = plan_mode_active.get();
+                                        Some(view! {
+                                            <label class="agent-menu-row"
+                                                title=move || t(locale.get(), if on_plan { "plan.switch_default" } else { "plan.switch_plan" })>
+                                                <span>{move || t(locale.get(), "composer.plan_first")}</span>
+                                                <span class="toggle agent-menu-toggle">
+                                                    <input type="checkbox" data-testid="plan-first-toggle"
+                                                        prop:checked=on_plan
+                                                        on:change=move |ev| {
+                                                            let enabled = event_target_checked(&ev);
+                                                            let target = if enabled { plan_mode.clone() } else { exit_mode.clone() };
+                                                            let session_id = session_id.clone();
+                                                            let loc = locale.get_untracked();
+                                                            spawn_local(async move {
+                                                                if apply_acp_mode(acp_session_modes, session_id, target).await {
+                                                                    show_toast(&t(loc, if enabled { "plan.enabled" } else { "plan.default_enabled" }));
+                                                                }
+                                                            });
+                                                        } />
+                                                    <span class="toggle-track" aria-hidden="true"></span>
+                                                </span>
+                                            </label>
+                                        })
+                                    }}
                                     <label class="agent-menu-row">
                                         <span>{move || t(locale.get(), "composer.delegation")}</span>
                                         <span class="toggle agent-menu-toggle">
@@ -8884,23 +9052,8 @@ fn App() -> impl IntoView {
                                                                                 on:change=move |event| {
                                                                                     let mode_id = dom_value(&event);
                                                                                     let frame_id = frame_id.clone();
-                                                                                    let args = to_value(&serde_json::json!({
-                                                                                        "frameId": frame_id,
-                                                                                        "modeId": mode_id,
-                                                                                    })).unwrap();
                                                                                     spawn_local(async move {
-                                                                                        if let Ok(value) = invoke_checked("set_acp_session_mode", args).await {
-                                                                                            if let Some(applied) = value.as_string() {
-                                                                                                // `session/set_mode` returns no state, so apply the
-                                                                                                // selected id locally, preserving availableModes.
-                                                                                                acp_session_modes.update(|all| {
-                                                                                                    let entry = all.entry(frame_id).or_insert_with(|| serde_json::json!({}));
-                                                                                                    if let serde_json::Value::Object(map) = entry {
-                                                                                                        map.insert("currentModeId".into(), serde_json::Value::String(applied));
-                                                                                                    }
-                                                                                                });
-                                                                                            }
-                                                                                        }
+                                                                                        apply_acp_mode(acp_session_modes, frame_id, mode_id).await;
                                                                                     });
                                                                                 }>
                                                                                 {available_modes.into_iter().map(|(mode_id, label)| {
@@ -11566,6 +11719,8 @@ fn render_item(
     on_approval: Callback<(String, bool, Option<String>, String)>,
     on_resume: Callback<usize>,
     on_queue: Callback<QueueOp>,
+    plan_mode_active: Signal<bool>,
+    on_plan_decision: Callback<bool>,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
@@ -11750,9 +11905,26 @@ fn render_item(
                 <article class="plan-card" data-testid="plan-card">
                     <header class="plan-card-head">
                         <span class="plan-card-icon">{compose_icon("plan")}</span>
-                        <div><strong>{move || t(locale.get(), "plan.card.title")}</strong></div>
+                        <div>
+                            <strong>{move || t(locale.get(), "plan.card.title")}</strong>
+                            {move || plan_mode_active.get().then(|| view! {
+                                <span>{t(locale.get(), "plan.card.ready")}</span>
+                            })}
+                        </div>
                     </header>
                     <div class="plan-card-body markdown" inner_html=html></div>
+                    {move || plan_mode_active.get().then(|| view! {
+                        <footer class="plan-card-actions">
+                            <button type="button" class="primary" data-testid="plan-approve"
+                                on:click=move |_| on_plan_decision.call(true)>
+                                {move || t(locale.get(), "plan.approve")}
+                            </button>
+                            <button type="button" data-testid="plan-modify"
+                                on:click=move |_| on_plan_decision.call(false)>
+                                {move || t(locale.get(), "plan.modify")}
+                            </button>
+                        </footer>
+                    })}
                 </article>
             }.into_view()
         }
