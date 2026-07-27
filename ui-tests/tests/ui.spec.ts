@@ -3738,6 +3738,33 @@ test("skill manager filters by tag and batch disables visible skills", async ({ 
   await expect(page.locator('[data-skill-name="remote-compute-modal"] input[type="checkbox"]')).not.toBeChecked();
 });
 
+test("skill manager updates and deletes user-added skills", async ({ page }) => {
+  await enterApp(page, "/?mockSkillImport=1");
+  await openSettingsSection(page, "Skills");
+
+  await page.getByText("Add skill", { exact: true }).click();
+  await page.getByRole("button", { name: "Add SKILL.md" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "install_skill")).toMatchObject({
+    srcPath: "/downloads/paper-narrative/SKILL.md",
+  });
+  await expect(page.getByText("Skill added or updated.")).toBeVisible();
+
+  const skill = page.locator('[data-skill-name="paper-narrative"]');
+  await expect(skill.getByRole("button", { name: "Delete skill" })).toBeVisible();
+  await skill.getByRole("button", { name: "Delete skill" }).click();
+  const confirm = page.getByTestId("skill-remove-confirm");
+  await expect(confirm).toContainText(
+    "Delete paper-narrative? Its installed files will be removed. This cannot be undone.",
+  );
+  await confirm.getByRole("button", { name: "Delete skill" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "remove_skill")).toEqual({
+    name: "paper-narrative",
+  });
+  await expect(page.locator('[data-skill-name="paper-narrative"]')).toHaveCount(0);
+  await expect(page.getByText("Skill deleted.")).toBeVisible();
+});
+
 test("plugin settings diagnose, launch, install, and remove a feature plugin", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Plugins");

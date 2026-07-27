@@ -199,19 +199,15 @@ pub(super) async fn install_skill(
     }
     validate_skill_name(&skill.name)?;
     let dest = user_skills_dir()?.join(&skill.name);
-    if dest.exists() {
-        return Err(format!("a skill named '{}' already exists", skill.name));
-    }
     {
-        // Recursive copy off the async runtime: a skill folder can be large.
+        // Recursive copy and the atomic directory swap run off the async
+        // runtime: a skill folder can be large. Existing user-added skills are
+        // replaced so importing an updated copy is a normal upgrade path.
         let (skill_dir, dest) = (skill_dir.clone(), dest.clone());
-        tokio::task::spawn_blocking(move || {
-            std::fs::create_dir_all(dest.parent().unwrap())?;
-            copy_dir_recursive(&skill_dir, &dest)
-        })
-        .await
-        .map_err(|e| format!("{e}"))?
-        .map_err(|e| format!("{e}"))?;
+        tokio::task::spawn_blocking(move || install_skill_dir(&skill_dir, &dest))
+            .await
+            .map_err(|e| format!("{e}"))?
+            .map_err(|e| format!("install skill: {e}"))?;
     }
     reload_skills(&state, window.label());
     let ap = state.active(window.label());
@@ -268,4 +264,134 @@ pub(super) fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> 
         }
     }
     Ok(())
+}
+
+/// Install a skill directory, replacing an existing user-installed copy.
+///
+/// The new tree is copied to a sibling staging directory first. Only after the
+/// copy succeeds do we move the old tree aside and atomically put the staged
+/// tree in its place. This prevents a failed update from leaving a partially
+/// copied skill behind.
+fn install_skill_dir(from: &Path, to: &Path) -> Result<bool, String> {
+    let parent = to
+        .parent()
+        .ok_or_else(|| "skill destination has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+
+    if to.exists() {
+        if !to.is_dir() {
+            return Err(format!(
+                "skill destination '{}' is not a directory",
+                to.display()
+            ));
+        }
+        if same_file::is_same_file(from, to).unwrap_or(false) {
+            return Ok(true);
+        }
+    }
+
+    let name = to
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("skill");
+    let token = uuid::Uuid::new_v4();
+    let staging = parent.join(format!(".{name}-install-{token}"));
+    let backup = parent.join(format!(".{name}-backup-{token}"));
+
+    if let Err(error) = copy_dir_recursive(from, &staging) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error.to_string());
+    }
+
+    let replaced = to.exists();
+    if replaced {
+        if let Err(error) = std::fs::rename(to, &backup) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error.to_string());
+        }
+    }
+
+    if let Err(error) = std::fs::rename(&staging, to) {
+        let restore_error = if replaced {
+            std::fs::rename(&backup, to).err()
+        } else {
+            None
+        };
+        let _ = std::fs::remove_dir_all(&staging);
+        return match restore_error {
+            Some(restore_error) => Err(format!(
+                "{error}; restoring the previous skill also failed: {restore_error}"
+            )),
+            None => Err(error.to_string()),
+        };
+    }
+
+    if replaced {
+        if let Err(error) = std::fs::remove_dir_all(&backup) {
+            tracing::warn!(
+                path = %backup.display(),
+                %error,
+                "could not remove replaced skill backup"
+            );
+        }
+    }
+    Ok(replaced)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("wisp-skill-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).expect("create test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn installing_same_named_skill_replaces_the_existing_tree() {
+        let temp = TestDir::new();
+        let source = temp.0.join("source");
+        let destination = temp.0.join("installed").join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join("SKILL.md"), "new instructions").unwrap();
+        std::fs::write(source.join("new.txt"), "new resource").unwrap();
+        std::fs::write(destination.join("SKILL.md"), "old instructions").unwrap();
+        std::fs::write(destination.join("stale.txt"), "stale resource").unwrap();
+
+        assert_eq!(install_skill_dir(&source, &destination), Ok(true));
+        assert_eq!(
+            std::fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+            "new instructions"
+        );
+        assert!(destination.join("new.txt").is_file());
+        assert!(!destination.join("stale.txt").exists());
+    }
+
+    #[test]
+    fn failed_skill_copy_keeps_the_existing_tree() {
+        let temp = TestDir::new();
+        let source = temp.0.join("missing-source");
+        let destination = temp.0.join("installed").join("example");
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(destination.join("SKILL.md"), "old instructions").unwrap();
+
+        assert!(install_skill_dir(&source, &destination).is_err());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+            "old instructions"
+        );
+    }
 }
