@@ -9851,8 +9851,11 @@ pub(super) fn ProjectsScreen(
     });
 
     // Local Escape stack — ProjectsScreen owns its own modals, so the App
-    // window listener cannot see `creating` / `pending_delete`.
-    window_event_listener(ev::keydown, move |ev| {
+    // window listener cannot see `creating` / `pending_delete`. Opening a
+    // project disposes this component, so the listener has to go with it:
+    // window listeners outlive their owner and would keep reading the signals
+    // below after they are gone.
+    let escape_listener = window_event_listener(ev::keydown, move |ev| {
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
@@ -9879,6 +9882,7 @@ pub(super) fn ProjectsScreen(
             creating.set(false);
         }
     });
+    on_cleanup(move || escape_listener.remove());
 
     view! {
         <div class="projects-screen">

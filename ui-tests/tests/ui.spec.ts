@@ -5998,3 +5998,17 @@ test("Ctrl+P imports paged Claude Code conversations into the claude group", asy
   await expect(page.locator('.side-folder[data-folder-name="claude"]')).toContainText("1");
   expect((await invokeArgsList(page, "list_claude_sessions")).length).toBe(scansBeforeImport);
 });
+
+test("Escape after leaving the projects screen does not touch disposed signals", async ({ page }) => {
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  // Opening a project disposes ProjectsScreen; its window-level Escape listener
+  // must go with it, or this keypress reads signals that no longer exist.
+  await enterApp(page);
+  await page.keyboard.press("Escape");
+  await expect(newSessionButton(page)).toBeVisible();
+  expect(browserErrors.filter((message) => message.includes("disposed"))).toEqual([]);
+});
