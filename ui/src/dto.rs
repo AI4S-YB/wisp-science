@@ -339,9 +339,177 @@ impl ChatItem {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+/// One checklist row of a plan. Mirrors the ACP `plan` update entry shape,
+/// which is also what Wisp persists, so one parser serves both.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) struct PlanEntry {
+    #[serde(default)]
+    pub(crate) content: String,
+    #[serde(default)]
+    pub(crate) status: PlanStatus,
+    #[serde(default)]
+    pub(crate) priority: PlanPriority,
+}
+
+/// `from = "String"` makes deserialization total: an agent that invents a
+/// status ("blocked", "skipped") degrades to the default instead of failing the
+/// whole card. Serialization still writes the ACP spelling.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", from = "String")]
+pub(crate) enum PlanStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Completed,
+}
+
+impl From<String> for PlanStatus {
+    fn from(raw: String) -> Self {
+        match raw.as_str() {
+            "in_progress" => Self::InProgress,
+            "completed" => Self::Completed,
+            _ => Self::Pending,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", from = "String")]
+pub(crate) enum PlanPriority {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl From<String> for PlanPriority {
+    fn from(raw: String) -> Self {
+        match raw.as_str() {
+            "low" => Self::Low,
+            "high" => Self::High,
+            _ => Self::Medium,
+        }
+    }
+}
+
+/// Who produced the plan. Always `Acp` today; the native arm is the seat for
+/// the built-in `propose_plan` tool, which renders through the same card.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", from = "String")]
+pub(crate) enum PlanSource {
+    Native,
+    #[default]
+    Acp,
+}
+
+impl From<String> for PlanSource {
+    fn from(raw: String) -> Self {
+        match raw.as_str() {
+            "native" => Self::Native,
+            _ => Self::Acp,
+        }
+    }
+}
+
+/// Card-level lifecycle: a plan that is still being revised this turn vs. one
+/// the turn finished with. Never persisted — reloaded plans are always ready.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) enum PlanState {
+    Streaming,
+    #[default]
+    Ready,
+}
+
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
 pub(crate) struct PlanCard {
-    pub(crate) text: String,
+    pub(crate) entries: Vec<PlanEntry>,
+    pub(crate) source: PlanSource,
+    pub(crate) state: PlanState,
+}
+
+/// Parses both the live ACP `plan` payload and the persisted plan body — they
+/// carry the same `{ source?, entries[] }` shape on purpose. Foreign JSON, so
+/// every field is optional and unknown values fall back to the defaults.
+pub(crate) fn parse_plan_card(payload: &serde_json::Value) -> PlanCard {
+    PlanCard {
+        entries: payload
+            .get("entries")
+            .map(|entries| serde_json::from_value(entries.clone()).unwrap_or_default())
+            .unwrap_or_default(),
+        source: payload
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .map(|raw| PlanSource::from(raw.to_string()))
+            .unwrap_or_default(),
+        state: PlanState::default(),
+    }
+}
+
+#[cfg(test)]
+mod plan_card_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_three_statuses_and_priority() {
+        let card = parse_plan_card(&serde_json::json!({
+            "entries": [
+                { "content": "read", "status": "completed", "priority": "high" },
+                { "content": "edit", "status": "in_progress", "priority": "medium" },
+                { "content": "test", "status": "pending", "priority": "low" },
+            ]
+        }));
+        assert_eq!(card.source, PlanSource::Acp);
+        assert_eq!(card.state, PlanState::Ready);
+        assert_eq!(
+            card.entries,
+            vec![
+                PlanEntry {
+                    content: "read".into(),
+                    status: PlanStatus::Completed,
+                    priority: PlanPriority::High,
+                },
+                PlanEntry {
+                    content: "edit".into(),
+                    status: PlanStatus::InProgress,
+                    priority: PlanPriority::Medium,
+                },
+                PlanEntry {
+                    content: "test".into(),
+                    status: PlanStatus::Pending,
+                    priority: PlanPriority::Low,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_and_missing_fields_fall_back() {
+        let card = parse_plan_card(&serde_json::json!({
+            "source": "native",
+            "entries": [{ "content": "x", "status": "blocked" }, {}],
+        }));
+        assert_eq!(card.source, PlanSource::Native);
+        assert_eq!(card.entries[0].status, PlanStatus::Pending);
+        assert_eq!(card.entries[0].priority, PlanPriority::Medium);
+        assert_eq!(card.entries[1], PlanEntry::default());
+    }
+
+    #[test]
+    fn junk_payloads_yield_an_empty_card() {
+        assert!(parse_plan_card(&serde_json::json!({})).entries.is_empty());
+        assert!(parse_plan_card(&serde_json::json!({ "entries": "nope" }))
+            .entries
+            .is_empty());
+    }
+
+    #[test]
+    fn round_trips_through_the_persisted_shape() {
+        let card = parse_plan_card(&serde_json::json!({
+            "entries": [{ "content": "x", "status": "in_progress", "priority": "high" }]
+        }));
+        let body = serde_json::json!({ "v": 1, "source": "acp", "entries": card.entries });
+        assert_eq!(parse_plan_card(&body), card);
+    }
 }
 
 pub(crate) fn active_model_label(models: &[ModelProfile]) -> Option<String> {

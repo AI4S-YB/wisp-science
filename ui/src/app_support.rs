@@ -3555,6 +3555,17 @@ pub(super) fn strip_approval_pending(items: &mut Vec<ChatItem>) {
     });
 }
 
+/// Turn end freezes the plan the turn produced. `Streaming` also marks which
+/// card live updates may replace, so settling it keeps the next turn's plan a
+/// separate card instead of overwriting this one.
+pub(super) fn settle_plan_cards(items: &mut [ChatItem]) {
+    for item in items {
+        if let ChatItem::Plan(plan) = item {
+            plan.state = PlanState::Ready;
+        }
+    }
+}
+
 pub(super) fn upsert_review(items: &mut Vec<ChatItem>, report: ReviewReport) {
     if let Some(existing) = items
         .iter_mut()

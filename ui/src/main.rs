@@ -481,31 +481,6 @@ fn upsert_acp_tool(items: &mut Vec<ChatItem>, payload: &serde_json::Value) {
     }
 }
 
-fn acp_plan_text(payload: &serde_json::Value) -> String {
-    payload
-        .get("entries")
-        .and_then(serde_json::Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| {
-                    let status = entry
-                        .get("status")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("pending");
-                    let mark = if status == "completed" { "x" } else { " " };
-                    let content = entry
-                        .get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default();
-                    format!("- [{mark}] {content}")
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default()
-}
-
 /// ACP has no flag marking a mode as "plans without executing"; agents name it
 /// themselves (`plan`, `plan_mode`, …), so match the id.
 fn is_plan_mode_id(id: &str) -> bool {
@@ -2127,6 +2102,7 @@ fn App() -> impl IntoView {
                 notify_desktop(&frame_id, "done", "");
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
                     strip_approval_pending(items);
+                    settle_plan_cards(items);
                 });
                 approval_cb.update(|s| {
                     s.remove(&frame_id);
@@ -2176,6 +2152,7 @@ fn App() -> impl IntoView {
                     );
                     route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                         strip_approval_pending(v);
+                        settle_plan_cards(v);
                         v.push(ChatItem::Assistant {
                             text: format!("Error: {message}"),
                             model,
@@ -2485,18 +2462,19 @@ fn App() -> impl IntoView {
                 },
             ),
             "Plan" => {
-                let text = acp_plan_text(&update.payload);
+                let mut card = parse_plan_card(&update.payload);
+                card.state = PlanState::Streaming;
                 route_items(
                     active_session,
                     items,
                     transcripts,
                     &update.frame_id,
                     |rows| {
-                        let card = PlanCard { text };
-                        if let Some(index) = rows
-                            .iter()
-                            .rposition(|row| matches!(row, ChatItem::Plan(_)))
-                        {
+                        // Replace only the card this turn is still writing;
+                        // plans from earlier turns stay as the plan's history.
+                        if let Some(index) = rows.iter().rposition(|row| {
+                            matches!(row, ChatItem::Plan(plan) if plan.state == PlanState::Streaming)
+                        }) {
                             rows[index] = ChatItem::Plan(card);
                         } else {
                             let index = trailing_queue_start(rows);
@@ -12437,19 +12415,44 @@ fn render_item(
             }.into_view()
         }
         ChatItem::Plan(plan) => {
-            let html = md_to_html(&plan.text);
+            let streaming = plan.state == PlanState::Streaming;
+            let entries = plan.entries.clone();
             view! {
-                <article class="plan-card" data-testid="plan-card">
+                <article class="plan-card" class:streaming=streaming data-testid="plan-card">
                     <header class="plan-card-head">
                         <span class="plan-card-icon">{compose_icon("plan")}</span>
                         <div>
                             <strong>{move || t(locale.get(), "plan.card.title")}</strong>
-                            {move || plan_mode_active.get().then(|| view! {
-                                <span>{t(locale.get(), "plan.card.ready")}</span>
-                            })}
+                            {move || if streaming {
+                                Some(view! { <span>{t(locale.get(), "plan.card.streaming")}</span> })
+                            } else {
+                                plan_mode_active.get().then(|| view! {
+                                    <span>{t(locale.get(), "plan.card.ready")}</span>
+                                })
+                            }}
                         </div>
                     </header>
-                    <div class="plan-card-body markdown" inner_html=html></div>
+                    <ul class="plan-card-body" data-testid="plan-entries">
+                        {entries.into_iter().map(|entry| {
+                            let (status, mark, label) = match entry.status {
+                                PlanStatus::Completed => ("completed", "✓", "plan.status.completed"),
+                                PlanStatus::InProgress => ("in_progress", "▸", "plan.status.in_progress"),
+                                PlanStatus::Pending => ("pending", "", "plan.status.pending"),
+                            };
+                            let high = entry.priority == PlanPriority::High;
+                            view! {
+                                <li data-status=status>
+                                    <span class="plan-entry-mark" role="img"
+                                        aria-label=move || t(locale.get(), label)>{mark}</span>
+                                    <span class="plan-entry-text">{entry.content}</span>
+                                    {high.then(|| view! {
+                                        <span class="plan-entry-priority" role="img"
+                                            aria-label=move || t(locale.get(), "plan.priority_high")>"!"</span>
+                                    })}
+                                </li>
+                            }
+                        }).collect_view()}
+                    </ul>
                     {move || plan_mode_active.get().then(|| view! {
                         <footer class="plan-card-actions">
                             <button type="button" class="primary" data-testid="plan-approve"
