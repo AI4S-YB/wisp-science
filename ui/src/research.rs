@@ -24,13 +24,13 @@ const GRAPH_ROW_GAP: i32 = 92;
 const GRAPH_HEADER_Y: i32 = 34;
 const GRAPH_FIRST_ROW_Y: i32 = 64;
 
-/// A node plus the outgoing links rendered under it, as `(relation, target label)`.
+/// A node plus its outgoing edges and their resolved target labels.
 pub(super) struct GraphRow {
     pub(super) node: ResearchNode,
-    pub(super) links: Vec<(String, String)>,
+    pub(super) links: Vec<(ResearchEdge, String)>,
 }
 
-/// Parse a node's raw `metadata_json` into displayable `key: value` pairs.
+/// Parse raw `metadata_json` into displayable `key: value` pairs.
 /// String values render bare; anything else renders as compact JSON. Empty,
 /// non-object, or unparseable metadata yields no pairs, so nothing renders.
 pub(super) fn metadata_pairs(metadata_json: &str) -> Vec<(String, String)> {
@@ -44,6 +44,14 @@ pub(super) fn metadata_pairs(metadata_json: &str) -> Vec<(String, String)> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+fn metadata_summary(metadata_json: &str) -> String {
+    metadata_pairs(metadata_json)
+        .into_iter()
+        .map(|(key, value)| format!("{key}: {value}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Bucket nodes by kind and hang each node's outgoing edges off it.
@@ -86,7 +94,7 @@ pub(super) fn group_graph(graph: &ResearchGraph) -> Vec<(&'static str, Vec<Graph
                         .map(|edges| {
                             edges
                                 .iter()
-                                .map(|edge| (edge.relation.clone(), label(&edge.target_id)))
+                                .map(|edge| ((*edge).clone(), label(&edge.target_id)))
                                 .collect()
                         })
                         .unwrap_or_default(),
@@ -112,7 +120,7 @@ struct GraphNodeLayout {
 
 #[derive(Debug)]
 struct GraphEdgeLayout {
-    relation: String,
+    edge: ResearchEdge,
     title: String,
     path: String,
     label_x: i32,
@@ -251,9 +259,18 @@ fn layout_graph(graph: &ResearchGraph) -> GraphLayout {
                     )
                 }
             };
+            let metadata = metadata_summary(&edge.metadata_json);
+            let title = if metadata.is_empty() {
+                format!("{source_title} —{}→ {target_title}", edge.relation)
+            } else {
+                format!(
+                    "{source_title} —{}→ {target_title} · {metadata}",
+                    edge.relation
+                )
+            };
             Some(GraphEdgeLayout {
-                relation: edge.relation.clone(),
-                title: format!("{source_title} —{}→ {target_title}", edge.relation),
+                edge: edge.clone(),
+                title,
                 path,
                 label_x,
                 label_y,
@@ -298,7 +315,11 @@ fn empty_graph(locale: Locale) -> View {
     .into_view()
 }
 
-fn research_graph_list(locale: Locale, graph: &ResearchGraph) -> View {
+fn research_graph_list(
+    locale: Locale,
+    graph: &ResearchGraph,
+    selected_edge: RwSignal<Option<ResearchEdge>>,
+) -> View {
     let sections = group_graph(graph);
     view! {
         <div class="research-graph-list" data-testid="research-graph-list">
@@ -315,22 +336,30 @@ fn research_graph_list(locale: Locale, graph: &ResearchGraph) -> View {
                                 .filter(|id| !id.trim().is_empty())
                                 .map(|id| view! { <div class="graph-node-ref">{id}</div> })}
                             {{
-                                let meta = metadata_pairs(&row.node.metadata_json)
-                                    .into_iter()
-                                    .map(|(key, value)| format!("{key}: {value}"))
-                                    .collect::<Vec<_>>()
-                                    .join(" · ");
+                                let meta = metadata_summary(&row.node.metadata_json);
                                 (!meta.is_empty()).then(|| view! {
                                     <div class="graph-node-ref graph-node-meta">{meta}</div>
                                 })
                             }}
                             {(!row.links.is_empty()).then(|| view! {
                                 <ul class="graph-node-links">
-                                    {row.links.into_iter().map(|(relation, target)| view! {
-                                        <li>
-                                            <span class="graph-rel">{relation}</span>
-                                            <span class="graph-target">{target}</span>
-                                        </li>
+                                    {row.links.into_iter().map(|(edge, target)| {
+                                        let metadata = metadata_summary(&edge.metadata_json);
+                                        let edge_label = format!("{}: {target}", edge.relation);
+                                        let selected = edge.clone();
+                                        view! {
+                                            <li>
+                                                <button type="button" class="graph-edge-summary"
+                                                    aria-label=edge_label
+                                                    on:click=move |_| selected_edge.set(Some(selected.clone()))>
+                                                    <span class="graph-rel">{edge.relation}</span>
+                                                    <span class="graph-target">{target}</span>
+                                                </button>
+                                                {(!metadata.is_empty()).then(|| view! {
+                                                    <div class="graph-edge-meta">{metadata}</div>
+                                                })}
+                                            </li>
+                                        }
                                     }).collect_view()}
                                 </ul>
                             })}
@@ -343,7 +372,11 @@ fn research_graph_list(locale: Locale, graph: &ResearchGraph) -> View {
     .into_view()
 }
 
-fn research_graph_canvas(locale: Locale, graph: &ResearchGraph) -> View {
+fn research_graph_canvas(
+    locale: Locale,
+    graph: &ResearchGraph,
+    selected_edge: RwSignal<Option<ResearchEdge>>,
+) -> View {
     let layout = layout_graph(graph);
     let view_box = format!("0 0 {} {}", layout.width, layout.height);
     let style = format!("width:{}px;height:{}px", layout.width, layout.height);
@@ -361,14 +394,28 @@ fn research_graph_canvas(locale: Locale, graph: &ResearchGraph) -> View {
                 </defs>
                 <g class="research-graph-edges">
                     {layout.edges.into_iter().map(|edge| {
-                        let label = truncate_label(&edge.relation, 18);
+                        let label = truncate_label(&edge.edge.relation, 18);
+                        let selected_for_click = edge.edge.clone();
+                        let selected_for_key = edge.edge.clone();
+                        let selected_for_class = edge.edge.clone();
                         view! {
-                            <path class="research-graph-edge" d=edge.path
-                                marker-end="url(#research-graph-arrow)">
+                            <g class="research-graph-edge-group" role="button" tabindex="0"
+                                class:selected=move || selected_edge.get().as_ref() == Some(&selected_for_class)
+                                aria-label=edge.title.clone()
+                                on:click=move |_| selected_edge.set(Some(selected_for_click.clone()))
+                                on:keydown=move |event| {
+                                    if matches!(event.key().as_str(), "Enter" | " ") {
+                                        event.prevent_default();
+                                        selected_edge.set(Some(selected_for_key.clone()));
+                                    }
+                                }>
                                 <title>{edge.title}</title>
-                            </path>
-                            <text class="research-graph-edge-label" x=edge.label_x y=edge.label_y
-                                text-anchor="middle">{label}</text>
+                                <path class="research-graph-edge" d=edge.path.clone()
+                                    marker-end="url(#research-graph-arrow)"></path>
+                                <path class="research-graph-edge-hit" d=edge.path></path>
+                                <text class="research-graph-edge-label" x=edge.label_x y=edge.label_y
+                                    text-anchor="middle">{label}</text>
+                            </g>
                         }
                     }).collect_view()}
                 </g>
@@ -402,6 +449,57 @@ fn research_graph_canvas(locale: Locale, graph: &ResearchGraph) -> View {
     .into_view()
 }
 
+fn research_edge_detail(
+    locale: Locale,
+    graph: &ResearchGraph,
+    edge: ResearchEdge,
+    selected_edge: RwSignal<Option<ResearchEdge>>,
+) -> View {
+    let node_titles = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node.title.as_str()))
+        .collect::<HashMap<_, _>>();
+    let source = node_titles
+        .get(edge.source_id.as_str())
+        .copied()
+        .unwrap_or(edge.source_id.as_str())
+        .to_string();
+    let target = node_titles
+        .get(edge.target_id.as_str())
+        .copied()
+        .unwrap_or(edge.target_id.as_str())
+        .to_string();
+    let metadata = metadata_pairs(&edge.metadata_json);
+    view! {
+        <aside class="research-edge-detail" data-testid="research-edge-detail"
+            aria-label=t(locale, "graph.edge.details")>
+            <div class="research-edge-detail-head">
+                <div>
+                    <span class="graph-rel">{edge.relation}</span>
+                    <strong>{format!("{source} → {target}")}</strong>
+                </div>
+                <button type="button" class="ps-close"
+                    title=t(locale, "graph.edge.close")
+                    aria-label=t(locale, "graph.edge.close")
+                    on:click=move |_| selected_edge.set(None)>{compose_icon("close")}</button>
+            </div>
+            {if metadata.is_empty() {
+                view! { <p>{t(locale, "graph.edge.no_metadata")}</p> }.into_view()
+            } else {
+                view! {
+                    <dl>
+                        {metadata.into_iter().map(|(key, value)| view! {
+                            <div><dt>{key}</dt><dd>{value}</dd></div>
+                        }).collect_view()}
+                    </dl>
+                }.into_view()
+            }}
+        </aside>
+    }
+    .into_view()
+}
+
 /// Project-level research graph opened from the left sidebar. The modal keeps a
 /// dense list for exact inspection and a dependency-free SVG overview.
 #[component]
@@ -411,6 +509,7 @@ pub(super) fn ResearchGraphModal(
     on_close: Callback<()>,
 ) -> impl IntoView {
     let graph_view = create_rw_signal(false);
+    let selected_edge = create_rw_signal::<Option<ResearchEdge>>(None);
     view! {
         <div class="overlay research-graph-overlay" role="presentation"
             on:click=move |_| on_close.call(())>
@@ -469,12 +568,15 @@ pub(super) fn ResearchGraphModal(
                         if current.nodes.is_empty() {
                             empty_graph(loc)
                         } else if graph_view.get() {
-                            research_graph_canvas(loc, &current)
+                            research_graph_canvas(loc, &current, selected_edge)
                         } else {
-                            research_graph_list(loc, &current)
+                            research_graph_list(loc, &current, selected_edge)
                         }
                     }}
                 </div>
+                {move || selected_edge.get().map(|edge| {
+                    research_edge_detail(locale.get(), &graph.get(), edge, selected_edge)
+                })}
             </section>
         </div>
     }
@@ -528,7 +630,7 @@ mod tests {
         assert_eq!(sections[1].0, "graph.kind.data_asset");
         assert_eq!(
             sections[0].1[0].links,
-            vec![("uses".to_string(), "counts.tsv".to_string())]
+            vec![(edge("d1", "a1", "uses"), "counts.tsv".to_string())]
         );
         // The link hangs off the source only; the target repeats nothing.
         assert!(sections[1].1[0].links.is_empty());
@@ -590,6 +692,23 @@ mod tests {
         assert_eq!(layout.edges.len(), 1);
         assert!(layout.edges[0].path.starts_with("M "));
         assert!(layout.edges[0].path.contains(" L "));
-        assert_eq!(layout.edges[0].relation, "applies to");
+        assert_eq!(layout.edges[0].edge.relation, "applies to");
+    }
+
+    #[test]
+    fn graph_layout_keeps_edge_metadata_in_its_tooltip() {
+        let mut link = edge("d1", "p1", "cites");
+        link.metadata_json = r#"{"confidence":"high"}"#.into();
+        let graph = ResearchGraph {
+            nodes: vec![
+                node("d1", "decision", "Use DESeq2"),
+                node("p1", "paper", "Love et al. 2014"),
+            ],
+            edges: vec![link.clone()],
+        };
+        let layout = layout_graph(&graph);
+
+        assert_eq!(layout.edges[0].edge, link);
+        assert!(layout.edges[0].title.contains("confidence: high"));
     }
 }

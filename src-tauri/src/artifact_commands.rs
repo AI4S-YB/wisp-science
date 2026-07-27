@@ -63,14 +63,26 @@ fn unique_upload_path(root: &std::path::Path, dir: &str, name: &str) -> std::pat
     root.join(dir).join(name)
 }
 
+fn existing_artifact_path(
+    root: &std::path::Path,
+    path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let real = wisp_tools::safety::validate_file_path(root, path)?;
+    if !real.is_file() {
+        return Err(format!("path '{path}' is not an existing file"));
+    }
+    Ok(real)
+}
+
 async fn register_artifact_at(
     state: &AppState,
     label: &str,
     ap: &ActiveProject,
     path: String,
     content_type: Option<String>,
+    origin: &'static str,
 ) -> Result<ArtifactInfo, String> {
-    let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
+    let real = existing_artifact_path(&ap.root, &path)?;
     let frame_id = ensure_active_frame(state, label, ap).await?;
     let id = Uuid::new_v4().to_string();
     let filename = real
@@ -97,7 +109,7 @@ async fn register_artifact_at(
         session_id: Some(frame_id),
         session_title: None,
         size_bytes: None,
-        origin: Some("upload".into()),
+        origin: Some(origin.into()),
     })
 }
 
@@ -124,7 +136,7 @@ pub(super) async fn upload_file(
         .strip_prefix(&ap.root)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| dest.to_string_lossy().into_owned());
-    register_artifact_at(&state, window.label(), &ap, rel, None).await
+    register_artifact_at(&state, window.label(), &ap, rel, None, "upload").await
 }
 
 #[tauri::command]
@@ -136,7 +148,7 @@ pub(super) async fn register_artifact(
 ) -> Result<ArtifactInfo, String> {
     let ap = state.active(window.label());
     let _project_activity = state.begin_project_activity(&ap.id)?;
-    register_artifact_at(&state, window.label(), &ap, path, content_type).await
+    register_artifact_at(&state, window.label(), &ap, path, content_type, "artifact").await
 }
 
 #[cfg(test)]
@@ -159,6 +171,22 @@ mod tests {
         assert!(validate_upload_base64_len(MAX_UPLOAD_BASE64_BYTES).is_ok());
         assert!(validate_upload_base64_len(MAX_UPLOAD_BASE64_BYTES + 1).is_err());
         assert_eq!(decode_upload_data("aGVsbG8=").unwrap(), b"hello");
+    }
+
+    #[test]
+    fn artifact_registration_requires_an_existing_file() {
+        let root = std::env::temp_dir().join(format!("wisp_register_artifact_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("results")).unwrap();
+        std::fs::write(root.join("results/report.csv"), b"a,b\n1,2\n").unwrap();
+
+        assert_eq!(
+            existing_artifact_path(&root, "results/report.csv").unwrap(),
+            root.join("results/report.csv")
+        );
+        assert!(existing_artifact_path(&root, "results").is_err());
+        assert!(existing_artifact_path(&root, "missing.csv").is_err());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 #[tauri::command]

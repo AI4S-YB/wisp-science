@@ -5146,6 +5146,7 @@ fn App() -> impl IntoView {
         let ui_confirm = ui_confirm;
         let active_session = active_session;
         let artifacts = artifacts;
+        let db_artifacts = db_artifacts;
         let attachments = attachments;
         Callback::new(move |(action, payload): (String, String)| {
             if action == "quoteSelection" {
@@ -5192,6 +5193,39 @@ fn App() -> impl IntoView {
             if action == "attachWorkspaceFile" {
                 let _ = attach_ready_path(attachments, payload);
                 focus_composer();
+                return;
+            }
+            if action == "registerWorkspaceArtifact" {
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({
+                        "path": payload,
+                        "contentType": null,
+                    }))
+                    .unwrap();
+                    match invoke_checked("register_artifact", arg).await {
+                        Ok(value) => {
+                            match serde_wasm_bindgen::from_value::<ArtifactInfo>(value) {
+                                Ok(artifact) => {
+                                    let name = artifact.name.clone();
+                                    db_artifacts.update(|items| {
+                                        items.retain(|item| item.id != artifact.id);
+                                        items.insert(0, artifact);
+                                    });
+                                    show_toast(&tf(
+                                        locale.get_untracked(),
+                                        "artifact.registered",
+                                        &[("name", &name)],
+                                    ));
+                                }
+                                Err(error) => show_warning_toast(&error.to_string()),
+                            }
+                        }
+                        Err(error) => show_warning_toast(&localize_backend(
+                            locale.get_untracked(),
+                            &js_error_text(error),
+                        )),
+                    }
+                });
                 return;
             }
             if action == "openWorkspaceFileCenter" {
