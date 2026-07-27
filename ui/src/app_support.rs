@@ -11116,7 +11116,7 @@ pub(super) fn SessionImportModal(
             let loc = locale.get_untracked();
             let done = summary.imported + summary.updated;
             let failed = summary.failed > 0;
-            let message = if failed {
+            let mut message = if failed {
                 tf(
                     loc,
                     provider.summary_key(true),
@@ -11129,6 +11129,17 @@ pub(super) fn SessionImportModal(
                     &[("n", &done.to_string())],
                 )
             };
+            // Rollouts already imported and not moved forward count as neither
+            // synced nor failed, so without this the numbers don't add up to
+            // the selection the user made.
+            if summary.skipped > 0 {
+                message.push_str(" · ");
+                message.push_str(&tf(
+                    loc,
+                    "import.skipped",
+                    &[("n", &summary.skipped.to_string())],
+                ));
+            }
             import_notice.set(Some((message.clone(), failed)));
             if failed {
                 show_warning_toast(&message);
