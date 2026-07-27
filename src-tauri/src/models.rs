@@ -685,18 +685,6 @@ pub async fn active_label(store: &wisp_store::Store) -> String {
         .unwrap_or_default()
 }
 
-/// Set (or clear, when empty) the active profile's key in the keyring.
-pub async fn set_active_key(store: &wisp_store::Store, key: &str) -> Result<(), String> {
-    let profiles = ensure(store).await;
-    let id = active_id(store, &profiles).await;
-    let name = secret_name(&id);
-    if key.trim().is_empty() {
-        secret_del(&name)
-    } else {
-        secret_set(&name, key.trim())
-    }
-}
-
 /// Per-model advanced LLM options for the active profile, falling back to
 /// legacy global store keys when a profile has no values yet.
 pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {

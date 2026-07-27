@@ -110,26 +110,7 @@
 .side-ungrouped.drop-target { background: var(--clay-soft); border-color: var(--clay); }
 .side-item.ses.dragging { opacity: .45; cursor: grabbing; }
 
-/* --- Right-pane code viewer (line gutter + inputs + download) --- */
-.rp-view-head .rp-actions { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-.rp-ver { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.rp-ver button { background: transparent; border: none; color: var(--text-faint); cursor: pointer; font: inherit; font-size: 13px; line-height: 1; padding: 2px 3px; border-radius: 5px; }
-.rp-ver button:hover { color: var(--text); background: var(--bg-sunken); }
-button.rp-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; background: transparent; color: var(--text-faint); border: 1px solid transparent; border-radius: 7px; cursor: pointer; }
-button.rp-icon:hover { color: var(--text); background: var(--bg-sunken); }
-button.rp-icon .gi { width: 15px; height: 15px; opacity: .9; }
-
-.rp-inputs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 2px 0 4px; }
-.rp-inputs-label { font-size: 11px; font-weight: 600; color: var(--text-faint); }
-.rp-input-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-family: var(--font-mono); font-size: 11px; padding: 3px 9px;
-  border-radius: 999px; background: var(--bg-sunken);
-  border: 1px solid var(--border); color: var(--text-muted);
-  cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.rp-input-chip:hover { border-color: var(--border-strong); color: var(--text); }
-
+/* --- Right-pane code viewer (line gutter + download) --- */
 .rp-code {
   display: flex; align-items: stretch;
   border: 1px solid var(--border); border-radius: var(--radius-sm);

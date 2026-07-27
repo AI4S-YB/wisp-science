@@ -332,13 +332,6 @@ fn validate_max_iter(max_iter: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(super) async fn set_api_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
-    tracing::info!(target: "wisp", has_api_key = !key.is_empty(), "saving api key");
-    // The key belongs to the active model profile.
-    models::set_active_key(&state.store, &key).await
-}
-
-#[tauri::command]
 pub(super) async fn credential_status(
     state: State<'_, AppState>,
 ) -> Result<Vec<(String, bool)>, String> {

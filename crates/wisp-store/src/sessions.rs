@@ -731,19 +731,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn load_session_reviews(&self, frame_id: &str) -> Result<Vec<(i64, String)>> {
-        let rows = sqlx::query(
-            "SELECT message_seq,report_json FROM session_reviews \
-             WHERE frame_id=? ORDER BY message_seq,created_at",
-        )
-        .bind(frame_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|row| Ok((row.try_get("message_seq")?, row.try_get("report_json")?)))
-            .collect()
-    }
-
     pub async fn append_session_ui_event(
         &self,
         frame_id: &str,

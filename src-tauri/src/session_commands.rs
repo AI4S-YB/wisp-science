@@ -61,37 +61,6 @@ pub(super) async fn branch_session(
 }
 
 #[tauri::command]
-pub(super) async fn list_sessions(
-    state: State<'_, AppState>,
-    window: tauri::WebviewWindow,
-) -> Result<Vec<SessionInfo>, String> {
-    let ap = state.active(window.label());
-    let rows = state
-        .store
-        .list_sessions(&ap.id)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    let pinned_ids = state
-        .store
-        .list_pinned_sessions(&ap.id)
-        .await
-        .map(|rows| rows.into_iter().map(|row| row.0).collect::<HashSet<_>>())
-        .unwrap_or_default();
-    let running = state.running_turns.lock().await.clone();
-    Ok(rows
-        .into_iter()
-        .map(|(id, title, ts, folder_id)| SessionInfo {
-            running: running.contains(&id),
-            pinned: pinned_ids.contains(&id),
-            id,
-            title,
-            ts,
-            folder_id,
-        })
-        .collect())
-}
-
-#[tauri::command]
 pub(super) async fn list_sessions_page(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,

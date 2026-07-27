@@ -10,15 +10,6 @@ pub(super) struct MemoryView {
 }
 
 #[tauri::command]
-pub(super) fn list_memory(
-    state: State<'_, AppState>,
-    window: tauri::WebviewWindow,
-) -> Result<Vec<MemoryFile>, String> {
-    let ap = state.active(window.label());
-    Ok(list_memory_files(&ap.memory))
-}
-
-#[tauri::command]
 pub(super) async fn get_memory_view(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,

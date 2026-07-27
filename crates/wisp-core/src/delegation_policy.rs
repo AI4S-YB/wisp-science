@@ -201,10 +201,6 @@ pub struct ResolvedDelegationPlan {
 }
 
 impl ResolvedDelegationPlan {
-    pub fn as_plan(&self) -> &DelegationPlan {
-        &self.plan
-    }
-
     pub fn into_plan(self) -> DelegationPlan {
         self.plan
     }
@@ -1893,8 +1889,8 @@ mod tests {
                 &host,
             )
             .unwrap();
-        assert_eq!(plan.as_plan().steps.len(), 1);
-        assert_eq!(plan.as_plan().steps[0].spec.origin, AgentOrigin::Temporary);
+        assert_eq!(plan.plan.steps.len(), 1);
+        assert_eq!(plan.plan.steps[0].spec.origin, AgentOrigin::Temporary);
     }
 
     #[test]
@@ -2003,10 +1999,8 @@ mod tests {
                 &host,
             )
             .unwrap();
-        assert!(!plan.as_plan().requires_confirmation);
-        registry
-            .validate_resolved_plan(plan.as_plan(), &host)
-            .unwrap();
+        assert!(!plan.plan.requires_confirmation);
+        registry.validate_resolved_plan(&plan.plan, &host).unwrap();
     }
 
     #[test]

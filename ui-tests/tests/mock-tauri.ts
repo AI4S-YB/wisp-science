@@ -980,9 +980,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               };
             }
             return { items: [], next_before_seq: null, user_offset: 0 };
-          case "list_sessions":
-            ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
-            return mockSessions;
           case "list_sessions_page": {
             ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
             const cursor = plain(arg("cursor"));
@@ -2068,8 +2065,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             mockPetDirectory = String(next.pet_directory ?? "");
             return null;
           }
-          case "set_api_key":
-            return null;
           case "check_for_updates":
             if (mockUpdateCheckPending) {
               await new Promise<void>((resolve) => {
@@ -2121,7 +2116,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             sessionAgentCompletion[sessionId] = value;
             return value;
           }
-          case "list_memory":
           case "write_memory_file":
           case "delete_memory_file":
           case "clear_memory":
@@ -2617,7 +2611,6 @@ export function parallelMock(): void {
           case "list_demos": return [];
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
           case "load_session": return { items: [], next_before_seq: null, user_offset: 0 };
-          case "list_sessions": return sessions.slice();
           case "list_sessions_page": return {
             items: sessions.slice(),
             next_cursor: null,
