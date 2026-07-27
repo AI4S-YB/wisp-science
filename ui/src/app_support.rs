@@ -3124,6 +3124,9 @@ pub(super) mod tauri_args {
     pub fn rewind_session(session_id: &Option<String>, user_index: usize) -> Value {
         json!({ "sessionId": session_id, "userIndex": user_index })
     }
+    pub fn turn_undo(session_id: &str, user_index: usize) -> Value {
+        json!({ "sessionId": session_id, "userIndex": user_index })
+    }
     pub fn confirm_response(
         session_id: &str,
         approved: bool,
@@ -3196,6 +3199,12 @@ mod tauri_args_tests {
         let v = tauri_args::rewind_session(&sid, 3);
         assert_eq!(v["sessionId"], "frame-1");
         assert_eq!(v["userIndex"], 3);
+        assert!(v.get("user_index").is_none());
+
+        let v = tauri_args::turn_undo("frame-1", 4);
+        assert_eq!(v["sessionId"], "frame-1");
+        assert_eq!(v["userIndex"], 4);
+        assert!(v.get("session_id").is_none());
         assert!(v.get("user_index").is_none());
 
         let v = tauri_args::confirm_response("frame-1", true, None, Some("once"));
@@ -9054,6 +9063,8 @@ pub(super) fn AssistantMessage(
     on_artifact: Callback<usize>,
     on_file: Callback<ModalArtifact>,
     on_copy: Callback<String>,
+    can_undo: bool,
+    on_undo: Callback<usize>,
 ) -> impl IntoView {
     let locale = use_locale();
     let arts_for_html = artifacts.clone();
@@ -9218,6 +9229,17 @@ pub(super) fn AssistantMessage(
                 >
                     <span class="gi copy" aria-hidden="true"></span>
                 </button>
+                {can_undo.then(|| view! {
+                    <button
+                        type="button"
+                        class="msg-icon-btn"
+                        title=move || t(locale.get(), "msg.undo")
+                        aria-label=move || t(locale.get(), "msg.undo")
+                        on:click=move |_| on_undo.call(source_item)
+                    >
+                        <span class="gi undo" aria-hidden="true"></span>
+                    </button>
+                })}
             </div>
         </div>
     }

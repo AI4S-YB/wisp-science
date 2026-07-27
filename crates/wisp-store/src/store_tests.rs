@@ -2010,9 +2010,59 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             SESSION_PINNED_MIGRATION.to_string(),
             CODEX_IMPORTS_MIGRATION.to_string(),
             EXTERNAL_SESSION_CACHE_MIGRATION.to_string(),
+            TURN_FILE_UNDO_MIGRATION.to_string(),
         ]
     );
 
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn turn_file_undo_migration_repairs_partial_application() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_turn_undo_partial_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    sqlx::query("ALTER TABLE message_resource_links DROP COLUMN created_artifact")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE message_resource_links DROP COLUMN created_version")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE turn_file_undo")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(TURN_FILE_UNDO_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+
+    let reopened = Store::open(&tmp).await.unwrap();
+    let columns = sqlx::query("PRAGMA table_info(message_resource_links)")
+        .fetch_all(&reopened.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.try_get::<String, _>("name").unwrap())
+        .collect::<std::collections::HashSet<_>>();
+    assert!(columns.contains("created_artifact"));
+    assert!(columns.contains("created_version"));
+    let undo_table: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_file_undo'",
+    )
+    .fetch_one(&reopened.pool)
+    .await
+    .unwrap();
+    assert_eq!(undo_table, 1);
+    reopened.pool.close().await;
+
+    Store::open(&tmp).await.unwrap().pool.close().await;
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -3102,5 +3152,215 @@ async fn provenance_roundtrip() {
         .await
         .unwrap()
         .contains("out/fig.png"));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn turn_undo_keeps_the_first_preimage_and_removes_owned_artifacts() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_turn_undo_store_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    store
+        .create_frame("other", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .append_message("other", 1, &Message::assistant("shared"))
+        .await
+        .unwrap();
+    for (seq, message) in [
+        Message::system("system"),
+        Message::user("make a summary"),
+        Message::assistant("[summary](summary.md)"),
+        Message::assistant("[revised summary](summary.md)"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        store
+            .append_message("f", seq as i64 + 1, message)
+            .await
+            .unwrap();
+    }
+
+    store
+        .save_turn_file_undo(
+            "f",
+            2,
+            "notes.md",
+            true,
+            Some(".wisp/undo/first"),
+            Some("before"),
+            Some("after-1"),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .save_turn_file_undo(
+            "f",
+            2,
+            "notes.md",
+            true,
+            Some(".wisp/undo/second"),
+            Some("middle"),
+            Some("after-2"),
+            false,
+            Some("the later destination was computed dynamically"),
+        )
+        .await
+        .unwrap();
+    let changes = store.list_turn_file_undo("f", 2).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(
+        changes[0].before_snapshot_path.as_deref(),
+        Some(".wisp/undo/first")
+    );
+    assert_eq!(changes[0].before_checksum.as_deref(), Some("before"));
+    assert_eq!(changes[0].after_checksum.as_deref(), Some("after-2"));
+    assert!(changes[0].reversible);
+    assert!(changes[0].reason.is_none());
+
+    let version_id = store
+        .save_artifact(
+            "artifact-1",
+            "p",
+            "f",
+            "summary.md",
+            "text/markdown",
+            ".wisp/artifacts/summary.md",
+        )
+        .await
+        .unwrap();
+    let revised_version_id = store
+        .save_artifact(
+            "artifact-1",
+            "p",
+            "f",
+            "summary.md",
+            "text/markdown",
+            ".wisp/artifacts/summary-v2.md",
+        )
+        .await
+        .unwrap();
+    let shared_version_id = store
+        .save_artifact(
+            "shared-artifact",
+            "p",
+            "f",
+            "shared.md",
+            "text/markdown",
+            ".wisp/artifacts/shared.md",
+        )
+        .await
+        .unwrap();
+    store
+        .replace_message_resource_links(
+            "f",
+            3,
+            &[MessageResourceLink {
+                id: "link-1".into(),
+                frame_id: "f".into(),
+                message_seq: 3,
+                ordinal: 0,
+                original_reference: "summary.md".into(),
+                artifact_id: Some("artifact-1".into()),
+                artifact_version_id: Some(version_id),
+                display_name: "summary.md".into(),
+                resource_kind: "markdown".into(),
+                mime_type: "text/markdown".into(),
+                status: "ready".into(),
+                error: None,
+                created_artifact: true,
+                created_version: true,
+                created_at: 1,
+            }],
+        )
+        .await
+        .unwrap();
+    store
+        .replace_message_resource_links(
+            "f",
+            4,
+            &[
+                MessageResourceLink {
+                    id: "link-2".into(),
+                    frame_id: "f".into(),
+                    message_seq: 4,
+                    ordinal: 0,
+                    original_reference: "summary.md".into(),
+                    artifact_id: Some("artifact-1".into()),
+                    artifact_version_id: Some(revised_version_id),
+                    display_name: "summary.md".into(),
+                    resource_kind: "markdown".into(),
+                    mime_type: "text/markdown".into(),
+                    status: "ready".into(),
+                    error: None,
+                    created_artifact: false,
+                    created_version: true,
+                    created_at: 2,
+                },
+                MessageResourceLink {
+                    id: "link-shared-owned".into(),
+                    frame_id: "f".into(),
+                    message_seq: 4,
+                    ordinal: 1,
+                    original_reference: "shared.md".into(),
+                    artifact_id: Some("shared-artifact".into()),
+                    artifact_version_id: Some(shared_version_id.clone()),
+                    display_name: "shared.md".into(),
+                    resource_kind: "markdown".into(),
+                    mime_type: "text/markdown".into(),
+                    status: "ready".into(),
+                    error: None,
+                    created_artifact: true,
+                    created_version: true,
+                    created_at: 2,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    store
+        .replace_message_resource_links(
+            "other",
+            1,
+            &[MessageResourceLink {
+                id: "link-shared-external".into(),
+                frame_id: "other".into(),
+                message_seq: 1,
+                ordinal: 0,
+                original_reference: "shared.md".into(),
+                artifact_id: Some("shared-artifact".into()),
+                artifact_version_id: Some(shared_version_id),
+                display_name: "shared.md".into(),
+                resource_kind: "markdown".into(),
+                mime_type: "text/markdown".into(),
+                status: "ready".into(),
+                error: None,
+                created_artifact: false,
+                created_version: false,
+                created_at: 3,
+            }],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.list_owned_message_artifacts("f", 1).await.unwrap(),
+        vec![("summary.md".into(), "text/markdown".into())]
+    );
+
+    store.truncate_messages_for_undo("f", 1).await.unwrap();
+    assert_eq!(store.load_messages("f").await.unwrap().len(), 1);
+    assert!(store.list_turn_file_undo("f", 2).await.unwrap().is_empty());
+    let remaining = store.list_artifacts("f").await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].0, "shared-artifact");
     let _ = std::fs::remove_file(&tmp);
 }

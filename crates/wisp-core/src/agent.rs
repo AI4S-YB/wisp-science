@@ -307,10 +307,22 @@ async fn agent_loop_inner(
             let args = tc.args_value();
             let producing = provenance::is_producing(&name);
             let root = producing.then(|| env.project_root().to_path_buf());
+            let source = provenance::source_of(&name, &args);
             let before = if let Some(root) = root.clone() {
                 tokio::task::spawn_blocking(move || provenance::snapshot(&root))
                     .await
                     .unwrap_or_default()
+            } else {
+                Default::default()
+            };
+            let preimages = if let Some(root) = root.clone() {
+                let before = before.clone();
+                let source = source.clone();
+                tokio::task::spawn_blocking(move || {
+                    provenance::capture_text_preimages(&before, &root, &source)
+                })
+                .await
+                .unwrap_or_default()
             } else {
                 Default::default()
             };
@@ -322,9 +334,19 @@ async fn agent_loop_inner(
                 let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
                     .await
                     .unwrap_or_default();
-                let source = provenance::source_of(&name, &args);
-                let (written, read) = provenance::diff(&before, &after, root, &source);
+                let (mut written, mut read) = provenance::diff(&before, &after, root, &source);
+                provenance::augment_written_paths(
+                    &name,
+                    root,
+                    &source,
+                    result.success,
+                    &preimages,
+                    &mut written,
+                );
+                read.retain(|path| !written.contains(path));
                 if !written.is_empty() {
+                    let file_changes =
+                        provenance::undo_file_changes(&before, root, &written, &preimages);
                     output.provenance(&provenance::ProvenanceRecord {
                         tool: name.clone(),
                         language: provenance::language_of(&name),
@@ -333,6 +355,7 @@ async fn agent_loop_inner(
                         success: result.success,
                         files_written: written,
                         files_read: read,
+                        file_changes,
                     });
                 }
             }

@@ -161,6 +161,38 @@ test("send streams a mocked assistant reply", async ({ page, context }) => {
   await expect(page.locator(".copy-toast")).toHaveText("Copied");
 });
 
+test("undo returns the latest prompt and keeps unsupported Word files", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("revise my notes");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+
+  const undo = page.locator(".msg.assistant").getByRole("button", { name: "Undo" });
+  await expect(undo).toHaveCount(1);
+  await undo.click();
+  await expect.poll(() => lastInvokeArgs(page, "preview_turn_undo")).toMatchObject({
+    sessionId: expect.stringMatching(/^s-/),
+    userIndex: 0,
+  });
+
+  const modal = page.getByTestId("turn-undo-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText("Word, Excel, PDF, images");
+  await expect(modal).toContainText("notes.md");
+  await expect(modal).toContainText("summary.md");
+  await expect(modal).toContainText("paper.docx");
+  await modal.getByRole("button", { name: "Undo turn" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "undo_turn")).toMatchObject({
+    sessionId: expect.stringMatching(/^s-/),
+    userIndex: 0,
+  });
+  await expect(modal).toHaveCount(0);
+  await expect(page.locator(".msg.user", { hasText: "revise my notes" })).toHaveCount(0);
+  await expect(page.getByText("Hello from mock wisp-science.")).toHaveCount(0);
+  await expect(composer(page)).toHaveValue("revise my notes");
+});
+
 test("general settings can use Ctrl+Enter to send and Enter for newline", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "userAgent", {

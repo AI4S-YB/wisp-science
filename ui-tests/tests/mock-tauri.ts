@@ -2133,6 +2133,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             sessionModels[id] = sessionModels[source] ?? activeHttpModelId();
             return id;
           }
+          case "preview_turn_undo":
+          case "undo_turn":
+            return {
+              restoreFiles: ["notes.md"],
+              removeFiles: ["summary.md"],
+              removeArtifacts: ["summary.md"],
+              unsupportedFiles: ["paper.docx"],
+              conflicts: [],
+            };
+          case "list_artifacts":
+            return [];
           case "side_chat": {
             const question = String(arg("question") ?? "");
             if (question === "SIDESCROLLTEST") {

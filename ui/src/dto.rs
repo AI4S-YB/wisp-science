@@ -252,6 +252,30 @@ pub(crate) enum ChatItem {
     Plan(PlanCard),
 }
 
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TurnUndoPreview {
+    #[serde(default)]
+    pub(crate) restore_files: Vec<String>,
+    #[serde(default)]
+    pub(crate) remove_files: Vec<String>,
+    #[serde(default)]
+    pub(crate) remove_artifacts: Vec<String>,
+    #[serde(default)]
+    pub(crate) unsupported_files: Vec<String>,
+    #[serde(default)]
+    pub(crate) conflicts: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct TurnUndoDialog {
+    pub(crate) session_id: String,
+    pub(crate) user_index: usize,
+    pub(crate) user_ui_index: usize,
+    pub(crate) draft: String,
+    pub(crate) preview: TurnUndoPreview,
+}
+
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub(crate) enum ReviewTransitionPhase {
     Reviewing,

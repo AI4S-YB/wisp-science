@@ -316,6 +316,14 @@ transcript only. Project files and runs remain in their source project;
 conversation-linked artifact records are not transferred, and the underlying
 workspace files are never deleted.
 
+After a native Wisp turn finishes, the latest assistant reply has **Undo**
+beside **Copy**. The confirmation dialog previews which Markdown, source-code,
+CSV, JSON, and other bounded text files will be restored or removed, then
+returns the original prompt to the composer and removes artifacts owned by that
+turn. If a text file changed again after the turn, Wisp refuses to overwrite
+it. Word, Excel, PDF, images, and other binary files are listed but retained;
+binary-file and ACP-session undo are not supported yet.
+
 During an agent turn, assistant progress notes stay visible as compact
 commentary, model reasoning stays in its own collapsed disclosure, and only
 consecutive tool calls are grouped into a steps panel. When the turn finishes,

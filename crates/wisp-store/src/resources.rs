@@ -19,8 +19,9 @@ impl Store {
             sqlx::query(
                 "INSERT INTO message_resource_links(\
                  id,frame_id,message_seq,ordinal,original_reference,artifact_id,\
-                 artifact_version_id,display_name,resource_kind,mime_type,status,error,created_at) \
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 artifact_version_id,display_name,resource_kind,mime_type,status,error,\
+                 created_artifact,created_version,created_at) \
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             )
             .bind(&link.id)
             .bind(frame_id)
@@ -34,6 +35,8 @@ impl Store {
             .bind(&link.mime_type)
             .bind(&link.status)
             .bind(link.error.as_deref())
+            .bind(link.created_artifact)
+            .bind(link.created_version)
             .bind(link.created_at)
             .execute(&mut *tx)
             .await?;
@@ -50,7 +53,8 @@ impl Store {
     ) -> Result<Vec<MessageResourceLink>> {
         let rows = sqlx::query(
             "SELECT id,frame_id,message_seq,ordinal,original_reference,artifact_id,\
-             artifact_version_id,display_name,resource_kind,mime_type,status,error,created_at \
+             artifact_version_id,display_name,resource_kind,mime_type,status,error,\
+             created_artifact,created_version,created_at \
              FROM message_resource_links WHERE frame_id=? AND message_seq>=? \
              AND (? IS NULL OR message_seq<?) ORDER BY message_seq,ordinal",
         )
@@ -75,6 +79,8 @@ impl Store {
                     mime_type: row.try_get("mime_type")?,
                     status: row.try_get("status")?,
                     error: row.try_get("error")?,
+                    created_artifact: row.try_get("created_artifact")?,
+                    created_version: row.try_get("created_version")?,
                     created_at: row.try_get("created_at")?,
                 })
             })

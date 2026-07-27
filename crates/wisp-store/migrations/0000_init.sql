@@ -102,11 +102,33 @@ CREATE TABLE IF NOT EXISTS message_resource_links (
     mime_type           TEXT NOT NULL,
     status              TEXT NOT NULL,
     error               TEXT,
+    created_artifact    INTEGER NOT NULL DEFAULT 0,
+    created_version     INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL,
     UNIQUE(frame_id, message_seq, ordinal)
 );
 CREATE INDEX IF NOT EXISTS ix_message_resource_links_message
     ON message_resource_links(frame_id, message_seq, ordinal);
+
+-- Bounded text-file preimages for undoing the latest completed agent turn.
+-- Snapshot bytes live under the project's .wisp/undo directory; SQLite keeps
+-- only lineage and checksums.
+CREATE TABLE IF NOT EXISTS turn_file_undo (
+    frame_id             TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    user_message_seq     INTEGER NOT NULL,
+    path                 TEXT NOT NULL,
+    before_exists        INTEGER NOT NULL,
+    before_snapshot_path TEXT,
+    before_checksum      TEXT,
+    after_checksum       TEXT,
+    reversible           INTEGER NOT NULL,
+    reason               TEXT,
+    created_at           INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL,
+    PRIMARY KEY(frame_id, user_message_seq, path)
+);
+CREATE INDEX IF NOT EXISTS ix_turn_file_undo_turn
+    ON turn_file_undo(frame_id, user_message_seq);
 
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,

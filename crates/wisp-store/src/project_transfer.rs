@@ -159,9 +159,6 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
         "INSERT INTO artifact_versions(id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,parent_version_id,producing_run_id,env_snapshot_hash,created_at) \
          SELECT av.id,av.artifact_id,av.version_number,av.content_type,av.storage_path,av.size_bytes,av.checksum,av.parent_version_id,av.producing_run_id,av.env_snapshot_hash,av.created_at \
          FROM transfer.artifact_versions av JOIN transfer.artifacts a ON a.id=av.artifact_id WHERE a.project_id=?",
-        "INSERT INTO message_resource_links(id,frame_id,message_seq,ordinal,original_reference,artifact_id,artifact_version_id,display_name,resource_kind,mime_type,status,error,created_at) \
-         SELECT id,frame_id,message_seq,ordinal,original_reference,artifact_id,artifact_version_id,display_name,resource_kind,mime_type,status,error,created_at \
-         FROM transfer.message_resource_links WHERE frame_id IN (SELECT id FROM transfer.frames WHERE project_id=?)",
         "INSERT INTO artifact_dependencies(id,artifact_version_id,depends_on_version_id,reference_name,created_at) \
          SELECT d.id,d.artifact_version_id,d.depends_on_version_id,d.reference_name,d.created_at FROM transfer.artifact_dependencies d \
          WHERE d.artifact_version_id IN (SELECT av.id FROM transfer.artifact_versions av JOIN transfer.artifacts a ON a.id=av.artifact_id WHERE a.project_id=?)",
@@ -176,6 +173,34 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
 
     for query in QUERIES {
         sqlx::query(query)
+            .bind(project_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    if attached_table_exists(tx, "message_resource_links").await? {
+        let columns = attached_table_columns(tx, "message_resource_links").await?;
+        let created_artifact = if columns.contains("created_artifact") {
+            "l.created_artifact"
+        } else {
+            "0"
+        };
+        let created_version = if columns.contains("created_version") {
+            "l.created_version"
+        } else {
+            "0"
+        };
+        let query = format!(
+            "INSERT INTO message_resource_links(\
+             id,frame_id,message_seq,ordinal,original_reference,artifact_id,\
+             artifact_version_id,display_name,resource_kind,mime_type,status,error,\
+             created_artifact,created_version,created_at) \
+             SELECT l.id,l.frame_id,l.message_seq,l.ordinal,l.original_reference,l.artifact_id,\
+             l.artifact_version_id,l.display_name,l.resource_kind,l.mime_type,l.status,l.error,\
+             {created_artifact},{created_version},l.created_at \
+             FROM transfer.message_resource_links l \
+             WHERE l.frame_id IN (SELECT id FROM transfer.frames WHERE project_id=?)"
+        );
+        sqlx::query(&query)
             .bind(project_id)
             .execute(&mut **tx)
             .await?;
@@ -294,6 +319,7 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM run_artifacts WHERE run_id IN (SELECT id FROM runs WHERE project_id=?)",
         "DELETE FROM session_reviews WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM session_ui_events WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+        "DELETE FROM turn_file_undo WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM proposed_plans WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM codex_turn_configs WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM acp_sessions WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
@@ -1054,6 +1080,8 @@ mod tests {
                     mime_type: "image/png".into(),
                     status: "ready".into(),
                     error: None,
+                    created_artifact: true,
+                    created_version: true,
                     created_at: 1,
                 }],
             )
@@ -1123,6 +1151,8 @@ mod tests {
             imported_resources[0].original_reference,
             "D:/original/location/plot.png"
         );
+        assert!(imported_resources[0].created_artifact);
+        assert!(imported_resources[0].created_version);
         assert_eq!(
             target.get_artifact("artifact-1").await.unwrap().unwrap().2,
             "/Users/alice/Study/.wisp/artifacts/sha256/ab/abcdef.png"

@@ -39,6 +39,24 @@
 .confirm-modal { overflow: hidden; }
 .confirm-modal .hint { flex: 1 1 auto; min-height: 0; overflow-y: auto; white-space: pre-wrap; }
 .confirm-modal .row { flex: 0 0 auto; }
+.turn-undo-modal { max-width: 560px; }
+.turn-undo-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.turn-undo-body, .turn-undo-empty { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.55; }
+.turn-undo-warning, .turn-undo-error {
+  padding: 9px 11px; border-radius: 9px; font-size: 12.5px; line-height: 1.5;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+}
+.turn-undo-error {
+  color: var(--err); background: color-mix(in srgb, var(--err) 9%, transparent);
+  border-color: color-mix(in srgb, var(--err) 28%, transparent);
+}
+.turn-undo-section { display: flex; flex-direction: column; gap: 5px; }
+.turn-undo-section h3 { margin: 0; color: var(--text); font-size: 12.5px; font-weight: 650; }
+.turn-undo-section ul { margin: 0; padding-left: 20px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.turn-undo-section code { color: inherit; overflow-wrap: anywhere; }
+.turn-undo-section.unsupported h3, .turn-undo-section.conflicts h3 { color: var(--warn); }
+.turn-undo-section.conflicts h3 { color: var(--err); }
 /* Update modal: the one-line summary stays fixed; the changelog scrolls. */
 .update-check-modal .hint { flex: 0 0 auto; overflow: visible; }
 .update-notes {
