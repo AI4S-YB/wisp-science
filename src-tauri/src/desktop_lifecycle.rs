@@ -55,7 +55,10 @@ pub(crate) fn activate_workspace_window(
     let _ = window.show();
     let _ = window.unminimize();
     if let Some(target) = target {
-        let _ = window.emit("open-session", target);
+        // `emit` broadcasts to every window (all open projects would jump to
+        // this session); `emit_to` keeps the navigation in the one window
+        // being activated.
+        let _ = window.emit_to(window.label(), "open-session", target);
     }
     let _ = window.set_focus();
 }

@@ -878,6 +878,15 @@ pub async fn get_session_model(
     {
         return Err("Session not found".into());
     }
+    // ACP-bound frames run through the agent, not an HTTP model. Return the
+    // agent's label under an `acp:` marker so message badges don't fall back
+    // to the active HTTP model.
+    if let Ok(Some(binding)) = state.store.get_acp_session(&session_id).await {
+        let label = crate::acp::profile_label(&state.store, &binding.agent_profile_id)
+            .await
+            .unwrap_or_else(|| "ACP Agent".into());
+        return Ok(format!("acp:{label}"));
+    }
     Ok(session_profile_id(&state.store, &session_id).await)
 }
 

@@ -325,6 +325,14 @@ pub(crate) fn active_model_label(models: &[ModelProfile]) -> Option<String> {
 }
 
 pub(crate) fn model_label(models: &[ModelProfile], model_id: Option<&str>) -> Option<String> {
+    // `get_session_model` marks ACP-bound frames as `acp:<label>`; show that
+    // label as-is instead of falling back to the active HTTP model.
+    if let Some(label) = model_id
+        .and_then(|id| id.strip_prefix("acp:"))
+        .filter(|label| !label.is_empty())
+    {
+        return Some(label.to_string());
+    }
     models
         .iter()
         .find(|model| model.is_chat_model() && model_id == Some(model.id.as_str()))
@@ -347,6 +355,21 @@ pub(crate) fn session_model_label(
         models,
         session_id.and_then(|session_id| session_models.get(session_id).map(String::as_str)),
     )
+}
+
+#[cfg(test)]
+mod model_label_tests {
+    use super::model_label;
+
+    #[test]
+    fn acp_marker_shows_agent_label_instead_of_http_fallback() {
+        assert_eq!(
+            model_label(&[], Some("acp:Codex ACP")).as_deref(),
+            Some("Codex ACP")
+        );
+        // A bare marker carries no label — fall through to the normal lookup.
+        assert_eq!(model_label(&[], Some("acp:")), None);
+    }
 }
 
 /// Selection captured from a file preview by `api.js`'s `preview_selection`.
