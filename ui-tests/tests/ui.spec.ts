@@ -248,6 +248,34 @@ test("switching HTTP models confirms cache invalidation", async ({ page }) => {
   await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
 });
 
+test("switching to a text-only model confirms historical images will be ignored", async ({ page }) => {
+  await enterApp(page, "/?mockTextOnlyModel=1");
+
+  // Start on the visual profile, then leave a real image attachment in this
+  // conversation's history before switching back to the text-only profile.
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /opus-4\.8/ }).click();
+  await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
+  await page.setInputFiles("#composer-file-input", {
+    name: "historical.png",
+    mimeType: "image/png",
+    buffer: Buffer.from([137, 80, 78, 71]),
+  });
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /deepseek-v4-pro/ }).click();
+  const modal = page.getByTestId("model-switch-confirm");
+  await expect(modal).toContainText("does not accept image input");
+  await expect(modal).toContainText("saved conversation and existing text replies stay unchanged");
+  await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toMatchObject({ id: "opus" });
+
+  await modal.getByRole("button", { name: "Ignore old images and switch" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toMatchObject({ id: "default" });
+  await expect(page.locator(".model-picker-label")).toHaveText("deepseek-v4-pro");
+});
+
 test("model switch warning can be permanently dismissed", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("bind this conversation model");

@@ -845,7 +845,7 @@ fn App() -> impl IntoView {
     let project_transition_target = Rc::new(RefCell::new(None::<String>));
     let project_open_gate = Rc::new(RefCell::new(ProjectOpenGate::default()));
     let model_menu_open = create_rw_signal(false);
-    let model_switch_confirm = create_rw_signal::<Option<(String, String)>>(None);
+    let model_switch_confirm = create_rw_signal::<Option<(String, String, bool)>>(None);
     let status = create_rw_signal(String::new());
     let switch_http_model = Callback::new(move |(id, dont_ask_again): (String, bool)| {
         provisional_acp_selection.set(None);
@@ -8903,6 +8903,7 @@ fn App() -> impl IntoView {
                                                 list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
                                                     let pick_label = m.label.clone();
+                                                    let pick_supports_vision = m.supports_vision;
                                                     let is_active = !acp_selected
                                                         && selected.as_deref().map_or(m.active, |id| id == m.id);
                                                     let show_sub = !m.model.is_empty() && m.model != m.label;
@@ -8923,7 +8924,11 @@ fn App() -> impl IntoView {
                                                                 if model_switch_warning_disabled() || items.with(|rows| rows.is_empty()) {
                                                                     switch_http_model.call((id, false));
                                                                 } else {
-                                                                    model_switch_confirm.set(Some((id, pick_label.clone())));
+                                                                    model_switch_confirm.set(Some((
+                                                                        id,
+                                                                        pick_label.clone(),
+                                                                        !pick_supports_vision,
+                                                                    )));
                                                                 }
                                                             }>
                                                                 <span class="model-menu-text">
@@ -10881,18 +10886,33 @@ fn App() -> impl IntoView {
         }.into_view()
         })}
 
-        {move || model_switch_confirm.get().map(|(id, label)| {
+        {move || model_switch_confirm.get().map(|(id, label, ignores_images)| {
             let switch_yes = switch_http_model.clone();
             let switch_without_future_warning = switch_http_model.clone();
             let yes_id = id.clone();
             let dont_ask_id = id.clone();
+            let hint_key = if ignores_images {
+                "models.switch_confirm_image_hint"
+            } else {
+                "models.switch_confirm_hint"
+            };
+            let yes_key = if ignores_images {
+                "models.switch_ignore_images"
+            } else {
+                "models.switch_yes"
+            };
+            let dont_ask_key = if ignores_images {
+                "models.switch_ignore_images_dont_ask"
+            } else {
+                "models.switch_dont_ask"
+            };
             view! {
                 <div class="overlay" data-testid="model-switch-confirm-overlay">
                     <div class="modal confirm-modal" data-testid="model-switch-confirm">
                         <h2>{move || t(locale.get(), "models.switch_confirm_title")}</h2>
                         <div class="hint">{move || tf(
                             locale.get(),
-                            "models.switch_confirm_hint",
+                            hint_key,
                             &[("model", &label)],
                         )}</div>
                         <div class="row">
@@ -10902,11 +10922,11 @@ fn App() -> impl IntoView {
                             <button on:click=move |_| {
                                 model_switch_confirm.set(None);
                                 switch_without_future_warning.call((dont_ask_id.clone(), true));
-                            }>{move || t(locale.get(), "models.switch_dont_ask")}</button>
+                            }>{move || t(locale.get(), dont_ask_key)}</button>
                             <button class="primary" on:click=move |_| {
                                 model_switch_confirm.set(None);
                                 switch_yes.call((yes_id.clone(), false));
-                            }>{move || t(locale.get(), "models.switch_yes")}</button>
+                            }>{move || t(locale.get(), yes_key)}</button>
                         </div>
                     </div>
                 </div>
