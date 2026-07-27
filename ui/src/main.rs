@@ -74,6 +74,44 @@ const SIDEBAR_RESIZER_WIDTH: f64 = 10.0;
 const THEME_STORAGE_KEY: &str = "wisp-theme";
 const SIDE_CHAT_SCROLLER_ID: &str = "side-chat-scroller";
 
+/// Let component-owned inner surfaces consume Escape before the app-level
+/// stack sees it. The listener is capture-phase and owner-scoped, so it does
+/// not depend on focus landing inside the surface and is removed on cleanup.
+pub(crate) fn window_capture_escape(
+    mut close_topmost: impl FnMut() -> bool + 'static,
+) {
+    let listener = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::wrap(Box::new(
+        move |event: web_sys::KeyboardEvent| {
+            if event.key() != "Escape"
+                || event.default_prevented()
+                || ime_composing(&event)
+                || !close_topmost()
+            {
+                return;
+            }
+            event.prevent_default();
+            event.stop_propagation();
+        },
+    ));
+    let window = web_sys::window();
+    if let Some(window) = &window {
+        let _ = window.add_event_listener_with_callback_and_bool(
+            "keydown",
+            listener.as_ref().unchecked_ref(),
+            true,
+        );
+    }
+    on_cleanup(move || {
+        if let Some(window) = window {
+            let _ = window.remove_event_listener_with_callback_and_bool(
+                "keydown",
+                listener.as_ref().unchecked_ref(),
+                true,
+            );
+        }
+    });
+}
+
 fn mcp_app_title(payload: &serde_json::Value) -> String {
     payload
         .pointer("/tool/title")
@@ -5627,9 +5665,9 @@ fn App() -> impl IntoView {
         note_composition_end(ev.time_stamp());
     });
 
-    // Escape stack: topmost overlay → menus → drag cancel → right pane →
-    // approval reject last. Composer @-mention and plan-feedback collapse
-    // preventDefault locally so they win before this handler runs.
+    // Escape stack: visually topmost surface → menus → drag cancel → right
+    // pane → approval reject last. Component-owned inner surfaces consume
+    // Escape through `window_capture_escape` before this handler runs.
     // ProjectsScreen owns create/delete/search Escape while `show_projects`,
     // but app-level overlays (settings, artifact modal, onboarding) still
     // close here — they can sit on top of the projects landing.
@@ -5638,6 +5676,16 @@ fn App() -> impl IntoView {
             return;
         };
         if ev.key() != "Escape" || ev.default_prevented() || ime_composing(ev) {
+            return;
+        }
+        if selection_popup.get().is_some() {
+            ev.prevent_default();
+            selection_popup.set(None);
+            return;
+        }
+        if ctx_menu.get().is_some() {
+            ev.prevent_default();
+            ctx_menu.set(None);
             return;
         }
         if update_check_modal.get().is_some() {
@@ -5695,14 +5743,24 @@ fn App() -> impl IntoView {
             delete_confirm.set(None);
             return;
         }
-        if show_settings.get() && !settings_busy.get() {
-            ev.prevent_default();
-            show_settings.set(false);
-            return;
-        }
         if modal_artifact.get().is_some() {
             ev.prevent_default();
             modal_artifact.set(None);
+            return;
+        }
+        if show_research_graph.get() {
+            ev.prevent_default();
+            show_research_graph.set(false);
+            return;
+        }
+        if inbox_open.get() {
+            ev.prevent_default();
+            inbox_open.set(false);
+            return;
+        }
+        if show_settings.get() && !settings_busy.get() {
+            ev.prevent_default();
+            show_settings.set(false);
             return;
         }
         if show_onboarding.get() {
@@ -5712,6 +5770,11 @@ fn App() -> impl IntoView {
             } else {
                 dismiss_onboarding.call(());
             }
+            return;
+        }
+        if show_library.get() {
+            ev.prevent_default();
+            show_library.set(false);
             return;
         }
 
@@ -5764,11 +5827,6 @@ fn App() -> impl IntoView {
         }
 
         // --- menus / popovers ---
-        if ctx_menu.get().is_some() {
-            ev.prevent_default();
-            ctx_menu.set(None);
-            return;
-        }
         if artifact_menu.get().is_some() {
             ev.prevent_default();
             artifact_menu.set(None);
@@ -5782,6 +5840,16 @@ fn App() -> impl IntoView {
         if compose_menu_open.get() {
             ev.prevent_default();
             compose_menu_open.set(false);
+            return;
+        }
+        if reviewer_model_menu_open.get()
+            || compute_menu_open.get()
+            || specialist_menu_open.get()
+        {
+            ev.prevent_default();
+            reviewer_model_menu_open.set(false);
+            compute_menu_open.set(false);
+            specialist_menu_open.set(false);
             return;
         }
         if agent_menu_open.get() {
@@ -5816,6 +5884,16 @@ fn App() -> impl IntoView {
             ev.prevent_default();
             runtime_environment.set(None);
             runtime_environment_pinned.set(false);
+            return;
+        }
+        if terminal_add_menu_open.get() {
+            ev.prevent_default();
+            terminal_add_menu_open.set(false);
+            return;
+        }
+        if conversation_outline_open.get() {
+            ev.prevent_default();
+            conversation_outline_open.set(false);
             return;
         }
 

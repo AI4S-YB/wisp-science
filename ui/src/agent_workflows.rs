@@ -4,6 +4,7 @@ use crate::bindings::invoke_checked;
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
 use crate::text::{dom_value, event_target_checked, event_target_value, pretty_json};
+use crate::window_capture_escape;
 use leptos::{ev, *};
 use serde_wasm_bindgen::to_value;
 use std::collections::HashMap;
@@ -1335,6 +1336,13 @@ fn dynamic_workflow_card(
 }
 
 fn workflow_result_dialog(state: AgentPanelState, locale: RwSignal<Locale>) -> View {
+    window_capture_escape(move || {
+        if state.result.get_untracked().is_none() {
+            return false;
+        }
+        state.result.set(None);
+        true
+    });
     view! {
         {move || state.result.get().map(|result| {
             let title = format!(
@@ -1351,13 +1359,6 @@ fn workflow_result_dialog(state: AgentPanelState, locale: RwSignal<Locale>) -> V
                     <div class="modal agent-result-modal" role="dialog" aria-modal="true"
                         aria-labelledby="agent-result-title"
                         tabindex="-1"
-                        on:keydown:undelegated=move |event| {
-                            if event.key() == "Escape" {
-                                event.prevent_default();
-                                event.stop_propagation();
-                                state.result.set(None);
-                            }
-                        }
                         on:click=|event| event.stop_propagation()>
                         <div class="agent-result-head">
                             <div>
@@ -1366,7 +1367,6 @@ fn workflow_result_dialog(state: AgentPanelState, locale: RwSignal<Locale>) -> V
                             </div>
                             <button type="button" class="agents-secondary"
                                 id="agent-result-close"
-                                autofocus=true
                                 aria-label=t(locale.get(), "agents.result.close")
                                 on:click=move |_| state.result.set(None)>{"×"}</button>
                         </div>

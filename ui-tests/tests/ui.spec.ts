@@ -80,6 +80,7 @@ async function selectRemoteContext(page: Page) {
     await expect(server).toHaveClass(/enabled/);
   }
   await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
 }
 
 function commandPalette(page: Page) {
@@ -747,6 +748,12 @@ test("the needs-you inbox opens cross-project sessions in their own window", asy
   const item = page.locator(".inbox-item");
   await expect(item).toContainText("Other project");
   await expect(item).toContainText("Cross-project counts");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".inbox-drop")).toHaveCount(0);
+  await expect(bell).toBeVisible();
+
+  await bell.click();
+  await expect(item).toBeVisible();
   await item.click();
   // Cross-project targets go to the project's own window (#423), not this one.
   await expect.poll(() => lastInvokeArgs(page, "open_project_window")).toMatchObject({
@@ -940,6 +947,13 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
   const moveSubmenu = page.locator(".ctx-submenu-menu");
   await expect(moveSubmenu).toBeVisible();
   await expect(moveSubmenu.getByRole("button", { name: "Ungrouped", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(moveSubmenu).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rename", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Rename", exact: true }).hover();
+  await moveTo.hover();
+  await expect(moveSubmenu).toBeVisible();
   await moveSubmenu.getByRole("button", { name: "Results", exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "move_session");
@@ -1786,6 +1800,7 @@ test("compute menu selects remote resources per session", async ({ page }) => {
   await expect(page.locator(".composer-compute")).toHaveClass(/has-resource/);
 
   await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
   await newSessionButton(page).click();
   const nextMenu = await openComputeMenu(page);
   await expect(nextMenu.locator('[data-context-id="ssh:gpu-server"]')).not.toHaveClass(/enabled/);
@@ -1929,7 +1944,7 @@ test("Escape closes the SSH connectivity dialog", async ({ page }) => {
   await expect(newSessionButton(page)).toBeVisible();
 });
 
-test("Escape closes the compute resource menu", async ({ page }) => {
+test("Escape closes the compute submenu before Agent options", async ({ page }) => {
   await enterApp(page);
   await openComputeMenu(page);
   await expect(page.getByRole("menu", { name: "Compute" })).toBeVisible();
@@ -1937,7 +1952,21 @@ test("Escape closes the compute resource menu", async ({ page }) => {
   await page.keyboard.press("Escape");
 
   await expect(page.getByRole("menu", { name: "Compute" })).toHaveCount(0);
+  await expect(page.getByRole("menu", { name: "Agent options" })).toBeVisible();
+
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("menu", { name: "Agent options" })).toHaveCount(0);
+});
+
+test("Escape closes the sidebar sort menu without closing the sidebar", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Sort and group" }).click();
+  await expect(page.locator(".side-sort-menu")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.locator(".side-sort-menu")).toHaveCount(0);
+  await expect(newSessionButton(page)).toBeVisible();
 });
 
 test("agent menu updates review, reviewer model, and memory preferences", async ({ page }) => {
@@ -2028,6 +2057,11 @@ test("project research graph opens from the sidebar in list and graph views", as
   await sidebar.getByRole("button", { name: "Research graph", exact: true }).click();
   const modal = page.getByTestId("research-graph-modal");
   await expect(modal).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+
+  await sidebar.getByRole("button", { name: "Research graph", exact: true }).click();
+  await expect(modal).toBeVisible();
   await expect(modal).toContainText("5 nodes · 3 relationships");
   await expect(modal.getByTestId("research-graph-list")).toBeVisible();
   await expect(modal.getByText("Use DESeq2 over edgeR")).toBeVisible();
@@ -2038,9 +2072,10 @@ test("project research graph opens from the sidebar in list and graph views", as
   await expect(edgeDetail).toContainText("Use DESeq2 over edgeR → Love et al. 2014");
   await expect(edgeDetail).toContainText("confidence");
   await expect(edgeDetail).toContainText("high");
-  await edgeDetail.getByRole("button", { name: "Close relationship details" }).click();
+  await page.keyboard.press("Escape");
   await expect(edgeDetail).toHaveCount(0);
-  await expect.poll(async () => (await invokeArgsList(page, "get_research_graph")).length).toBe(1);
+  await expect(modal).toBeVisible();
+  await expect.poll(async () => (await invokeArgsList(page, "get_research_graph")).length).toBe(2);
 
   await modal.getByRole("tab", { name: "Graph", exact: true }).click();
   const canvas = modal.getByTestId("research-graph-canvas");
@@ -2051,6 +2086,10 @@ test("project research graph opens from the sidebar in list and graph views", as
   await expect(metadataEdge.locator("title")).toContainText("evidence: Methods section");
   await metadataEdge.click();
   await expect(modal.getByTestId("research-edge-detail")).toContainText("Methods section");
+
+  await page.keyboard.press("Escape");
+  await expect(modal.getByTestId("research-edge-detail")).toHaveCount(0);
+  await expect(modal).toBeVisible();
 
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);
@@ -2116,6 +2155,12 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
     .map((args: any) => args.data)
     .join(""),
   ).toContain("echo hello");
+
+  await terminalDock.getByRole("button", { name: "New terminal" }).click();
+  await expect(terminalDock.locator(".terminal-dock-add-menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(terminalDock.locator(".terminal-dock-add-menu")).toHaveCount(0);
+  await expect(terminalDock).toBeVisible();
 
   await terminalDock.getByRole("button", { name: "New terminal" }).click();
   await terminalDock.getByRole("button", { name: /Local machine/ }).click();
@@ -3916,6 +3961,22 @@ test("inline approval card keeps its buttons reachable with a long preview (#63)
   await expect(allow).toBeInViewport();
 });
 
+test("Escape closes plan feedback before rejecting the plan", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("NEEDPLAN");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Review plan before starting?")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Other" }).click();
+  const feedback = page.getByPlaceholder("Tell wisp what to change in this plan.");
+  await expect(feedback).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(feedback).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Approve & start" })).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "confirm_response")).toBeNull();
+});
+
 test("inline approval scope is sent with confirmation", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("NEEDCONFIRM");
@@ -4162,6 +4223,12 @@ test("conversation outline loads and jumps to an older user question", async ({ 
   await expect(toggle).toBeVisible();
   await toggle.click();
   const outline = page.getByTestId("conversation-outline");
+  await expect(outline).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(outline).toHaveCount(0);
+  await expect(toggle).toBeVisible();
+
+  await toggle.click();
   await expect(outline).toBeVisible();
   const oldestOutline = outline.getByRole("button", { name: "Oldest loaded question" });
   await expect(oldestOutline.locator(".conversation-outline-time")).toHaveAttribute(
@@ -4823,7 +4890,12 @@ test("projects sync manually, copy a device code, and join on another device", a
   const joinDialog = page.getByRole("dialog", { name: "Join a synced project" });
   const deviceCode = page.getByTestId("sync-device-code");
   await expect(joinDialog).toBeVisible();
-  await expect(deviceCode).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(joinDialog).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
+
+  await page.getByRole("button", { name: "Join synced project" }).click();
+  await expect(joinDialog).toBeVisible();
   await expect(page.getByText("Secret device code", { exact: true })).toBeVisible();
   await expect.poll(async () => joinDialog.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(520);
   await expect.poll(async () => joinDialog.getByRole("button", { name: "Cancel" }).first().evaluate((el) => {
@@ -5473,9 +5545,10 @@ test("full result inspection and Take over target the selected child Agent", asy
   const dialog = page.getByRole("dialog", { name: "Full task result" });
   await expect(dialog.getByTestId("agent-result-json")).toContainText('"task_id": "synthesize"');
   await expect(dialog.getByTestId("agent-result-json")).toContainText("evidence-for-synthesize");
-  await expect(dialog.getByRole("button", { name: "Close result" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("agent-workflows")).toBeVisible();
+  await expect(page.locator(".rightpane")).toBeVisible();
 
   const researchB = card.locator('[data-step-id$=":research_b"]');
   await researchB.getByRole("button", { name: "Take over" }).click();
@@ -5572,6 +5645,9 @@ test("the command palette opens the global library", async ({ page }) => {
   await expect(page.locator(".action-palette-row").first()).toContainText("Open library");
   await input.press("Enter");
   await expect(page.getByTestId("library-screen")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("library-screen")).toHaveCount(0);
+  await expect(newSessionButton(page)).toBeVisible();
 });
 
 test("a starred figure keeps its image and generating code", async ({ page }) => {
@@ -5597,6 +5673,12 @@ test("a starred figure keeps its image and generating code", async ({ page }) =>
   await expect(figure).toContainText("volcano.png");
   await figure.locator(".library-card-main").click();
   const detail = page.locator(".library-detail");
+  await expect(detail.locator(".library-figure img")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(detail).toHaveCount(0);
+  await expect(page.getByTestId("library-screen")).toBeVisible();
+
+  await figure.locator(".library-card-main").click();
   await expect(detail.locator(".library-figure img")).toBeVisible();
   await expect(detail).toContainText("Generating code");
   await expect(detail).toContainText("savefig");
@@ -5713,6 +5795,11 @@ test("the selection popup saves a highlight into the right pane and library", as
   // Releasing the mouse over the transcript raises the selection popup — the
   // same surface that offers "Add to chat" / "Explain", now with the highlight.
   await page.locator(".msg.assistant .body").first().dispatchEvent("mouseup");
+  await expect(page.locator(".selection-popup")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".selection-popup")).toHaveCount(0);
+
+  await page.locator(".msg.assistant .body").first().dispatchEvent("mouseup");
   await page.getByRole("button", { name: "Save highlight" }).click();
 
   // The Highlights tab opens with the excerpt, and the transcript is underlined.
@@ -5749,6 +5836,19 @@ test("a ?project window opens straight into the project, skipping the landing (#
   )).toBe(true);
 });
 
+test("Escape closes settings-local menus before Settings", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Memory");
+  await page.getByRole("button", { name: /New category/ }).click();
+  const category = page.getByPlaceholder("Category name, press Enter");
+  await expect(category).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(category).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
+});
+
 test("specialists page configures the builtin Reader and saves a custom specialist", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Specialists");
@@ -5772,7 +5872,14 @@ test("specialists page configures the builtin Reader and saves a custom speciali
   await page.locator(".settings-head-back").click();
 
   await page.getByText("Add specialist").click();
-  await page.getByText("Write from scratch").click();
+  const fromScratch = page.getByText("Write from scratch");
+  await expect(fromScratch).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(fromScratch).not.toBeVisible();
+  await expect(page.locator(".settings-page")).toBeVisible();
+
+  await page.getByText("Add specialist").click();
+  await fromScratch.click();
   await page.getByLabel("Name").fill("Paper hunter");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Paper hunter")).toBeVisible();

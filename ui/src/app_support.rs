@@ -1,6 +1,6 @@
 use super::{
     HOME_SEARCH_ARTIFACT_LIMIT, HOME_SEARCH_PROJECT_LIMIT, HOME_SEARCH_SESSION_LIMIT,
-    THEME_STORAGE_KEY,
+    THEME_STORAGE_KEY, window_capture_escape,
 };
 use crate::bindings::{
     attach_cropped_region, crop_region_to_upload, invoke, invoke_checked, is_mac, mount_preview,
@@ -7413,40 +7413,21 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
     // Capture phase so this wins over the app-level Escape stack, which
     // would otherwise close the surrounding artifact modal.
     if is_image {
-        let esc = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::wrap(Box::new(
-            move |ev: web_sys::KeyboardEvent| {
-                if ev.key() != "Escape" || crop_busy.get_untracked() {
-                    return;
-                }
-                // Order: pending region (and its note) first, then crop mode.
-                if crop_rect.get_untracked().is_some() || crop_ready.get_untracked() {
-                    crop_ready.set(false);
-                    crop_rect.set(None);
-                    pin_note.set(String::new());
-                } else if crop_mode.get_untracked() {
-                    crop_mode.set(false);
-                } else {
-                    return;
-                }
-                ev.prevent_default();
-                ev.stop_propagation();
-            },
-        ));
-        if let Some(window) = web_sys::window() {
-            let _ = window.add_event_listener_with_callback_and_bool(
-                "keydown",
-                esc.as_ref().unchecked_ref(),
-                true,
-            );
-        }
-        on_cleanup(move || {
-            if let Some(window) = web_sys::window() {
-                let _ = window.remove_event_listener_with_callback_and_bool(
-                    "keydown",
-                    esc.as_ref().unchecked_ref(),
-                    true,
-                );
+        window_capture_escape(move || {
+            if crop_busy.get_untracked() {
+                return false;
             }
+            // Order: pending region (and its note) first, then crop mode.
+            if crop_rect.get_untracked().is_some() || crop_ready.get_untracked() {
+                crop_ready.set(false);
+                crop_rect.set(None);
+                pin_note.set(String::new());
+            } else if crop_mode.get_untracked() {
+                crop_mode.set(false);
+            } else {
+                return false;
+            }
+            true
         });
     }
     let adjust_zoom = move |delta: i16| {
@@ -9347,6 +9328,16 @@ pub(super) fn ApprovalCard(
     let feedback = create_rw_signal(String::new());
     let approval_scope = create_rw_signal(String::from("once"));
     let feedback_ready = move || !feedback.get().trim().is_empty();
+    if is_plan {
+        window_capture_escape(move || {
+            if !show_feedback.get_untracked() {
+                return false;
+            }
+            feedback.set(String::new());
+            show_feedback.set(false);
+            true
+        });
+    }
     create_effect(move |_| {
         if show_feedback.get() {
             focus_element_soon("plan-feedback-input");
@@ -9458,16 +9449,7 @@ pub(super) fn ApprovalCard(
                 {is_plan.then(move || {
                     view! {
                         <Show when=move || show_feedback.get()>
-                            <div class="plan-feedback"
-                                on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                    if ev.key() == "Escape" && !ime_composing(&ev) {
-                                        // Collapse feedback before the window-level
-                                        // handler rejects the whole plan.
-                                        ev.prevent_default();
-                                        feedback.set(String::new());
-                                        show_feedback.set(false);
-                                    }
-                                }>
+                            <div class="plan-feedback">
                                 <textarea
                                     id="plan-feedback-input"
                                     class="plan-feedback-input"

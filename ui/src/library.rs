@@ -3,6 +3,7 @@ use crate::bindings::{invoke, invoke_checked, reveal_saved_mark};
 use crate::dto::{LibraryItem, LibraryItemDetail, LibraryItemVersion};
 use crate::i18n::{t, tf, Locale};
 use crate::text::event_target_value;
+use crate::window_capture_escape;
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::JsValue;
@@ -82,6 +83,13 @@ pub(super) fn LibraryScreen(
     let selected = create_rw_signal(None::<LibraryItemDetail>);
     let loading = create_rw_signal(false);
     let error = create_rw_signal(None::<String>);
+    window_capture_escape(move || {
+        if selected.get_untracked().is_none() {
+            return false;
+        }
+        selected.set(None);
+        true
+    });
 
     let open_item = Callback::new(move |id: String| {
         loading.set(true);

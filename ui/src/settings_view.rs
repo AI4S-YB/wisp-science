@@ -12,6 +12,7 @@ use crate::i18n::{localize_backend, set_document_lang, t, tf, Locale};
 use crate::text::{
     dom_value, event_target_checked, event_target_input, event_target_value, format_bytes,
 };
+use crate::window_capture_escape;
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -544,6 +545,28 @@ pub(super) fn SettingsView(
     // time the Environments section opens.
     let ssh_trust_edges = create_rw_signal(Vec::<SshTrustEdge>::new());
     let trust_cleanup_error = create_rw_signal(None::<String>);
+    window_capture_escape(move || {
+        if !show_settings.get_untracked() {
+            return false;
+        }
+        if joining.get_untracked() {
+            joining.set(false);
+            return true;
+        }
+        if memory_new_cat_open.get_untracked() {
+            memory_new_cat_name.set(String::new());
+            memory_new_cat_open.set(false);
+            return true;
+        }
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return false;
+        };
+        let Ok(Some(details)) = document.query_selector("details.settings-add-menu[open]") else {
+            return false;
+        };
+        let _ = details.remove_attribute("open");
+        true
+    });
     create_effect(move |_| {
         if show_settings.get() && settings_section.get() == "environments" {
             spawn_local(async move {
@@ -1118,14 +1141,7 @@ pub(super) fn SettingsView(
                     </div>
                 }.into_view())}
                 {move || joining.get().then(|| view! {
-                    <div class="overlay project-sync-join-overlay"
-                        on:keydown=move |ev: web_sys::KeyboardEvent| {
-                            if ev.key() == "Escape" {
-                                ev.prevent_default();
-                                ev.stop_propagation();
-                                joining.set(false);
-                            }
-                        }>
+                    <div class="overlay project-sync-join-overlay">
                         <div class="modal project-sync-join-modal" role="dialog"
                             aria-modal="true"
                             aria-label=move || t(locale.get(), "projects.sync.join_title")
@@ -2458,10 +2474,6 @@ pub(super) fn SettingsView(
                                                             memory_new_cat_name.set(String::new());
                                                             memory_new_cat_open.set(false);
                                                         }
-                                                    } else if ev.key() == "Escape" {
-                                                        ev.stop_propagation();
-                                                        memory_new_cat_name.set(String::new());
-                                                        memory_new_cat_open.set(false);
                                                     }
                                                 } />
                                         }.into_view()

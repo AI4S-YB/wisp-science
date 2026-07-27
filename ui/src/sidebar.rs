@@ -4,6 +4,7 @@ use crate::app_support::{
 };
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
+use crate::window_capture_escape;
 use leptos::*;
 use std::collections::HashSet;
 
@@ -101,6 +102,13 @@ pub(super) fn Sidebar(
         &["folder", "date", "none"],
     ));
     let sort_menu_open = create_rw_signal(false);
+    window_capture_escape(move || {
+        if !sort_menu_open.get_untracked() {
+            return false;
+        }
+        sort_menu_open.set(false);
+        true
+    });
 
     view! {
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()
