@@ -86,6 +86,7 @@ const SESSION_PINNED_MIGRATION: &str = "0023_session_pinned";
 const CODEX_IMPORTS_MIGRATION: &str = "0024_codex_imports";
 const EXTERNAL_SESSION_CACHE_MIGRATION: &str = "0025_external_session_cache";
 const TURN_FILE_UNDO_MIGRATION: &str = "0026_turn_file_undo";
+const SESSION_BRANCH_LINEAGE_MIGRATION: &str = "0027_session_branch_lineage";
 
 #[derive(Clone)]
 pub struct Store {
@@ -385,6 +386,10 @@ impl Store {
             .await?;
             Self::record_migration(pool, TURN_FILE_UNDO_MIGRATION).await?;
         }
+        if !Self::migration_applied(pool, SESSION_BRANCH_LINEAGE_MIGRATION).await? {
+            Self::add_columns_if_missing(pool, "frames", &[("branched_from", "TEXT")]).await?;
+            Self::record_migration(pool, SESSION_BRANCH_LINEAGE_MIGRATION).await?;
+        }
         Ok(())
     }
 
@@ -674,14 +679,6 @@ impl Store {
         sqlx::query("CREATE INDEX IF NOT EXISTS ix_frames_folder ON frames(folder_id)")
             .execute(pool)
             .await?;
-        // Which session a branch was forked from, so the sidebar can nest it under
-        // its source. Deliberately NOT root_frame_id (that one cascades deletes) and
-        // NOT parent_frame_id (parent_frame_id = id is the "root session" marker).
-        if !Self::has_column(pool, "frames", "branched_from").await? {
-            sqlx::query("ALTER TABLE frames ADD COLUMN branched_from TEXT")
-                .execute(pool)
-                .await?;
-        }
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS execution_log (\

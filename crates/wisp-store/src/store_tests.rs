@@ -1081,6 +1081,43 @@ async fn branched_from_survives_listing() {
 }
 
 #[tokio::test]
+async fn existing_database_without_branched_from_column_is_repaired() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_branch_lineage_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f", 1, &Message::user("saved conversation"))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE frames DROP COLUMN branched_from")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(SESSION_BRANCH_LINEAGE_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert!(store
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&CONTROL_PLANE_MIGRATION.to_string()));
+    store.pool.close().await;
+
+    let reopened = Store::open(&tmp).await.unwrap();
+    let sessions = reopened.list_sessions_page("p", None, 100).await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions[0].4.is_none());
+    reopened.pool.close().await;
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn pinned_sessions_are_listed_separately_and_toggle() {
     let tmp = std::env::temp_dir().join(format!("wisp_pinned_{}.sqlite", uuid::Uuid::new_v4()));
     let store = Store::open(&tmp).await.unwrap();
@@ -2045,6 +2082,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             CODEX_IMPORTS_MIGRATION.to_string(),
             EXTERNAL_SESSION_CACHE_MIGRATION.to_string(),
             TURN_FILE_UNDO_MIGRATION.to_string(),
+            SESSION_BRANCH_LINEAGE_MIGRATION.to_string(),
         ]
     );
 
