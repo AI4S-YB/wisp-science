@@ -1256,6 +1256,13 @@ impl LoadedItem {
                     model: None,
                     resources: self.resources,
                 }),
+            "plan" => serde_json::from_str(&self.text)
+                .map(|payload: serde_json::Value| ChatItem::Plan(parse_plan_card(&payload)))
+                .unwrap_or_else(|_| ChatItem::Assistant {
+                    text: self.text,
+                    model: None,
+                    resources: self.resources,
+                }),
             "acp_tool" => ChatItem::AcpTool {
                 call_id: self.call_id.unwrap_or_default(),
                 title: self.tool_name.unwrap_or_else(|| "ACP tool".into()),

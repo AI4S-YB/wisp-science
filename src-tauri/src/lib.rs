@@ -1037,6 +1037,21 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             resources: Vec::new(),
                         });
                     }
+                } else if m.tool_name.as_deref() == Some(acp::PLAN_TOOL_NAME) {
+                    out.push(UiItem {
+                        role: "plan".into(),
+                        text,
+                        tool_name: None,
+                        ok: None,
+                        duration_ms: None,
+                        input: None,
+                        model_name: None,
+                        call_id: None,
+                        kind: None,
+                        status: None,
+                        locations: None,
+                        resources: Vec::new(),
+                    });
                 } else if let Some(envelope) =
                     acp::AcpToolEnvelope::from_tool_message(m.tool_name.as_deref(), &text)
                 {
