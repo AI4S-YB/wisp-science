@@ -960,7 +960,6 @@ pub(crate) struct ExternalSessionPreviewLine {
 pub(crate) struct ExternalImportSummary {
     pub(crate) imported: usize,
     pub(crate) updated: usize,
-    #[allow(dead_code)]
     pub(crate) skipped: usize,
     pub(crate) failed: usize,
     #[serde(default)]
