@@ -1453,6 +1453,7 @@ fn App() -> impl IntoView {
     // it gates the "annotate" action and names the review sidecar.
     let selection_popup = create_rw_signal::<Option<(String, Option<String>, i32, i32)>>(None);
     let picker_mode = create_rw_signal(None::<ComposerPickerMode>);
+    let picker_token_range = create_rw_signal(None::<(usize, usize)>);
     let picker_query = create_rw_signal(String::new());
     let picker_index = create_rw_signal(0usize);
     let picker_artifacts = create_rw_signal(Vec::<ArtifactInfo>::new());
@@ -1613,10 +1614,17 @@ fn App() -> impl IntoView {
                 language,
             },
         };
-        input.update(|s| {
-            if let Some((at, _, _)) = active_composer_trigger(s) {
-                s.truncate(at);
-            }
+        let current = input.get_untracked();
+        let caret = picker_token_range.get_untracked().and_then(|(start, end)| {
+            (start <= end
+                && end <= current.len()
+                && current.is_char_boundary(start)
+                && current.is_char_boundary(end))
+            .then(|| {
+                let caret = current[..start].encode_utf16().count() as u32;
+                input.set(format!("{}{}", &current[..start], &current[end..]));
+                caret
+            })
         });
         composer_references.update(|items| {
             if !items.iter().any(|item| item.key() == reference.key()) {
@@ -1624,7 +1632,11 @@ fn App() -> impl IntoView {
             }
         });
         picker_mode.set(None);
-        focus_composer();
+        if let Some(caret) = caret {
+            focus_composer_at(caret);
+        } else {
+            focus_composer();
+        }
     });
 
     let refresh_pet = Callback::new(move |_: ()| {
@@ -3405,6 +3417,7 @@ fn App() -> impl IntoView {
     };
 
     let on_paste = move |ev: web_sys::Event| {
+        picker_mode.set(None);
         if uploading.get() {
             return;
         }
@@ -8541,11 +8554,52 @@ fn App() -> impl IntoView {
                                 }
                             }
                             prop:value={move || input.get()}
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                match active_composer_trigger(&v) {
-                                    Some((_, mode, q)) => { picker_query.set(q); picker_index.set(0); picker_mode.set(Some(mode)); }
-                                    None => picker_mode.set(None),
+                            on:input=move |ev: web_sys::Event| {
+                                let Some(input_event) = ev.dyn_ref::<web_sys::InputEvent>() else {
+                                    return;
+                                };
+                                let Some(textarea) = ev.target()
+                                    .and_then(|target| target.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+                                else {
+                                    return;
+                                };
+                                let v = textarea.value();
+                                let input_type = input_event.input_type();
+                                let data = input_event.data();
+                                let prior_mode = picker_mode.get_untracked();
+                                let prior_range = picker_token_range.get_untracked();
+                                let manual_edit = matches!(
+                                    input_type.as_str(),
+                                    "insertText"
+                                        | "insertCompositionText"
+                                        | "deleteCompositionText"
+                                        | "deleteContentBackward"
+                                        | "deleteContentForward"
+                                );
+                                let active = textarea
+                                    .selection_start()
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|caret| active_composer_trigger(&v, caret as usize));
+                                match active {
+                                    Some((start, end, mode, query))
+                                        if manual_edit
+                                            && (prior_mode == Some(mode)
+                                                && prior_range.is_some_and(|(prior_start, _)| prior_start == start)
+                                                || input_type == "insertText"
+                                                    && query.is_empty()
+                                                    && data.as_deref() == Some(match mode {
+                                                        ComposerPickerMode::Artifact => "@",
+                                                        ComposerPickerMode::Session => "#",
+                                                        ComposerPickerMode::Skill => "/",
+                                                    })) =>
+                                    {
+                                        picker_token_range.set(Some((start, end)));
+                                        picker_query.set(query);
+                                        picker_index.set(0);
+                                        picker_mode.set(Some(mode));
+                                    }
+                                    _ => picker_mode.set(None),
                                 }
                                 input.set(v);
                             }

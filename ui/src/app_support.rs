@@ -2841,18 +2841,40 @@ pub(super) fn message_with_composer_context(
     message
 }
 
-/// If the composer text ends in an `@`, `#`, or `/` token, return its byte
-/// offset, picker mode, and query. ponytail: this is end-of-text only; upgrade
-/// to caret-index scanning when editing mentions in the middle matters.
-pub(super) fn active_composer_trigger(text: &str) -> Option<(usize, ComposerPickerMode, String)> {
-    let (at, trigger) = text
+fn utf16_to_byte_index(text: &str, wanted: usize) -> Option<usize> {
+    let mut utf16 = 0;
+    for (byte, ch) in text.char_indices() {
+        if utf16 == wanted {
+            return Some(byte);
+        }
+        utf16 += ch.len_utf16();
+        if utf16 > wanted {
+            return None;
+        }
+    }
+    (utf16 == wanted).then_some(text.len())
+}
+
+/// Return the active composer token ending at the textarea's UTF-16 caret.
+/// ASCII word boundaries suppress email, URL, path, and fraction false positives;
+/// CJK text may directly precede a trigger because it normally has no spaces.
+pub(super) fn active_composer_trigger(
+    text: &str,
+    caret_utf16: usize,
+) -> Option<(usize, usize, ComposerPickerMode, String)> {
+    let end = utf16_to_byte_index(text, caret_utf16)?;
+    let (at, trigger) = text[..end]
         .char_indices()
         .rev()
         .find(|(_, c)| matches!(c, '@' | '#' | '/'))?;
-    if at > 0 && !text[..at].chars().next_back()?.is_whitespace() {
-        return None;
+    if let Some(previous) = text[..at].chars().next_back() {
+        let embedded_ascii = previous.is_ascii_alphanumeric() || previous == '_';
+        let path_or_url = trigger == '/' && matches!(previous, ':' | '/' | '\\' | '.');
+        if embedded_ascii || path_or_url {
+            return None;
+        }
     }
-    let query = &text[at + 1..];
+    let query = &text[at + trigger.len_utf8()..end];
     if query.chars().any(char::is_whitespace) {
         return None;
     }
@@ -2862,7 +2884,7 @@ pub(super) fn active_composer_trigger(text: &str) -> Option<(usize, ComposerPick
         '/' => ComposerPickerMode::Skill,
         _ => return None,
     };
-    Some((at, mode, query.to_string()))
+    Some((at, end, mode, query.to_string()))
 }
 
 pub(super) fn scroll_picker_item(selector: &str, index: usize) {
@@ -2891,23 +2913,47 @@ mod mention_tests {
     use super::{active_composer_trigger, ComposerPickerMode};
 
     #[test]
-    fn detects_mention_at_end() {
+    fn detects_trigger_at_the_caret() {
         assert!(
-            matches!(active_composer_trigger("look at @qc"), Some((8, ComposerPickerMode::Artifact, q)) if q == "qc")
+            matches!(active_composer_trigger("look at @qc", 11), Some((8, 11, ComposerPickerMode::Artifact, q)) if q == "qc")
         );
         assert!(
-            matches!(active_composer_trigger("#old"), Some((0, ComposerPickerMode::Session, q)) if q == "old")
+            matches!(active_composer_trigger("#old", 4), Some((0, 4, ComposerPickerMode::Session, q)) if q == "old")
         );
         assert!(
-            matches!(active_composer_trigger("/boltz"), Some((0, ComposerPickerMode::Skill, q)) if q == "boltz")
+            matches!(active_composer_trigger("/boltz", 6), Some((0, 6, ComposerPickerMode::Skill, q)) if q == "boltz")
         );
     }
 
     #[test]
-    fn ignores_non_mentions() {
-        assert_eq!(active_composer_trigger("no trigger"), None);
-        assert_eq!(active_composer_trigger("email a@b.com"), None);
-        assert_eq!(active_composer_trigger("@qc then more"), None);
+    fn detects_trigger_before_existing_text_and_after_cjk() {
+        let text = "比较#Current已有结果";
+        let caret = "比较#Current".encode_utf16().count();
+        assert!(
+            matches!(active_composer_trigger(text, caret), Some((at, end, ComposerPickerMode::Session, q))
+                if at == "比较".len() && end == "比较#Current".len() && q == "Current")
+        );
+
+        let text = "🧬@";
+        assert!(
+            matches!(active_composer_trigger(text, text.encode_utf16().count()), Some((4, 5, ComposerPickerMode::Artifact, q)) if q.is_empty())
+        );
+        assert_eq!(active_composer_trigger(text, 1), None);
+    }
+
+    #[test]
+    fn ignores_literal_or_finished_tokens() {
+        for text in ["no trigger", "email a@b.com", "https:/", "foo/", "1/2"] {
+            assert_eq!(
+                active_composer_trigger(text, text.encode_utf16().count()),
+                None
+            );
+        }
+        let text = "@qc then more";
+        assert_eq!(
+            active_composer_trigger(text, text.encode_utf16().count()),
+            None
+        );
     }
 }
 
@@ -8584,6 +8630,18 @@ mod conversation_outline_tests {
 
 pub(super) fn focus_composer() {
     focus_element("composer-input");
+}
+
+pub(super) fn focus_composer_at(caret: u32) {
+    focus_composer();
+    let Some(textarea) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("composer-input"))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+    else {
+        return;
+    };
+    let _ = textarea.set_selection_range(caret, caret);
 }
 
 pub(super) fn focus_element(id: &str) {

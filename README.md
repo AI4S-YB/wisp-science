@@ -247,12 +247,14 @@ safety boundary, and current limits.
 
 ### Composer references and search
 
-In a desktop conversation, type `@` to attach a saved artifact, an uploaded
-file, an execution context, or a language runtime; `#` to attach a saved
-session (including another project) or choose `#project` to search every other
-saved session in the current project (the open conversation is already in the
-main context); or `/` to apply an enabled skill to the next turn. Attachments
-are explicit, removable chips; cross-project artifacts stay at their original
+In a desktop conversation, manually type `@` at the caret to attach a saved
+artifact, an uploaded file, an execution context, or a language runtime; `#`
+to attach a saved session (including another project) or choose `#project` to
+search every other saved session in the current project (the open conversation
+is already in the main context); or `/` to apply an enabled skill to the next
+turn. These pickers work while editing anywhere in the message and do not open
+for pasted text. Attachments are explicit, removable chips; cross-project
+artifacts stay at their original
 local path and are never copied automatically. The same references work with
 ACP Agents: selected skills and Reader evidence are sent as ACP text blocks,
 while artifacts are sent as file links.
