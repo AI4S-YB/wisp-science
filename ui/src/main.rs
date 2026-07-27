@@ -505,6 +505,15 @@ fn plan_mode_pair(state: Option<&serde_json::Value>) -> Option<(String, String)>
     Some((plan.to_string(), exit.to_string()))
 }
 
+/// What the plan card's action bar was asked to do. All three end plan mode
+/// except `Modify`, which keeps it so the agent re-plans from the composer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlanDecision {
+    Approve,
+    Modify,
+    SaveExit,
+}
+
 fn acp_current_mode_id(state: Option<&serde_json::Value>) -> Option<&str> {
     state?.get("currentModeId")?.as_str()
 }
@@ -4677,9 +4686,9 @@ fn App() -> impl IntoView {
     // ponytail: an ACP plan update is a todo list with no id to approve, so
     // "approve" is the mode switch plus one ordinary turn. Upgrade to a
     // structured approval only if ACP ever gains a plan-decision request.
-    let on_plan_decision = Callback::new(move |approve: bool| {
+    let on_plan_decision = Callback::new(move |decision: PlanDecision| {
         let loc = locale.get_untracked();
-        if !approve {
+        if decision == PlanDecision::Modify {
             focus_composer();
             show_toast(&t(loc, "plan.modify_hint"));
             return;
@@ -4698,6 +4707,13 @@ fn App() -> impl IntoView {
                 if !apply_acp_mode(acp_session_modes, session_id, exit_mode).await {
                     return;
                 }
+            }
+            // The plan itself is already persisted, so "save and exit" is the
+            // mode switch and nothing else — that is its whole difference from
+            // approve.
+            if decision == PlanDecision::SaveExit {
+                show_toast(&t(loc, "plan.saved"));
+                return;
             }
             // A draft in the composer is the user's own go-ahead; only fill in a
             // default so approving never discards what they typed.
@@ -12336,7 +12352,7 @@ fn render_item(
     on_queue: Callback<QueueOp>,
     plan_mode_active: Signal<bool>,
     plan_compat: Signal<bool>,
-    on_plan_decision: Callback<bool>,
+    on_plan_decision: Callback<PlanDecision>,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
@@ -12566,12 +12582,16 @@ fn render_item(
                     {move || plan_mode_active.get().then(|| view! {
                         <footer class="plan-card-actions">
                             <button type="button" class="primary" data-testid="plan-approve"
-                                on:click=move |_| on_plan_decision.call(true)>
+                                on:click=move |_| on_plan_decision.call(PlanDecision::Approve)>
                                 {move || t(locale.get(), "plan.approve")}
                             </button>
                             <button type="button" data-testid="plan-modify"
-                                on:click=move |_| on_plan_decision.call(false)>
+                                on:click=move |_| on_plan_decision.call(PlanDecision::Modify)>
                                 {move || t(locale.get(), "plan.modify")}
+                            </button>
+                            <button type="button" data-testid="plan-save-exit"
+                                on:click=move |_| on_plan_decision.call(PlanDecision::SaveExit)>
+                                {move || t(locale.get(), "plan.save_exit")}
                             </button>
                         </footer>
                     })}
