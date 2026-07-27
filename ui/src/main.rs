@@ -11732,7 +11732,14 @@ fn RunMonitorCard(
             let ended = run.ended_at.unwrap_or_else(|| js_sys::Date::now() as i64 / 1000);
             let elapsed_value = transfer_duration(ended.saturating_sub(started) as u64);
             let elapsed = tf(locale.get(), "runs.elapsed", &[("time", &elapsed_value)]);
-            let meta = format!("{} · {} · {elapsed}", run.context_id, run.kind);
+            let mut meta = format!("{} · {} · {elapsed}", run.context_id, run.kind);
+            // The wall limit only tells the user anything while the run can still
+            // hit it, so finished runs keep the shorter line.
+            if let Some(limit) = run.timeout_secs.filter(|_| active).filter(|secs| *secs > 0) {
+                let limit = transfer_duration(limit as u64);
+                meta.push_str(" · ");
+                meta.push_str(&tf(locale.get(), "runs.timeout", &[("time", &limit)]));
+            }
             let progress = run_progress(&run);
             let output = run_output_preview(&run);
             let command = run.command.clone().filter(|value| !value.trim().is_empty());
