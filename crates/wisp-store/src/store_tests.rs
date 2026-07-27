@@ -1370,12 +1370,21 @@ async fn session_reviews_are_upserted_and_truncated_with_the_transcript() {
         .unwrap();
 
     assert_eq!(
-        store.load_session_reviews("f").await.unwrap(),
+        store
+            .load_session_transcript_page("f", None, 100)
+            .await
+            .unwrap()
+            .reviews,
         vec![(2, r#"{"summary":"verified"}"#.into())]
     );
 
     store.truncate_messages("f", 1).await.unwrap();
-    assert!(store.load_session_reviews("f").await.unwrap().is_empty());
+    assert!(store
+        .load_session_transcript_page("f", None, 100)
+        .await
+        .unwrap()
+        .reviews
+        .is_empty());
 }
 
 #[tokio::test]
@@ -1751,7 +1760,11 @@ async fn session_transcripts_copy_and_move_between_projects() {
     );
     assert_eq!(store.load_messages("copied").await.unwrap().len(), 2);
     assert_eq!(
-        store.load_session_reviews("copied").await.unwrap(),
+        store
+            .load_session_transcript_page("copied", None, 100)
+            .await
+            .unwrap()
+            .reviews,
         vec![(2, r#"{"summary":"looks good"}"#.into())]
     );
     let copied_events = store.load_session_ui_events("copied").await.unwrap();
