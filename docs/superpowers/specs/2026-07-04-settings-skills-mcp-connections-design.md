@@ -62,9 +62,9 @@ enum McpTransport {
   - 若 `src_path` 是目录且含 `SKILL.md` → 递归拷贝到 `~/.wisp/skills/<name>/`。
   - 若 `src_path` 是 `SKILL.md` 文件 → 拷到 `~/.wisp/skills/<name>/SKILL.md`。
   - 解析 frontmatter 取 `name`;校验有 `name` 和 `description`,否则报错。
-  - 目标目录已存在则报错(不覆盖)。
+  - 若同名用户 skill 已存在,先将新目录完整复制到同级临时目录,再替换旧目录;复制失败时保留旧版本。
   - 成功后重载 `ActiveProject.skills`(见"运行时重挂载")。
-- `remove_skill(name: String)` —— 仅允许删除 `~/.wisp/skills/<name>/`;内置 skill 拒绝(只能禁用)。删后重载 SkillIndex。
+- `remove_skill(name: String)` —— 仅允许删除 `~/.wisp/skills/<name>/`;内置 skill 拒绝(只能禁用)。UI 提供常显的删除按钮和二次确认,删后重载 SkillIndex。
 
 Agent 创建路径(lib.rs:573/581):seed 前用 `disabled_skills` 过滤 `ap.skills`。新增 `SkillIndex::filtered(&HashSet<String>) -> SkillIndex`(或在传给 `Agent::new` / `seed_system_prompt` 前构造过滤后的 `Arc<SkillIndex>`)。`use_skill` 工具也用过滤后的索引,禁用的 skill 不可调用。
 
@@ -96,7 +96,7 @@ Agent 创建路径(lib.rs:573/581):seed 前用 `disabled_skills` 过滤 `ap.skil
 现有 Settings 弹窗(单页表单)→ 改为**左侧导航 + 右侧内容**,三个分区:
 
 - **General** —— 迁移现有 provider / API URL / model / 语言 / 工作区 / Validate / 更新检查。
-- **Skills** —— skill 列表(名 + 描述 + 开关);顶部"Add skill"按钮走 `tauri-plugin-dialog` 选文件/夹 → `install_skill`;用户 skill 带删除按钮,内置 skill 只有开关。
+- **Skills** —— skill 列表(名 + 描述 + 开关);顶部"Add skill"按钮走 `tauri-plugin-dialog` 选文件/夹 → `install_skill`;同名用户 skill 直接更新,用户 skill 带常显删除按钮和二次确认,内置 skill 只有开关。
 - **Connections** —— 顶部内置 bio-tools 连接器列表;下面用户连接列表(名 / 类型徽标 / 开关 / 编辑 / 删除)。点击连接行查看工具列表,编辑走独立按钮;"Add connection"打开表单(选 Local stdio 或 Remote URL,填对应字段),含"Test"按钮调 `test_mcp_connection` 并显示返回工具数。
 
 **Capabilities 弹窗**继续展示只读运行时状态，但三个统计卡片同时作为导航入口：

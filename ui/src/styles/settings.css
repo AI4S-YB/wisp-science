@@ -1139,6 +1139,20 @@ body:has(.settings-page) .projects-screen { display: none; }
 .settings-list-edit:focus-visible { opacity: 1; }
 .settings-list-remove:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
 .settings-list-edit:hover { color: var(--text); background: var(--bg-sunken); }
+.settings-skill-remove {
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--err) 35%, var(--border));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--err);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.settings-skill-remove:hover {
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
 
 .toggle {
   position: relative;

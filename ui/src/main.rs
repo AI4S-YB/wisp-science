@@ -3376,7 +3376,7 @@ fn App() -> impl IntoView {
             let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
             match invoke_checked("install_skill", arg).await {
                 Ok(_) => {
-                    skills_msg.set(None);
+                    skills_msg.set(Some((true, t(locale.get(), "skills.installed").into())));
                     refresh_skills();
                 }
                 Err(err) => {

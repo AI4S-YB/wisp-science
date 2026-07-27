@@ -1657,6 +1657,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 dir: "/plugins/motif/skills/motif-for-claude-science",
               })),
             ];
+          case "pick_skill_source":
+            return query.get("mockSkillImport") === "1"
+              ? "/downloads/paper-narrative/SKILL.md"
+              : null;
+          case "install_skill":
+            return "paper-narrative";
+          case "remove_skill": {
+            const name = String(arg("name") ?? "");
+            skills = skills.filter((skill) => skill.name !== name || skill.builtin);
+            return null;
+          }
           case "list_plugins":
             return plugins;
           case "pick_plugin_source":

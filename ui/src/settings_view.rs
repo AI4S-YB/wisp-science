@@ -36,6 +36,10 @@ pub(super) enum DeleteConfirm {
         version: String,
         label: String,
     },
+    Skill {
+        name: String,
+        label: String,
+    },
 }
 
 impl DeleteConfirm {
@@ -43,7 +47,8 @@ impl DeleteConfirm {
         match self {
             DeleteConfirm::Model { label, .. }
             | DeleteConfirm::Acp { label, .. }
-            | DeleteConfirm::Plugin { label, .. } => label,
+            | DeleteConfirm::Plugin { label, .. }
+            | DeleteConfirm::Skill { label, .. } => label,
         }
     }
 }
@@ -2916,14 +2921,14 @@ pub(super) fn SettingsView(
                                             </div>
                                             <div class="settings-list-actions">
                                                 {(!builtin).then(|| { let n = name_remove.clone(); view! {
-                                                    <button class="settings-list-remove" type="button" title="remove" on:click=move |_| {
-                                                        let n = n.clone();
-                                                        spawn_local(async move {
-                                                            let arg = to_value(&serde_json::json!({ "name": n })).unwrap();
-                                                            let _ = invoke_checked("remove_skill", arg).await;
-                                                            refresh_skills.call(());
-                                                        });
-                                                    }>{compose_icon("close")}</button>
+                                                    <button class="settings-skill-remove" type="button"
+                                                        title=move || t(locale.get(), "skills.remove")
+                                                        on:click=move |_| delete_confirm.set(Some(DeleteConfirm::Skill {
+                                                            name: n.clone(),
+                                                            label: n.clone(),
+                                                        }))>
+                                                        {move || t(locale.get(), "skills.remove")}
+                                                    </button>
                                                 }})}
                                                 {if managed {
                                                     let provider = managed_by.unwrap_or_else(|| t(locale.get(), "settings.nav.plugins").to_string());
@@ -3713,11 +3718,16 @@ pub(super) fn SettingsView(
             {move || delete_confirm.get().map(|target| {
                 let label = target.label().to_string();
                 let is_plugin = matches!(target, DeleteConfirm::Plugin { .. });
-                let message_key = if is_plugin { "plugins.remove_confirm" } else { "models.remove_confirm" };
-                let placeholder = if is_plugin { "plugin" } else { "model" };
-                let action_key = if is_plugin { "plugins.remove" } else { "models.remove" };
+                let is_skill = matches!(target, DeleteConfirm::Skill { .. });
+                let (message_key, placeholder, action_key, test_id) = if is_plugin {
+                    ("plugins.remove_confirm", "plugin", "plugins.remove", "plugin-remove-confirm")
+                } else if is_skill {
+                    ("skills.remove_confirm", "skill", "skills.remove", "skill-remove-confirm")
+                } else {
+                    ("models.remove_confirm", "model", "models.remove", "model-delete-confirm")
+                };
                 view! {
-                    <div class="overlay" data-testid=if is_plugin { "plugin-remove-confirm" } else { "model-delete-confirm" }>
+                    <div class="overlay" data-testid=test_id>
                         <div class="modal confirm-modal">
                             <h2>{move || t(locale.get(), "confirm.title")}</h2>
                             <div class="hint">{move || tf(
@@ -3763,6 +3773,21 @@ pub(super) fn SettingsView(
                                             }
                                             DeleteConfirm::Plugin { id, version, .. } => {
                                                 remove_plugin.call((id, version));
+                                            }
+                                            DeleteConfirm::Skill { name, .. } => {
+                                                let arg = to_value(&serde_json::json!({ "name": name })).unwrap();
+                                                match invoke_checked("remove_skill", arg).await {
+                                                    Ok(_) => {
+                                                        skills_msg.set(Some((true, t(locale.get(), "skills.removed").into())));
+                                                        refresh_skills.call(());
+                                                    }
+                                                    Err(error) => {
+                                                        skills_msg.set(Some((
+                                                            false,
+                                                            localize_backend(locale.get(), &js_error_text(error)),
+                                                        )));
+                                                    }
+                                                }
                                             }
                                         }
                                     });
