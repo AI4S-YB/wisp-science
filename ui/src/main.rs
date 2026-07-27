@@ -4664,6 +4664,16 @@ fn App() -> impl IntoView {
         })
     });
 
+    // Agents without a plan mode still push plan updates — a Claude Code todo
+    // list arrives as one. The card renders, but there is no mode to approve out
+    // of, so it is badged as a read-only compatibility plan instead.
+    let plan_compat = Signal::derive(move || {
+        let Some(session_id) = active_session.get() else {
+            return true;
+        };
+        acp_session_modes.with(|all| plan_mode_pair(all.get(&session_id)).is_none())
+    });
+
     // ponytail: an ACP plan update is a todo list with no id to approve, so
     // "approve" is the mode switch plus one ordinary turn. Upgrade to a
     // structured approval only if ACP ever gains a plan-decision request.
@@ -8167,7 +8177,7 @@ fn App() -> impl IntoView {
                                                 i, &item, timestamp, &arts, on_artifact_select, on_file_link,
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), can_undo, edit_message, branch_message, undo_message, sid,
                                                 respond_confirm, on_resume, on_queue,
-                                                plan_mode_active, on_plan_decision,
+                                                plan_mode_active, plan_compat, on_plan_decision,
                                             )}
                                         </div>
                                     }.into_view()
@@ -12325,6 +12335,7 @@ fn render_item(
     on_resume: Callback<usize>,
     on_queue: Callback<QueueOp>,
     plan_mode_active: Signal<bool>,
+    plan_compat: Signal<bool>,
     on_plan_decision: Callback<bool>,
 ) -> impl IntoView {
     let locale = use_locale();
@@ -12510,7 +12521,8 @@ fn render_item(
             let streaming = plan.state == PlanState::Streaming;
             let entries = plan.entries.clone();
             view! {
-                <article class="plan-card" class:streaming=streaming data-testid="plan-card">
+                <article class="plan-card" class:streaming=streaming
+                    class:compat=move || plan_compat.get() data-testid="plan-card">
                     <header class="plan-card-head">
                         <span class="plan-card-icon">{compose_icon("plan")}</span>
                         <div>
@@ -12523,6 +12535,12 @@ fn render_item(
                                 })
                             }}
                         </div>
+                        {move || plan_compat.get().then(|| view! {
+                            <span class="plan-card-compat" data-testid="plan-compat"
+                                title=move || t(locale.get(), "plan.compat_full")>
+                                {move || t(locale.get(), "plan.compat")}
+                            </span>
+                        })}
                     </header>
                     <ul class="plan-card-body" data-testid="plan-entries">
                         {entries.into_iter().map(|entry| {
