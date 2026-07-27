@@ -11738,6 +11738,10 @@ fn RunMonitorCard(
             let command = run.command.clone().filter(|value| !value.trim().is_empty());
             let remote_workdir = run.remote_workdir.clone();
             let poll_error = run.last_poll_error.clone().filter(|value| !value.trim().is_empty());
+            // ponytail: flat `key: value` rows only — nested `config`/`capabilities`
+            // render as compact JSON, not a tree. Unparseable or empty snapshots
+            // (old rows, transfer runs) yield no pairs, so the block disappears.
+            let env_pairs = research::metadata_pairs(&run.env_snapshot_json);
             let cancel_id = run.id.clone();
             view! {
                 <article class="run-monitor-card" data-testid="run-monitor-card" data-run-id=run.id>
@@ -11783,6 +11787,17 @@ fn RunMonitorCard(
                             <span>{t(locale.get(), "runs.output")}</span>
                             <pre>{output}</pre>
                         </div>
+                    })}
+                    {(!env_pairs.is_empty()).then(|| view! {
+                        <details class="run-monitor-env" data-testid="run-monitor-env">
+                            <summary>{t(locale.get(), "runs.environment")}</summary>
+                            <dl>
+                                {env_pairs.into_iter().map(|(key, value)| view! {
+                                    <dt>{key}</dt>
+                                    <dd>{value}</dd>
+                                }).collect_view()}
+                            </dl>
+                        </details>
                     })}
                     {poll_error.map(|error| view! { <div class="context-error">{error}</div> })}
                 </article>
