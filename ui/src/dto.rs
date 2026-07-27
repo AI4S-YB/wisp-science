@@ -1766,8 +1766,8 @@ pub(crate) struct DynamicAgentWorkflowSummary {
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct AgentWorkflowVersionConflict {
+    #[allow(dead_code)]
     pub(crate) workflow_id: String,
     pub(crate) expected_version: i64,
     pub(crate) actual_version: i64,
@@ -1778,6 +1778,10 @@ pub(crate) struct AgentWorkflowVersionConflict {
 pub(crate) struct DynamicWorkflowCommandError {
     pub(crate) code: String,
     pub(crate) message: String,
+    /// The backend skips this key entirely for non-conflict errors
+    /// (`skip_serializing_if = "Option::is_none"`), so it needs a default or
+    /// every other error fails to parse.
+    #[serde(default)]
     pub(crate) version_conflict: Option<AgentWorkflowVersionConflict>,
 }
 
@@ -1931,20 +1935,20 @@ pub(crate) struct RuntimeSlot {
     pub(crate) info: Option<RuntimeInfo>,
 }
 
+/// Mirrors `wisp_store::Run`, minus the columns only the backend acts on
+/// (`input_refs_json` / `output_specs_json` / `remote_handle_json` /
+/// `last_polled_at` / the always-NULL `script_path`). No blanket
+/// `allow(dead_code)`: an unread field here means the UI is dropping data
+/// again, and the warning is the whole point.
 #[derive(Deserialize, Clone)]
-#[allow(dead_code)]
 pub(crate) struct RunRecord {
     pub(crate) id: String,
-    pub(crate) project_id: String,
     pub(crate) frame_id: Option<String>,
     pub(crate) context_id: String,
     pub(crate) title: String,
     pub(crate) kind: String,
     pub(crate) status: String,
     pub(crate) command: Option<String>,
-    pub(crate) script_path: Option<String>,
-    pub(crate) input_refs_json: String,
-    pub(crate) output_specs_json: String,
     pub(crate) created_at: i64,
     pub(crate) started_at: Option<i64>,
     pub(crate) ended_at: Option<i64>,
@@ -1953,9 +1957,7 @@ pub(crate) struct RunRecord {
     pub(crate) stderr_tail: Option<String>,
     #[serde(rename = "remote_workdir", alias = "remoteWorkdir")]
     pub(crate) remote_workdir: Option<String>,
-    pub(crate) remote_handle_json: Option<String>,
     pub(crate) timeout_secs: Option<i64>,
-    pub(crate) last_polled_at: Option<i64>,
     #[serde(rename = "last_poll_error", alias = "lastPollError")]
     pub(crate) last_poll_error: Option<String>,
     #[serde(default)]

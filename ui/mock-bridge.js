@@ -275,6 +275,8 @@
                 { role: "user", text: "查找文献 FX-cell", tool_name: null, ok: null },
                 { role: "reasoning", text: "Search PubMed and preprints for FX-cell literature.", tool_name: null, ok: null },
                 { role: "tool", text: "12 hits written to report.csv", tool_name: "python", ok: true },
+                { role: "tool", text: "", tool_name: "monitor_run", ok: true, input: "r1" },
+                { role: "tool", text: "", tool_name: "monitor_run", ok: true, input: "r2" },
                 {
                   role: "assistant",
                   text: "## FX-cell literature\n\n| gene | score |\n| --- | --- |\n| FX-cell | 0.91 |\n\nThe score follows $s = \\frac{1}{1 + e^{-x}}$ and GPT-style \\(a_i^2 + b_i^2\\) too.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$\n\nSee `report.csv` or {{artifact:00000001}}.\n\nFigures and tables:\n\n- `results/volcano_plot.png`\n- `results/heatmap.png`\n- `results/umap.png`\n- `results/pca.svg`\n- `results/qc_violin.jpg`\n- `results/marker_dotplot.png`\n- `results/deseq2_results.tsv`\n- `results/gsea.pdf`\n- `results/summary.md`\n- `results/counts.csv`\n\n```python\nimport pandas as pd\ndf = pd.read_csv('report.csv')\nprint(df.head())\n```",
@@ -441,7 +443,30 @@
                 stdout_tail: "converged in 4 iterations\n2381 genes at padj < 0.05",
                 stderr_tail: null, remote_workdir: null, remote_handle_json: null,
                 timeout_secs: null, last_polled_at: 1719870200, last_poll_error: null,
-                progress_json: "", env_snapshot_json: "{}",
+                progress_json: "",
+                env_snapshot_json: JSON.stringify({
+                  context_id: "local",
+                  config: { rscript_executable: "/usr/bin/Rscript" },
+                  capabilities: { r_jsonlite: true, rscript_executable: "/usr/bin/Rscript" },
+                }),
+              },
+              {
+                id: "r2", project_id: "default", frame_id: "s1", context_id: "ssh:cpu1",
+                title: "STAR alignment", kind: "command", status: "running",
+                command: "STAR --runThreadN 16 --genomeDir /ref/hg38",
+                // Relative to now, so the running card shows a plausible elapsed time.
+                created_at: Math.floor(Date.now() / 1000) - 95,
+                started_at: Math.floor(Date.now() / 1000) - 90,
+                ended_at: null, exit_code: null,
+                stdout_tail: "..... started mapping\nMar 12 loading genome",
+                stderr_tail: null, remote_workdir: "/scratch/wisp/r2",
+                timeout_secs: 14400, last_poll_error: null,
+                progress_json: "",
+                env_snapshot_json: JSON.stringify({
+                  context_id: "ssh:cpu1",
+                  config: { host: "cpu1", python_executable: "/usr/bin/python3" },
+                  capabilities: { python_executable: "/usr/bin/python3", r_jsonlite: false },
+                }),
               },
             ];
           case "list_ssh_hosts":

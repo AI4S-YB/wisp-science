@@ -1178,6 +1178,11 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .run-monitor-output { margin-top:8px; }
 .run-monitor-output > span { color:var(--text-faint); font-size:10.5px; font-weight:650; text-transform:uppercase; letter-spacing:.04em; }
 .run-monitor-output pre { max-height:150px; margin:5px 0 0; padding:8px 9px; overflow:auto; border:1px solid var(--border); border-radius:7px; background:var(--bg-sunken); color:var(--text-muted); font:11px/1.45 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.run-monitor-env { margin-top:8px; color:var(--text-faint); font-size:11px; }
+.run-monitor-env summary { cursor:pointer; }
+.run-monitor-env dl { display:grid; max-height:150px; margin:6px 0 0; padding:8px 9px; overflow:auto; grid-template-columns:auto minmax(0, 1fr); gap:3px 10px; border:1px solid var(--border); border-radius:7px; background:var(--bg-sunken); }
+.run-monitor-env dt { color:var(--text-faint); font:11px var(--font-mono); }
+.run-monitor-env dd { margin:0; color:var(--text-muted); font:11px/1.45 var(--font-mono); overflow-wrap:anywhere; }
 
 .image-generation-wrap { align-self:stretch; }
 .image-generation-card { width:min(760px, 100%); margin:0 auto; overflow:hidden; border:1px solid color-mix(in srgb, var(--clay) 42%, var(--border)); border-radius:14px; background:var(--bg-elev); box-shadow:var(--shadow-sm); }

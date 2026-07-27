@@ -2261,6 +2261,13 @@ fn App() -> impl IntoView {
                     status_cb.set(t(locale_cb.get(), "status.review_done"));
                 }
             }
+            // Deliberately ignored, not forgotten: `edit` emits Diff from
+            // `before()` — ahead of the write, and even when the edit then
+            // fails — and emits FileChanged for the same path from `run()`
+            // once the bytes land. Refreshing on Diff would just reload the
+            // pre-edit file. It stays in the enum because dropping a variant
+            // from a tagged enum breaks deserialization of the events the
+            // backend still sends.
             AgentEvent::Diff { .. } => {}
             AgentEvent::FileChanged { path, .. } => {
                 let root = project_info_cb.get_untracked().map(|project| project.root);
@@ -11693,6 +11700,10 @@ fn RunMonitorCard(
     let locale = use_locale();
     let fallback = serde_json::from_str::<RunRecord>(&tool_output).ok();
     let lookup_id = run_id.clone();
+    // Outside the card closure on purpose: the run list refresh re-renders the
+    // body every few seconds, which would snap a native `<details>` shut while
+    // the user is reading it.
+    let env_open = create_rw_signal(false);
     view! {
         {move || {
             let run = runs
@@ -11732,12 +11743,23 @@ fn RunMonitorCard(
             let ended = run.ended_at.unwrap_or_else(|| js_sys::Date::now() as i64 / 1000);
             let elapsed_value = transfer_duration(ended.saturating_sub(started) as u64);
             let elapsed = tf(locale.get(), "runs.elapsed", &[("time", &elapsed_value)]);
-            let meta = format!("{} · {} · {elapsed}", run.context_id, run.kind);
+            let mut meta = format!("{} · {} · {elapsed}", run.context_id, run.kind);
+            // The wall limit only tells the user anything while the run can still
+            // hit it, so finished runs keep the shorter line.
+            if let Some(limit) = run.timeout_secs.filter(|_| active).filter(|secs| *secs > 0) {
+                let limit = transfer_duration(limit as u64);
+                meta.push_str(" · ");
+                meta.push_str(&tf(locale.get(), "runs.timeout", &[("time", &limit)]));
+            }
             let progress = run_progress(&run);
             let output = run_output_preview(&run);
             let command = run.command.clone().filter(|value| !value.trim().is_empty());
             let remote_workdir = run.remote_workdir.clone();
             let poll_error = run.last_poll_error.clone().filter(|value| !value.trim().is_empty());
+            // ponytail: flat `key: value` rows only — nested `config`/`capabilities`
+            // render as compact JSON, not a tree. Unparseable or empty snapshots
+            // (old rows, transfer runs) yield no pairs, so the block disappears.
+            let env_pairs = research::metadata_pairs(&run.env_snapshot_json);
             let cancel_id = run.id.clone();
             view! {
                 <article class="run-monitor-card" data-testid="run-monitor-card" data-run-id=run.id>
@@ -11783,6 +11805,21 @@ fn RunMonitorCard(
                             <span>{t(locale.get(), "runs.output")}</span>
                             <pre>{output}</pre>
                         </div>
+                    })}
+                    {(!env_pairs.is_empty()).then(|| view! {
+                        <details class="run-monitor-env" data-testid="run-monitor-env"
+                            open=env_open.get()>
+                            <summary on:click=move |event| {
+                                event.prevent_default();
+                                env_open.update(|open| *open = !*open);
+                            }>{t(locale.get(), "runs.environment")}</summary>
+                            <dl>
+                                {env_pairs.into_iter().map(|(key, value)| view! {
+                                    <dt>{key}</dt>
+                                    <dd>{value}</dd>
+                                }).collect_view()}
+                            </dl>
+                        </details>
                     })}
                     {poll_error.map(|error| view! { <div class="context-error">{error}</div> })}
                 </article>
