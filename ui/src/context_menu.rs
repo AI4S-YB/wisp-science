@@ -1,5 +1,6 @@
 use crate::app_support::SessionTransferMode;
 use crate::i18n::{self, Locale};
+use crate::window_capture_escape;
 use leptos::*;
 use wasm_bindgen::prelude::*;
 
@@ -715,6 +716,13 @@ pub fn ContextMenuPortal(
     on_pick: Callback<(String, String)>,
 ) -> impl IntoView {
     let submenu_anchor = create_rw_signal(None::<SubmenuAnchor>);
+    window_capture_escape(move || {
+        if submenu_anchor.get_untracked().is_none() {
+            return false;
+        }
+        submenu_anchor.set(None);
+        true
+    });
 
     view! {
         {move || {

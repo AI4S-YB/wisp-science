@@ -2,6 +2,7 @@ use crate::app_support::compose_icon;
 use crate::bindings::invoke;
 use crate::dto::{ResearchEdge, ResearchGraph, ResearchNode};
 use crate::i18n::{t, tf, Locale};
+use crate::window_capture_escape;
 use leptos::*;
 use std::collections::HashMap;
 use wasm_bindgen::JsValue;
@@ -510,6 +511,13 @@ pub(super) fn ResearchGraphModal(
 ) -> impl IntoView {
     let graph_view = create_rw_signal(false);
     let selected_edge = create_rw_signal::<Option<ResearchEdge>>(None);
+    window_capture_escape(move || {
+        if selected_edge.get_untracked().is_none() {
+            return false;
+        }
+        selected_edge.set(None);
+        true
+    });
     view! {
         <div class="overlay research-graph-overlay" role="presentation"
             on:click=move |_| on_close.call(())>
@@ -517,13 +525,6 @@ pub(super) fn ResearchGraphModal(
                 data-testid="research-graph-modal"
                 aria-labelledby="research-graph-title" aria-describedby="research-graph-summary"
                 tabindex="-1"
-                on:keydown:undelegated=move |event| {
-                    if event.key() == "Escape" {
-                        event.prevent_default();
-                        event.stop_propagation();
-                        on_close.call(());
-                    }
-                }
                 on:click=|event| event.stop_propagation()>
                 <header class="research-graph-head">
                     <div class="research-graph-heading">
@@ -555,7 +556,7 @@ pub(super) fn ResearchGraphModal(
                                 <span>{move || t(locale.get(), "graph.view.graph")}</span>
                             </button>
                         </div>
-                        <button type="button" class="ps-close" autofocus=true
+                        <button type="button" class="ps-close"
                             title=move || t(locale.get(), "graph.close")
                             aria-label=move || t(locale.get(), "graph.close")
                             on:click=move |_| on_close.call(())>{compose_icon("close")}</button>

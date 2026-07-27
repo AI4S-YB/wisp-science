@@ -2258,6 +2258,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             // Long-approval path (#63 regression test): emit a confirm-request
             // whose body is far taller than the viewport.
+            if (String(arg("message") ?? "").includes("NEEDPLAN")) {
+              setTimeout(
+                () =>
+                  emit("confirm-request", {
+                    frame_id: fid,
+                    message: "Review the proposed plan",
+                    tool: "update_plan",
+                    preview: "[x] Inspect the evidence\n[~] Implement the change\n[ ] Run verification",
+                  }),
+                50,
+              );
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("NEEDCONFIRM")) {
               const longBody = Array.from({ length: 120 }, (_, i) => `rm -rf /mock/path/line-${i}`).join("\n");
               setTimeout(
