@@ -11131,6 +11131,60 @@ fn toggle_disclosure(states: RwSignal<HashMap<String, bool>>, id: &str, automati
     });
 }
 
+/// Collapsed-header label for a step group. `elapsed` is the pre-formatted run
+/// duration, and is only ever `Some` for a settled step-count header — the
+/// running and activity-done headers show it in the meta slot instead.
+fn steps_title(
+    locale: Locale,
+    completed_turn: bool,
+    live: bool,
+    n_tools: usize,
+    elapsed: Option<&str>,
+) -> String {
+    match (completed_turn, live, n_tools, elapsed) {
+        (true, _, _, _) => t(locale, "chat.activity_done").to_string(),
+        (_, true, _, _) => t(locale, "chat.steps_running").to_string(),
+        (_, _, 1, None) => t(locale, "chat.steps_1").to_string(),
+        (_, _, 1, Some(d)) => tf(locale, "chat.steps_1_time", &[("t", d)]),
+        (_, _, n, None) => tf(locale, "chat.steps_n", &[("n", &n.to_string())]),
+        (_, _, n, Some(d)) => tf(
+            locale,
+            "chat.steps_n_time",
+            &[("n", &n.to_string()), ("t", d)],
+        ),
+    }
+}
+
+#[cfg(test)]
+mod steps_title_tests {
+    use super::{steps_title, Locale};
+
+    #[test]
+    fn folds_the_run_duration_into_settled_step_counts() {
+        assert_eq!(steps_title(Locale::En, false, false, 1, None), "Ran 1 step");
+        assert_eq!(
+            steps_title(Locale::En, false, false, 1, Some("2s")),
+            "Ran 1 step · 2s"
+        );
+        assert_eq!(
+            steps_title(Locale::Zh, false, false, 3, Some("1.4s")),
+            "已执行 3 步 · 1.4s"
+        );
+    }
+
+    #[test]
+    fn running_and_done_headers_ignore_the_duration() {
+        assert_eq!(
+            steps_title(Locale::En, false, true, 3, Some("2s")),
+            "Working…"
+        );
+        assert_eq!(
+            steps_title(Locale::En, true, false, 3, Some("2s")),
+            steps_title(Locale::En, true, false, 3, None)
+        );
+    }
+}
+
 fn render_steps_group(
     items: Vec<ChatItem>,
     live: bool,
@@ -11160,19 +11214,24 @@ fn render_steps_group(
             _ => 0,
         })
         .sum();
-    let title = move || {
-        if completed_turn {
-            t(locale.get(), "chat.activity_done").to_string()
-        } else if live {
-            t(locale.get(), "chat.steps_running").to_string()
-        } else if n_tools == 1 {
-            t(locale.get(), "chat.steps_1").to_string()
-        } else {
-            tf(locale.get(), "chat.steps_n", &[("n", &n_tools.to_string())])
-        }
-    };
     let total_label =
         (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
+    // A settled step-count header reads better with the duration inline; the
+    // running and activity-done headers keep it in the right-aligned meta slot,
+    // where it doubles as a ticking total.
+    let inline_time = (!completed_turn && !live)
+        .then(|| total_label.clone())
+        .flatten();
+    let meta_label = inline_time.is_none().then_some(total_label).flatten();
+    let title = move || {
+        steps_title(
+            locale.get(),
+            completed_turn,
+            live,
+            n_tools,
+            inline_time.as_deref(),
+        )
+    };
     // The group re-renders on every streaming delta (fingerprint-keyed row),
     // so this static line tracks the in-flight step while collapsed.
     let now_line = live.then(|| steps_now_line(&items)).flatten();
@@ -11339,7 +11398,7 @@ fn render_steps_group(
                 <span class="steps-chevron"></span>
                 <span class="steps-title">{title}</span>
                 {now_line.map(|text| view! { <span class="steps-now">{text}</span> })}
-                {total_label.map(|label| view! { <span class="steps-meta">{label}</span> })}
+                {meta_label.map(|label| view! { <span class="steps-meta">{label}</span> })}
             </button>
             <div class="steps-body">{rows}</div>
         </div>
