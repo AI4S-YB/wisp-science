@@ -10124,6 +10124,18 @@ fn App() -> impl IntoView {
                         RightTab::SideChat => {
                             view! {
                                 <div class="sidechat-in-pane">
+                                    <div class="sidechat-head">
+                                        <span class="sidechat-title">{move || t(locale.get(), "sidechat.title")}</span>
+                                        <button type="button" class="icon-btn"
+                                            title=move || t(locale.get(), "sidechat.close")
+                                            aria-label=move || t(locale.get(), "sidechat.close")
+                                            on:click=move |_| close_right_tab(
+                                                RightTab::SideChat,
+                                                show_right,
+                                                open_right_tabs,
+                                                right_tab,
+                                            )>{compose_icon("close")}</button>
+                                    </div>
                                     <div class="sidechat-log" id=SIDE_CHAT_SCROLLER_ID>
                                         {move || {
                                             let rows = side_chat_items.get();
