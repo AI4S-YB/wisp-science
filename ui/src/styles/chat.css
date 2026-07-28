@@ -154,6 +154,26 @@
 .plan-card-actions button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 10.5px; cursor: pointer; }
 .plan-card-actions button.primary { border-color: var(--clay); background: var(--clay); color: var(--on-clay); }
 
+.plan-question-card { overflow: hidden; border: 1px solid color-mix(in srgb, var(--clay) 26%, var(--border)); border-radius: 12px; background: var(--bg-elev); box-shadow: 0 4px 18px rgba(29, 25, 19, .055); }
+.plan-question-head { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--clay-soft) 48%, var(--bg-elev)); }
+.plan-question-head .plan-question-icon { display: inline-flex; color: var(--clay-strong); }
+.plan-question-head .gi { width: 16px; height: 16px; }
+.plan-question-head strong { color: var(--text); font-size: 11.5px; }
+.plan-question-text { margin: 0; padding: 12px 16px 4px; color: var(--text); font-size: 13px; line-height: 1.62; }
+.plan-question-card[data-state="answered"] .plan-question-text,
+.plan-question-card[data-state="expired"] .plan-question-text { padding-bottom: 12px; }
+.plan-question-options { display: flex; flex-direction: column; gap: 7px; padding: 10px 16px; }
+.plan-question-options button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.plan-question-options button:hover { border-color: var(--clay); }
+.plan-question-options button span { color: var(--text-faint); font-size: 10.5px; }
+.plan-question-freeform { display: flex; gap: 7px; padding: 10px 16px 12px; }
+.plan-question-freeform input { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-sunken); color: var(--text); font: inherit; font-size: 12px; }
+.plan-question-freeform button { flex: none; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 10.5px; cursor: pointer; }
+.plan-question-freeform button.primary { border-color: var(--clay); background: var(--clay); color: var(--on-clay); }
+.plan-question-freeform button:disabled { opacity: .5; cursor: default; }
+.plan-question-note { padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-faint); font-size: 10.5px; }
+.plan-question-note.expired { color: var(--text-muted); font-style: italic; }
+
 .topbar {
   position: relative; z-index: 20; display: flex; align-items: center; gap: 12px;
   padding: 9px 14px; border-bottom: 1px solid var(--border);

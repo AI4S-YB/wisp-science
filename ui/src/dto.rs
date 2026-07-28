@@ -250,6 +250,7 @@ pub(crate) enum ChatItem {
     },
     Review(ReviewReport),
     Plan(PlanCard),
+    Question(QuestionCard),
 }
 
 #[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -334,6 +335,7 @@ impl ChatItem {
             Self::ReviewTransition { phase, model } => (11u8, phase, model).hash(&mut h),
             Self::Review(report) => (5u8, report).hash(&mut h),
             Self::Plan(plan) => (7u8, plan).hash(&mut h),
+            Self::Question(question) => (12u8, question).hash(&mut h),
         }
         h.finish()
     }
@@ -513,6 +515,173 @@ mod plan_card_tests {
         }));
         let body = serde_json::json!({ "v": 1, "source": "acp", "entries": card.entries });
         assert_eq!(parse_plan_card(&body), card);
+    }
+}
+
+/// The built-in question tool. Like `propose_plan`, its result is the card's
+/// body, so the tool event never renders as an ordinary tool row.
+pub(crate) const ASK_USER_TOOL: &str = "ask_user";
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) struct QuestionOption {
+    #[serde(default)]
+    pub(crate) label: String,
+    #[serde(default)]
+    pub(crate) description: String,
+}
+
+/// Card lifecycle. `Answered` is never persisted for the built-in source — a
+/// question counts as answered once a later user message exists (the answer IS
+/// that message). The ACP source persists `expired` for pendings that can no
+/// longer be resolved (the bridge process died with them).
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) enum QuestionState {
+    #[default]
+    Pending,
+    Answered,
+    Expired,
+}
+
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) struct QuestionCard {
+    pub(crate) question: String,
+    pub(crate) options: Vec<QuestionOption>,
+    pub(crate) allow_freeform: bool,
+    pub(crate) source: PlanSource,
+    /// Present only for the ACP source: the pending id `respond_ask_user` resolves.
+    pub(crate) request_id: Option<String>,
+    pub(crate) state: QuestionState,
+}
+
+/// Parses the `ask_user` tool body, the live ACP request payload, and the
+/// reloaded row — all carry the same `{ question, options[], allow_freeform }`
+/// shape; the ACP reload row adds `request_id` and `status`. Foreign JSON, so
+/// every field is optional and junk degrades instead of failing the card.
+pub(crate) fn parse_question_card(payload: &serde_json::Value) -> QuestionCard {
+    let str_at = |key: &str| {
+        payload
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    QuestionCard {
+        question: str_at("question").unwrap_or_default(),
+        options: payload
+            .get("options")
+            .map(|options| serde_json::from_value(options.clone()).unwrap_or_default())
+            .unwrap_or_default(),
+        allow_freeform: payload
+            .get("allow_freeform")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        source: str_at("source")
+            .map(PlanSource::from)
+            .unwrap_or_default(),
+        request_id: str_at("request_id").filter(|id| !id.is_empty()),
+        state: match str_at("status").as_deref() {
+            Some("answered") => QuestionState::Answered,
+            Some("expired") => QuestionState::Expired,
+            _ => QuestionState::Pending,
+        },
+    }
+}
+
+/// Reload-time answered detection for the built-in source: a question is
+/// answered once any user message follows it — the answer is that message.
+/// ACP rows reload after the transcript with their own persisted status, so
+/// no user message follows them and this leaves them untouched.
+pub(crate) fn settle_question_cards(items: &mut [ChatItem]) {
+    let last_user = items
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)));
+    let Some(last_user) = last_user else { return };
+    for item in &mut items[..last_user] {
+        if let ChatItem::Question(card) = item {
+            if card.state == QuestionState::Pending {
+                card.state = QuestionState::Answered;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod question_card_tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_tool_body() {
+        let card = parse_question_card(&serde_json::json!({
+            "question": "Which schema?",
+            "options": [
+                { "label": "v1", "description": "keep the old shape" },
+                { "label": "v2" },
+            ],
+            "allow_freeform": false,
+            "source": "native",
+        }));
+        assert_eq!(card.question, "Which schema?");
+        assert_eq!(card.options.len(), 2);
+        assert_eq!(card.options[0].label, "v1");
+        assert_eq!(card.options[1].description, "");
+        assert!(!card.allow_freeform);
+        assert_eq!(card.source, PlanSource::Native);
+        assert_eq!(card.request_id, None);
+        assert_eq!(card.state, QuestionState::Pending);
+    }
+
+    #[test]
+    fn parses_the_acp_reload_row() {
+        let card = parse_question_card(&serde_json::json!({
+            "question": "Deploy now?",
+            "request_id": "ask-1",
+            "status": "expired",
+        }));
+        assert_eq!(card.request_id.as_deref(), Some("ask-1"));
+        assert_eq!(card.state, QuestionState::Expired);
+        assert!(card.allow_freeform, "freeform defaults on");
+        assert_eq!(card.source, PlanSource::Acp);
+    }
+
+    #[test]
+    fn junk_degrades_instead_of_failing() {
+        let card = parse_question_card(&serde_json::json!({ "options": "nope" }));
+        assert_eq!(card.question, "");
+        assert!(card.options.is_empty());
+        assert_eq!(card.state, QuestionState::Pending);
+    }
+
+    #[test]
+    fn settle_answers_only_questions_before_the_last_user_message() {
+        let question = |state| {
+            ChatItem::Question(QuestionCard {
+                question: "q".into(),
+                state,
+                ..Default::default()
+            })
+        };
+        let mut items = vec![
+            question(QuestionState::Pending),
+            ChatItem::User("the answer".into()),
+            question(QuestionState::Pending),
+        ];
+        settle_question_cards(&mut items);
+        assert!(
+            matches!(&items[0], ChatItem::Question(card) if card.state == QuestionState::Answered)
+        );
+        assert!(
+            matches!(&items[2], ChatItem::Question(card) if card.state == QuestionState::Pending),
+            "a question after the last user message is still open"
+        );
+
+        let mut expired = vec![
+            question(QuestionState::Expired),
+            ChatItem::User("later chatter".into()),
+        ];
+        settle_question_cards(&mut expired);
+        assert!(
+            matches!(&expired[0], ChatItem::Question(card) if card.state == QuestionState::Expired),
+            "settle never resurrects an expired card"
+        );
     }
 }
 
@@ -1167,6 +1336,28 @@ pub(crate) struct AcpPermissionRequest {
     pub(crate) options: Vec<AcpPermissionOption>,
 }
 
+/// `ask-user-request`: an ACP agent's bridge `ask_user` call waiting for the
+/// user. `payload` is the tool body `parse_question_card` reads.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AskUserRequest {
+    pub(crate) request_id: String,
+    pub(crate) frame_id: String,
+    #[serde(default)]
+    pub(crate) payload: serde_json::Value,
+}
+
+/// `ask-user-resolved`: the pending question was answered (or expired with the
+/// turn) and its card should settle.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AskUserResolved {
+    pub(crate) request_id: String,
+    pub(crate) frame_id: String,
+    #[serde(default)]
+    pub(crate) expired: bool,
+}
+
 #[derive(Deserialize, Clone)]
 pub(crate) struct SessionInfo {
     pub(crate) id: String,
@@ -1308,6 +1499,13 @@ impl LoadedItem {
                 }),
             "plan" => serde_json::from_str(&self.text)
                 .map(|payload: serde_json::Value| ChatItem::Plan(parse_plan_card(&payload)))
+                .unwrap_or_else(|_| ChatItem::Assistant {
+                    text: self.text,
+                    model: None,
+                    resources: self.resources,
+                }),
+            "question" => serde_json::from_str(&self.text)
+                .map(|payload: serde_json::Value| ChatItem::Question(parse_question_card(&payload)))
                 .unwrap_or_else(|_| ChatItem::Assistant {
                     text: self.text,
                     model: None,
