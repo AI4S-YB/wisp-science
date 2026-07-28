@@ -4990,10 +4990,12 @@ fn App() -> impl IntoView {
         delegation_enabled.set(false);
         delegation_setting_busy.set(false);
         plan_mode_busy.set(false);
+        // Reset before the fetch: otherwise the previous session's flag shows
+        // on the new one for as long as the round trip takes.
+        local_plan_mode.set(Some(false));
         agent_completion.set(AgentCompletionSettings::default());
         agent_completion_busy.set(false);
         let Some(session_id) = active_session.get() else {
-            local_plan_mode.set(Some(false));
             return;
         };
         spawn_local(async move {
