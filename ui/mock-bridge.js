@@ -140,6 +140,8 @@
   let nextCustomCredential = 1;
   // frame_id -> enabled execution context ids, mirroring session_execution_contexts.
   const sessionContexts = {};
+  // s1 demonstrates an ACP-bound conversation; the others use built-in agents.
+  const mockAcpSessions = new Set(["s1"]);
   // frame_id -> built-in plan mode flag (settings key frame_plan_mode:<id>).
   const mockPlanMode = {};
   // Agent-created SSH trust edges (ssh_trust_edges_v1). One edge whose
@@ -271,10 +273,12 @@
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: sessions.length, artifact_count: 3, updated_at: 1 };
           case "delete_project":
             return null;
-          case "get_acp_session_state":
+          case "get_acp_session_state": {
+            if (!mockAcpSessions.has(args?.frameId)) return null;
             // Matches the real command: `availableModes` only, never
             // `currentModeId`. Swap "plan" for another id to see a compat card.
             return { availableModes: [{ id: "default" }, { id: "plan" }] };
+          }
           case "pick_directory":
             return "/Users/mock/Desktop/demo-project";
           case "load_session":
@@ -826,11 +830,13 @@
             edits.push(version);
             return version;
           }
-          // Built-in plan mode: `null` would mean "ACP-bound", which hides the
-          // composer toggle, so the mock always answers with a real boolean.
           case "get_session_plan_mode":
+            if (mockAcpSessions.has(args?.sessionId)) return null;
             return mockPlanMode[args?.sessionId] ?? false;
           case "set_session_plan_mode":
+            if (mockAcpSessions.has(args?.sessionId)) {
+              throw new Error("This conversation is bound to an ACP agent; use its own plan mode.");
+            }
             mockPlanMode[args?.sessionId] = !!args?.enabled;
             return mockPlanMode[args?.sessionId];
           default:

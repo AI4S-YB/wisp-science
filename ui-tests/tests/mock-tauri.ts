@@ -165,6 +165,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   let memoryEnabled = true;
   let autoReviewEnabled = false;
   const sessionDelegationEnabled: Record<string, boolean> = {};
+  const sessionPlanMode: Record<string, boolean> = {};
   const sessionAgentCompletion: Record<string, { policy: "inline" | "background"; auto_resume: boolean }> = {};
   let lastDelegationSessionId = "s-current";
   // Mutable workspace fixture lets live FileChanged events prove that open
@@ -1286,6 +1287,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               },
             };
           }
+          case "get_acp_session_state": {
+            const frameId = String(arg("frameId") ?? "");
+            if (!acpBindings[frameId]) return null;
+            return {
+              availableModes: [
+                { id: "default", name: "Default" },
+                { id: "plan", name: "Plan" },
+              ],
+            };
+          }
           case "get_acp_session_agent":
             return acpBindings[String(arg("frameId") ?? "")] ?? null;
           case "save_acp_agent": {
@@ -2112,6 +2123,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               }
             }
             return sessionDelegationEnabled[sessionId];
+          }
+          case "get_session_plan_mode": {
+            const sessionId = String(arg("sessionId") ?? "");
+            return acpBindings[sessionId] ? null : sessionPlanMode[sessionId] ?? false;
+          }
+          case "set_session_plan_mode": {
+            const sessionId = String(arg("sessionId") ?? "");
+            if (acpBindings[sessionId]) {
+              throw new Error("This conversation is bound to an ACP agent; use its own plan mode.");
+            }
+            sessionPlanMode[sessionId] = Boolean(arg("enabled"));
+            return sessionPlanMode[sessionId];
           }
           case "get_session_agent_completion": {
             const sessionId = String(arg("sessionId") ?? "");
