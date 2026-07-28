@@ -201,8 +201,11 @@ documented in [Feature plugins](docs/feature-plugins.md).
 
 The experimental **StickS3 Device Bridge** is configured beside Feishu and
 WeChat under **Settings → Remote Access**. LAN mode uses authenticated HTTP
-polling on one explicitly selected IPv4 address; a separate relay-server mode is
-reserved for a later phase. See the [StickS3 Device Bridge guide](docs/sticks3-device-bridge.md).
+polling on one explicitly selected IPv4 address. It exposes the current
+physical-pet state plus authenticated manifest and `120×130` PNG frame
+resources generated from the configured Codex-compatible v2 desktop Pet. A
+separate relay-server mode is reserved for a later phase. See the
+[StickS3 Device Bridge guide](docs/sticks3-device-bridge.md).
 
 Projects can also be synchronized explicitly between devices. Configure either
 a self-hosted relay or a folder managed by the Baidu Netdisk/Nutstore desktop

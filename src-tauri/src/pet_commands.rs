@@ -1,6 +1,7 @@
 use super::{desktop_lifecycle, AppState};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::Path};
 use tauri::{Emitter, State};
 
@@ -28,6 +29,18 @@ pub(super) struct PetAsset {
     sprite_version_number: u8,
     spritesheet_data_url: String,
     frame_counts: BTreeMap<String, u8>,
+}
+
+#[derive(Debug)]
+pub(super) struct ValidatedPetSource {
+    pub(super) id: String,
+    pub(super) display_name: String,
+    pub(super) description: String,
+    pub(super) sprite_version_number: u8,
+    pub(super) spritesheet_mime: &'static str,
+    pub(super) spritesheet: Vec<u8>,
+    pub(super) frame_counts: BTreeMap<String, u8>,
+    pub(super) package_revision: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -143,15 +156,16 @@ fn image_format_and_dimensions(bytes: &[u8]) -> Option<(&'static str, (u32, u32)
         .or_else(|| png_dimensions(bytes).map(|dimensions| ("image/png", dimensions)))
 }
 
-fn validation_frame_counts(directory: &Path) -> Result<BTreeMap<String, u8>, String> {
+fn validation_frame_counts(
+    directory: &Path,
+) -> Result<(BTreeMap<String, u8>, Option<Vec<u8>>), String> {
     let path = directory.join("validation.json");
     if !path.is_file() {
-        return Ok(default_frame_counts());
+        return Ok((default_frame_counts(), None));
     }
-    let report: ValidationReport = serde_json::from_slice(
-        &fs::read(&path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?,
-    )
-    .map_err(|e| format!("Invalid {}: {e}", path.display()))?;
+    let bytes = fs::read(&path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+    let report: ValidationReport =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid {}: {e}", path.display()))?;
     if !report.ok
         || report.columns != 8
         || report.rows != 11
@@ -173,10 +187,10 @@ fn validation_frame_counts(directory: &Path) -> Result<BTreeMap<String, u8>, Str
             counts.insert(state, used.clamp(1, 8));
         }
     }
-    Ok(counts)
+    Ok((counts, Some(bytes)))
 }
 
-pub(super) fn load_pet_asset(directory: &Path) -> Result<PetAsset, String> {
+pub(super) fn load_pet_source(directory: &Path) -> Result<ValidatedPetSource, String> {
     if !directory.is_absolute() {
         return Err("Pet directory must be an absolute path.".into());
     }
@@ -187,11 +201,10 @@ pub(super) fn load_pet_asset(directory: &Path) -> Result<PetAsset, String> {
         return Err(format!("Pet path is not a directory: {}", root.display()));
     }
     let manifest_path = root.join("pet.json");
-    let manifest: PetManifest = serde_json::from_slice(
-        &fs::read(&manifest_path)
-            .map_err(|e| format!("Cannot read {}: {e}", manifest_path.display()))?,
-    )
-    .map_err(|e| format!("Invalid {}: {e}", manifest_path.display()))?;
+    let manifest_bytes = fs::read(&manifest_path)
+        .map_err(|e| format!("Cannot read {}: {e}", manifest_path.display()))?;
+    let manifest: PetManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| format!("Invalid {}: {e}", manifest_path.display()))?;
     if manifest.id.trim().is_empty() || manifest.display_name.trim().is_empty() {
         return Err("Pet id and displayName are required.".into());
     }
@@ -223,14 +236,53 @@ pub(super) fn load_pet_asset(directory: &Path) -> Result<PetAsset, String> {
             dimensions.0, dimensions.1
         ));
     }
-    let frame_counts = validation_frame_counts(&root)?;
-    Ok(PetAsset {
+    let (frame_counts, validation_bytes) = validation_frame_counts(&root)?;
+    let mut revision = Sha256::new();
+    revision.update(b"wisp-pet-package-v2\0pet.json\0");
+    revision.update((manifest_bytes.len() as u64).to_le_bytes());
+    revision.update(&manifest_bytes);
+    revision.update(b"\0spritesheet\0");
+    revision.update((spritesheet.len() as u64).to_le_bytes());
+    revision.update(&spritesheet);
+    revision.update(b"\0validation.json\0");
+    match validation_bytes {
+        Some(bytes) => {
+            revision.update([1]);
+            revision.update((bytes.len() as u64).to_le_bytes());
+            revision.update(bytes);
+        }
+        None => revision.update([0]),
+    }
+    revision.update(b"\0effective-frame-counts\0");
+    for (state, count) in &frame_counts {
+        revision.update(state.as_bytes());
+        revision.update([0, *count]);
+    }
+    Ok(ValidatedPetSource {
         id: manifest.id,
         display_name: manifest.display_name,
         description: manifest.description,
         sprite_version_number: manifest.sprite_version_number,
-        spritesheet_data_url: format!("data:{mime};base64,{}", STANDARD.encode(spritesheet)),
+        spritesheet_mime: mime,
+        spritesheet,
         frame_counts,
+        package_revision: format!("{:x}", revision.finalize()),
+    })
+}
+
+pub(super) fn load_pet_asset(directory: &Path) -> Result<PetAsset, String> {
+    let source = load_pet_source(directory)?;
+    Ok(PetAsset {
+        id: source.id,
+        display_name: source.display_name,
+        description: source.description,
+        sprite_version_number: source.sprite_version_number,
+        spritesheet_data_url: format!(
+            "data:{};base64,{}",
+            source.spritesheet_mime,
+            STANDARD.encode(source.spritesheet)
+        ),
+        frame_counts: source.frame_counts,
     })
 }
 

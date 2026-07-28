@@ -6070,8 +6070,10 @@ pub fn run() {
                 browser_bridge::BrowserBridge::start(browser_extension_dir),
             );
             let device_hub = Arc::new(device_hub::DeviceHub::default());
-            let device_bridge =
-                Arc::new(device_bridge::DeviceBridge::new(device_hub.clone()));
+            let device_bridge = Arc::new(device_bridge::DeviceBridge::new(
+                device_hub.clone(),
+                store.clone(),
+            ));
             if let Ok((attempts, workflows)) = tauri::async_runtime::block_on(
                 store.recover_interrupted_agent_workflows(),
             ) {
