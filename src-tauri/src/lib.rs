@@ -6039,6 +6039,7 @@ pub fn run() {
             channels::weixin_unbind,
             acp::list_acp_agents,
             acp::get_acp_session_agent,
+            acp::get_acp_session_state,
             acp::save_acp_agent,
             acp::remove_acp_agent,
             acp::test_acp_agent,

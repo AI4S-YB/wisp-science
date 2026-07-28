@@ -1094,6 +1094,33 @@ fn App() -> impl IntoView {
             active_acp_agent_id.set(next);
         });
     });
+    // `acp-session-state` only fires while a turn runs, so after an app restart
+    // the mode controls would stay hidden until the user sent a message. Seed
+    // the cached `availableModes` on open instead — `or_insert` so a session
+    // that already has live state (including `currentModeId`) is left alone.
+    create_effect(move |_| {
+        let Some(session_id) = active_session.get() else {
+            return;
+        };
+        if acp_session_modes.with_untracked(|all| all.contains_key(&session_id)) {
+            return;
+        }
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "frameId": session_id.clone() })).unwrap();
+            let Ok(value) = invoke_checked("get_acp_session_state", args).await else {
+                return;
+            };
+            let Ok(Some(modes)) =
+                serde_wasm_bindgen::from_value::<Option<serde_json::Value>>(value)
+            else {
+                return;
+            };
+            acp_session_modes.update(|all| {
+                all.entry(session_id).or_insert(modes);
+            });
+        });
+    });
+
     refresh_session_history();
     refresh_folders(folders);
 

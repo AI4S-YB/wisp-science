@@ -269,6 +269,10 @@
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: sessions.length, artifact_count: 3, updated_at: 1 };
           case "delete_project":
             return null;
+          case "get_acp_session_state":
+            // Matches the real command: `availableModes` only, never
+            // `currentModeId`. Swap "plan" for another id to see a compat card.
+            return { availableModes: [{ id: "default" }, { id: "plan" }] };
           case "pick_directory":
             return "/Users/mock/Desktop/demo-project";
           case "load_session":
