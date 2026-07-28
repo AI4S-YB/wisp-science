@@ -1203,6 +1203,17 @@ fn windows_close_to_tray_applies_only_to_the_main_window() {
 }
 
 #[test]
+fn windows_path_repair_recovers_trailing_user_entries() {
+    let inherited = r"C:\Windows\System32;C:\TOOLS\;C:\";
+    let user = r"C:\IgnoredWithoutSlash;C:\tools\;C:\Users\Ada\AppData\Local\pixi\bin\;D:\";
+
+    assert_eq!(
+        super::repair_windows_path(inherited, user),
+        r"C:\Windows\System32;C:\TOOLS;C:\;C:\Users\Ada\AppData\Local\pixi\bin;D:\"
+    );
+}
+
+#[test]
 fn project_window_url_carries_the_target_session() {
     assert_eq!(
         super::project_commands::project_window_url("abc", None),

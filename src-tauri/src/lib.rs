@@ -5738,9 +5738,9 @@ fn set_dev_flag(app: &tauri::AppHandle) {
 /// missing. Resolve the user's real login-shell `PATH` once, up front, and set
 /// it on the process so every downstream consumer sees the same `PATH` the
 /// terminal does. Runs before any threads spawn children (env mutation is safe
-/// here). No-op on Windows.
+/// here).
 #[cfg(not(target_os = "windows"))]
-fn inherit_login_shell_path() {
+fn inherit_user_path() {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     // Markers survive noisy rc files that print to stdout (p10k instant prompt,
     // MOTD, a stray `echo` in .zshrc). `-ilc` sources both login (.zprofile,
@@ -5767,12 +5767,66 @@ fn inherit_login_shell_path() {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn trim_windows_path_entry(entry: &str) -> &str {
+    let trimmed = entry.trim_end_matches('\\');
+    let is_drive_root = trimmed.len() == 2 && trimmed.as_bytes()[1] == b':';
+    if trimmed.is_empty() || is_drive_root {
+        entry
+    } else {
+        trimmed
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn repair_windows_path(inherited_path: &str, user_path: &str) -> String {
+    let mut entries = if inherited_path.is_empty() {
+        Vec::new()
+    } else {
+        inherited_path
+            .split(';')
+            .map(|entry| trim_windows_path_entry(entry).to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    // Explorer can omit User PATH entries ending in `\` from a desktop app's
+    // environment block. Recover only those affected entries from the registry
+    // so terminal-specific additions to the inherited PATH remain intact.
+    for entry in user_path.split(';').filter(|entry| entry.ends_with('\\')) {
+        let entry = trim_windows_path_entry(entry);
+        if !entry.is_empty()
+            && !entries
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(entry))
+        {
+            entries.push(entry.to_owned());
+        }
+    }
+
+    entries.join(";")
+}
+
 #[cfg(target_os = "windows")]
-fn inherit_login_shell_path() {}
+fn inherit_user_path() {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let Ok(inherited_path) = std::env::var("PATH") else {
+        return;
+    };
+    let user_path: String = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .and_then(|key| key.get_value("Path"))
+        .unwrap_or_default();
+    let repaired_path = repair_windows_path(&inherited_path, &user_path);
+    if !repaired_path.is_empty() && repaired_path != inherited_path {
+        std::env::set_var("PATH", repaired_path);
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    inherit_login_shell_path();
+    inherit_user_path();
     let filter = tracing_subscriber::EnvFilter::from_default_env()
         .add_directive("wisp=info".parse().unwrap());
     let subscriber = tracing_subscriber::fmt().with_env_filter(filter);
