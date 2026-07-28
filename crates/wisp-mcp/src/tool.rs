@@ -181,6 +181,12 @@ impl Tool for McpTool {
             Approval::Allow
         }
     }
+    /// The server's own `readOnlyHint`, which the bundled bio/literature
+    /// retrieval servers set on every query tool. Anything that omits it — or
+    /// says `false` — stays blocked in plan mode.
+    fn read_only(&self) -> bool {
+        self.remote.read_only()
+    }
     fn preview(&self, args: &Value) -> String {
         let s = args.to_string();
         s.chars().take(120).collect()

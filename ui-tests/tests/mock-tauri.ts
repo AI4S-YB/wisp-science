@@ -840,12 +840,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 items: [
                   { role: "user", text: "Prepare the regression plan", tool_name: null, ok: null },
                   // This is the load_session row produced from the persisted
-                  // `wisp:plan` tool message; LoadedItem::into_chat rebuilds it.
+                  // plan tool message — `wisp:plan` for ACP, the `propose_plan`
+                  // result for built-in; LoadedItem::into_chat rebuilds both.
                   {
                     role: "plan",
                     text: JSON.stringify({
                       v: 1,
-                      source: "acp",
+                      source: mockPlanFlow === "native" ? "native" : "acp",
                       entries: [
                         { content: "Inspect the existing behavior", status: "completed", priority: "medium" },
                         { content: "Wire the plan flow", status: "in_progress", priority: "high" },

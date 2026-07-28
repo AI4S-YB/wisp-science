@@ -3581,6 +3581,21 @@ pub(super) fn strip_approval_pending(items: &mut Vec<ChatItem>) {
     });
 }
 
+/// Land a live plan update: it replaces only the card this turn is still
+/// writing, so plans from earlier turns stay as the plan's history. Shared by
+/// the ACP plan update and the built-in `propose_plan` result.
+pub(super) fn upsert_plan_card(items: &mut Vec<ChatItem>, card: PlanCard) {
+    if let Some(index) = items
+        .iter()
+        .rposition(|row| matches!(row, ChatItem::Plan(plan) if plan.state == PlanState::Streaming))
+    {
+        items[index] = ChatItem::Plan(card);
+    } else {
+        let index = process_item_insert_index(items);
+        items.insert(index, ChatItem::Plan(card));
+    }
+}
+
 /// Turn end freezes the plan the turn produced. `Streaming` also marks which
 /// card live updates may replace, so settling it keeps the next turn's plan a
 /// separate card instead of overwriting this one.

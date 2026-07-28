@@ -631,6 +631,52 @@ test("plan action bar dispatches approve, modify, and save-exit correctly", asyn
   });
 });
 
+test("built-in propose_plan renders a plan card with a working action bar", async ({ page }) => {
+  await openMockPlanSession(page, "native");
+  const menu = await openAgentMenu(page);
+  await menu.locator("label.agent-menu-row", { hasText: "Plan first" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_plan_mode")).toMatchObject({
+    sessionId: "s1", enabled: true,
+  });
+  await page.keyboard.press("Escape");
+
+  // The built-in plan tool streams through the ordinary tool events; its result
+  // is the card body, so neither event may leave a tool step behind.
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolCall", frame_id: "s1", name: "propose_plan", preview: "1 steps",
+  });
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s1", name: "propose_plan", ok: true,
+    content: JSON.stringify({
+      v: 1,
+      source: "native",
+      entries: [{ content: "Wire propose_plan", status: "pending", priority: "high" }],
+      note: "Plan submitted; end your turn.",
+    }),
+  });
+
+  const live = page.getByTestId("plan-card").last();
+  await expect(page.getByTestId("plan-card")).toHaveCount(2);
+  await expect(live).toHaveClass(/streaming/);
+  await expect(live).toContainText("Wire propose_plan");
+  await expect(live).not.toContainText("end your turn");
+  await expect(page.locator(".step")).toHaveCount(0);
+  await expect(live.getByTestId("plan-compat")).toHaveCount(0);
+
+  await emitTauriEvent(page, "agent", { kind: "Done", frame_id: "s1", stop_reason: "end_turn" });
+  await expect(live).not.toHaveClass(/streaming/);
+
+  await live.getByTestId("plan-approve").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_plan_mode")).toMatchObject({
+    sessionId: "s1", enabled: false,
+  });
+  // ?mock=1 send_message does not update the thread, so assert at the invoke layer.
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    sessionId: "s1", message: "Approve and execute",
+  });
+  await expect(page.locator(".copy-toast")).toContainText("Plan approved; execution is starting");
+});
+
 test("composer plan toggle routes ACP and built-in sessions separately", async ({ page }) => {
   await openMockPlanSession(page, "acp");
   let menu = await openAgentMenu(page);

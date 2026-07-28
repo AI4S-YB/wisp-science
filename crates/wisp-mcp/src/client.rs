@@ -52,6 +52,17 @@ impl RemoteTool {
             .and_then(Value::as_str)
     }
 
+    /// The server's `readOnlyHint`: this tool only retrieves. Plan mode uses it
+    /// to keep retrieval available while blocking everything else, so an absent
+    /// or `false` hint has to stay blocked.
+    pub fn read_only(&self) -> bool {
+        self.annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get("readOnlyHint"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// MCP Apps may publish app-only helper tools. Those remain discoverable
     /// on the server connection but must not enter the agent's tool catalog.
     pub fn visible_to_model(&self) -> bool {
@@ -577,6 +588,8 @@ mod tests {
         assert!(tools[0].output_schema.is_some());
         assert!(tools[0].annotations.is_some());
         assert!(tools[0].visible_to_model());
+        // Plan mode's retrieval passthrough reads exactly this hint.
+        assert!(tools[0].read_only());
 
         let app_only = tools_into_remote(vec![json!({
             "name": "motif_refresh",
@@ -584,6 +597,10 @@ mod tests {
             "_meta": { "ui": { "visibility": ["app"] } }
         })]);
         assert!(!app_only[0].visible_to_model());
+        assert!(
+            !app_only[0].read_only(),
+            "no hint means unclassified, not read-only"
+        );
     }
 
     #[test]

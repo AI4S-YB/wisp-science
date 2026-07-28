@@ -392,8 +392,12 @@ impl From<String> for PlanPriority {
     }
 }
 
-/// Who produced the plan. Always `Acp` today; the native arm is the seat for
-/// the built-in `propose_plan` tool, which renders through the same card.
+/// The built-in plan tool. Its result is the plan card's body, so the tool
+/// event never renders as an ordinary tool row (see the `ToolResult` handler).
+pub(crate) const PROPOSE_PLAN_TOOL: &str = "propose_plan";
+
+/// Who produced the plan: the ACP agent's own plan updates, or the built-in
+/// `propose_plan` tool. Both render through the same card.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", from = "String")]
 pub(crate) enum PlanSource {

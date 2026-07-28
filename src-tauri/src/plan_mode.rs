@@ -12,9 +12,7 @@ use wisp_store::Store;
 
 const PLAN_PROMPT_START: &str = "\n\n<plan_mode>";
 const PLAN_PROMPT_END: &str = "</plan_mode>";
-/// ponytail: stage 3b replaces this wording with instructions to call the
-/// `propose_plan` tool, so the whole contract stays a one-const diff.
-const PLAN_PROMPT_SECTION: &str = "\n\n<plan_mode>\nThe user turned on plan mode for this conversation. Investigate the task and produce a plan; do not carry it out.\nResearch first — read files, search the project, and look things up until you actually understand the task. Then write the plan as ordered, concrete steps, each naming what would change and how it would be verified. Call out the open questions and the risks you found.\nDo not execute the plan. Tools that write files, run shell/Python/R code, or otherwise change state are blocked in this mode and will refuse the call; that refusal is expected, not an error to work around. Stop once the plan is written and wait for the user to approve it.\n</plan_mode>";
+const PLAN_PROMPT_SECTION: &str = "\n\n<plan_mode>\nThe user turned on plan mode for this conversation. Investigate the task and produce a plan; do not carry it out.\nResearch first — read files, search the project, and look things up until you actually understand the task. Then submit the plan with the `propose_plan` tool: ordered, concrete steps, each naming what would change and how it would be verified. Call out the open questions and the risks you found in your reply, not as plan steps. The tool call is how the plan reaches the user — a plan written only as prose is not submitted.\nDo not execute the plan. Tools that write files, run shell/Python/R code, or otherwise change state are blocked in this mode and will refuse the call; that refusal is expected, not an error to work around. End your turn right after `propose_plan` and wait for the user to approve it.\n</plan_mode>";
 
 fn setting_key(frame_id: &str) -> String {
     format!("frame_plan_mode:{frame_id}")
