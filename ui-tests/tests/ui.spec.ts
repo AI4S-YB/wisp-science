@@ -43,6 +43,36 @@ async function enterApp(page: Page, path = "/") {
   }
 }
 
+async function openMockPlanSession(page: Page, kind: "acp" | "compat" | "native") {
+  await enterApp(page, `/?mockPlanFlow=${kind}`);
+  const session = page.locator('[data-session-id="s1"]');
+  await expect(session).toBeVisible();
+  await session.click();
+  await expect(page.getByTestId("plan-card")).toBeVisible();
+}
+
+async function emitTauriEvent(page: Page, event: string, payload: unknown) {
+  await expect.poll(() => page.evaluate((name) =>
+    Boolean((window as any).__tauriListenerReady?.(name)), event
+  )).toBe(true);
+  await page.evaluate(({ name, value }) => {
+    (window as any).__tauriEmit(name, value);
+  }, { name: event, value: payload });
+}
+
+async function activateAcpPlanMode(page: Page) {
+  await emitTauriEvent(page, "acp-session-state", {
+    frameId: "s1",
+    modes: {
+      currentModeId: "plan",
+      availableModes: [
+        { id: "default", name: "Default" },
+        { id: "plan", name: "Plan" },
+      ],
+    },
+  });
+}
+
 function composer(page: Page) {
   return page.locator("#composer-input");
 }
@@ -506,6 +536,139 @@ test("ACP turn maps config, overlapping tools, plan, usage, and exact permission
 
   await page.locator(".model-picker-btn").click();
   await expect(page.getByRole("button", { name: /deepseek-v4-pro/ })).toBeDisabled();
+});
+
+test("persisted wisp:plan reload rebuilds all entry states and priority", async ({ page }) => {
+  await openMockPlanSession(page, "acp");
+
+  const assertPlan = async () => {
+    const card = page.getByTestId("plan-card");
+    const completed = card.locator('li[data-status="completed"]');
+    const inProgress = card.locator('li[data-status="in_progress"]');
+    const pending = card.locator('li[data-status="pending"]');
+
+    await expect(completed.locator(".plan-entry-mark")).toHaveText("✓");
+    await expect(inProgress.locator(".plan-entry-mark")).toHaveText("▸");
+    await expect(inProgress).toHaveCSS("font-weight", "600");
+    await expect(inProgress.getByRole("img", { name: "High priority" })).toHaveText("!");
+    await expect(pending.locator(".plan-entry-mark")).toHaveText("");
+  };
+  await assertPlan();
+
+  await page.reload();
+  await page.locator(".proj-card-main").first().click();
+  await expect(newSessionButton(page)).toBeVisible();
+  await page.locator('[data-session-id="s1"]').click();
+  await assertPlan();
+});
+
+test("live plan is dashed while streaming and settles on Done", async ({ page }) => {
+  await openMockPlanSession(page, "acp");
+  await activateAcpPlanMode(page);
+  await emitTauriEvent(page, "acp-session-update", {
+    frameId: "s1",
+    kind: "Plan",
+    payload: {
+      entries: [
+        { content: "Stream the proposed change", status: "in_progress", priority: "high" },
+      ],
+    },
+  });
+
+  const live = page.getByTestId("plan-card").last();
+  await expect(page.getByTestId("plan-card")).toHaveCount(2);
+  await expect(live).toHaveClass(/streaming/);
+  await expect(live).toHaveCSS("border-style", "dashed");
+  await expect(live).toContainText("Planning…");
+
+  await emitTauriEvent(page, "agent", {
+    kind: "Done",
+    frame_id: "s1",
+    stop_reason: "end_turn",
+  });
+  await expect(live).not.toHaveClass(/streaming/);
+  await expect(live).toHaveCSS("border-style", "solid");
+  await expect(live).toContainText("Review before execution");
+  await expect(live).not.toContainText("Planning…");
+});
+
+test("agent without plan mode renders a read-only compatibility plan", async ({ page }) => {
+  await openMockPlanSession(page, "compat");
+
+  const card = page.getByTestId("plan-card");
+  await expect(card).toHaveClass(/compat/);
+  await expect(card.getByTestId("plan-compat")).toHaveText("compat");
+  await expect(card.locator(".plan-card-actions button")).toHaveCount(0);
+});
+
+test("plan action bar dispatches approve, modify, and save-exit correctly", async ({ page }) => {
+  await openMockPlanSession(page, "acp");
+  await activateAcpPlanMode(page);
+
+  await expect(page.getByTestId("plan-approve")).toBeVisible();
+  await expect(page.getByTestId("plan-modify")).toBeVisible();
+  await expect(page.getByTestId("plan-save-exit")).toBeVisible();
+
+  await page.getByTestId("plan-modify").click();
+  await expect(composer(page)).toBeFocused();
+  expect(await invokeArgsList(page, "set_acp_session_mode")).toHaveLength(0);
+  expect(await invokeArgsList(page, "send_message")).toHaveLength(0);
+
+  await page.getByTestId("plan-save-exit").click();
+  await expect(page.locator(".copy-toast")).toContainText("Plan saved; Default mode restored");
+  await expect.poll(() => invokeArgsList(page, "set_acp_session_mode")).toEqual([
+    expect.objectContaining({ frameId: "s1", modeId: "default" }),
+  ]);
+  expect(await invokeArgsList(page, "send_message")).toHaveLength(0);
+
+  await activateAcpPlanMode(page);
+  await page.getByTestId("plan-approve").click();
+  await expect.poll(() => invokeArgsList(page, "set_acp_session_mode")).toHaveLength(2);
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    sessionId: "s1",
+    acpAgentId: "acp-test",
+    message: "Approve and execute",
+  });
+});
+
+test("composer plan toggle routes ACP and built-in sessions separately", async ({ page }) => {
+  await openMockPlanSession(page, "acp");
+  let menu = await openAgentMenu(page);
+  let row = menu.locator("label.agent-menu-row", { hasText: "Plan first" });
+  let toggle = row.getByTestId("plan-first-toggle");
+  await expect(row).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  await row.click();
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_mode")).toMatchObject({
+    frameId: "s1",
+    modeId: "plan",
+  });
+  await expect(toggle).toBeChecked();
+  await row.click();
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_mode")).toMatchObject({
+    frameId: "s1",
+    modeId: "default",
+  });
+  await expect(toggle).not.toBeChecked();
+
+  await openMockPlanSession(page, "native");
+  menu = await openAgentMenu(page);
+  row = menu.locator("label.agent-menu-row", { hasText: "Plan first" });
+  toggle = row.getByTestId("plan-first-toggle");
+  await expect(row).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  await row.click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_plan_mode")).toMatchObject({
+    sessionId: "s1",
+    enabled: true,
+  });
+  await expect(toggle).toBeChecked();
+  await row.click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_plan_mode")).toMatchObject({
+    sessionId: "s1",
+    enabled: false,
+  });
+  await expect(toggle).not.toBeChecked();
 });
 
 test("ACP turns retain explicitly selected Wisp skills", async ({ page }) => {

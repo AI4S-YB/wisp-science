@@ -53,13 +53,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     has_api_key: true,
   };
   const query = new URLSearchParams(window.location.search);
+  const mockPlanFlow = query.get("mockPlanFlow");
   const mockLongPages = Number(query.get("mockLongPages") ?? 0);
   const mockLongSession = query.get("mockLongSession") === "1" || mockLongPages > 0;
   const mockResourceSession = query.get("mockResourceSession") === "1";
   const mockMcpAppSession = query.get("mockMcpAppSession") === "1";
   const mockOAuthPending = query.get("mockOAuthPending") === "1";
   const mockOnboarding = query.get("mockOnboarding") === "1";
-  const mockSessions: any[] = query.get("mockManySessions") === "1"
+  const mockSessions: any[] = mockPlanFlow
+    ? [{ id: "s1", title: "Plan mode regression", ts: 2000, running: false }]
+    : query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
         title: `Paged session ${index + 1}`,
@@ -487,7 +490,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     seedMockAgentWorkflow(otherAgentWorkflow);
     lastDelegationSessionId = currentSessionId;
   }
-  const acpBindings: Record<string, string> = {};
+  const acpBindings: Record<string, string> =
+    mockPlanFlow === "acp" || mockPlanFlow === "compat" ? { s1: "acp-test" } : {};
   const acpPermissionFrames: Record<string, string> = {};
   const acpLongResolvers: Record<string, (value: string) => void> = {};
   let mockCredentials: Record<string, boolean> = {
@@ -831,6 +835,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "load_demo":
             return demo;
           case "load_session":
+            if (mockPlanFlow) {
+              return {
+                items: [
+                  { role: "user", text: "Prepare the regression plan", tool_name: null, ok: null },
+                  // This is the load_session row produced from the persisted
+                  // `wisp:plan` tool message; LoadedItem::into_chat rebuilds it.
+                  {
+                    role: "plan",
+                    text: JSON.stringify({
+                      v: 1,
+                      source: "acp",
+                      entries: [
+                        { content: "Inspect the existing behavior", status: "completed", priority: "medium" },
+                        { content: "Wire the plan flow", status: "in_progress", priority: "high" },
+                        { content: "Run regression checks", status: "pending", priority: "low" },
+                      ],
+                    }),
+                    tool_name: null,
+                    ok: null,
+                  },
+                ],
+                next_before_seq: null,
+                user_offset: 0,
+              };
+            }
             if (mockMcpAppSession) {
               return {
                 items: [
@@ -1291,10 +1320,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             const frameId = String(arg("frameId") ?? "");
             if (!acpBindings[frameId]) return null;
             return {
-              availableModes: [
-                { id: "default", name: "Default" },
-                { id: "plan", name: "Plan" },
-              ],
+              availableModes: mockPlanFlow === "compat"
+                ? [
+                    { id: "default", name: "Default" },
+                    { id: "agent", name: "Agent" },
+                  ]
+                : [
+                    { id: "default", name: "Default" },
+                    { id: "plan", name: "Plan" },
+                  ],
             };
           }
           case "get_acp_session_agent":
