@@ -154,6 +154,9 @@ cargo tauri build    # produce an MSI/NSIS installer under target/release/bundle
   the `winver` result, WebView2 Runtime version, installer filename, and
   reproduction steps in an issue. Never post API keys, tokens, passwords, or
   private keys.
+- At startup, the desktop app normalizes trailing backslashes in `PATH` and
+  recovers affected entries from the Windows User PATH, so tools such as Pixi
+  remain available to the built-in shell.
 
 Desktop development uses port `1421`. UI tests use `1422`, and their Trunk
 outputs are isolated in `ui/dist-dev` and `ui/dist-test`; release packaging

@@ -116,6 +116,8 @@ cargo tauri build    # 在 target/release/bundle 下生成 MSI/NSIS 安装程序
 - WebView2 安装完成后重新打开 Wisp Science；如果窗口仍未恢复，请重启 Windows
   后再试。问题仍存在时，请在 issue 中附上 `winver` 结果、WebView2 Runtime
   版本、安装包文件名和复现步骤；不要上传 API Key、Token、密码或私钥。
+- 桌面应用启动时会规范化 `PATH` 条目末尾的反斜杠，并从 Windows User PATH
+  恢复受影响的条目，因此 Pixi 等工具在内置 shell 中仍然可用。
 
 桌面开发固定使用 `1421` 端口，UI 测试使用 `1422`。对应的 Trunk 输出分别
 隔离在 `ui/dist-dev` 与 `ui/dist-test`，发布构建继续使用 `ui/dist`，避免正在
