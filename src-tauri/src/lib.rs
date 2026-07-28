@@ -45,6 +45,7 @@ mod memory_commands;
 mod models;
 mod native_delegation;
 mod pet_commands;
+mod plan_mode;
 mod plugins;
 mod project_commands;
 mod project_reader;
@@ -6050,6 +6051,8 @@ pub fn run() {
             delegation_runtime::list_agent_workflows,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,
+            plan_mode::get_session_plan_mode,
+            plan_mode::set_session_plan_mode,
             delegation_completion::get_session_agent_completion,
             delegation_completion::set_session_agent_completion,
             delegation_runtime::create_dynamic_agent_workflow,
