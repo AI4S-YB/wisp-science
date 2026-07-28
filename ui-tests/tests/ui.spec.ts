@@ -931,6 +931,28 @@ test("assistant markdown table can be copied separately", async ({ page, context
   );
 });
 
+test("assistant markdown code block can be copied separately", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await enterApp(page);
+  await composer(page).fill("MDCODE");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const copyButtons = page.locator(".msg.assistant .md-code-copy");
+  await expect(copyButtons).toHaveCount(3);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: async (text: string) => { (window as any).__copiedCodeText = text; },
+    });
+  });
+  await copyButtons.first().click();
+
+  await expect(page.locator(".copy-toast")).toHaveText("Copied");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedCodeText)).toBe(
+    "CAF状态 → 免疫变化\nCAF状态 → 上皮变化\n",
+  );
+});
+
 test("dark palettes keep rendered markdown code readable", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await enterApp(page);

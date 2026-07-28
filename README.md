@@ -328,10 +328,11 @@ through already loaded history without growing the DOM unboundedly. The slim
 conversation outline on the right expands into a list of your questions; select
 one to load its transcript page when needed and jump directly to that turn.
 User messages, assistant replies, and outline entries show their saved local
-time. Remote
-file rows also expose a visible download action, while secondary-click remains
-available as an alternate path. Cross-project transfer copies the saved
-transcript only. Project files and runs remain in their source project;
+time. Every fenced code block in an assistant reply has a one-click copy
+button that preserves its original line breaks. Remote file rows also expose
+a visible download action, while secondary-click remains available as an
+alternate path. Cross-project transfer copies the saved transcript only.
+Project files and runs remain in their source project;
 conversation-linked artifact records are not transferred, and the underlying
 workspace files are never deleted.
 
