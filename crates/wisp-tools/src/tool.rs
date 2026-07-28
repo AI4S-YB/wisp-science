@@ -20,6 +20,14 @@ pub trait Tool: Send + Sync {
     fn minimum_approval(&self) -> Approval {
         Approval::Allow
     }
+    /// Whether this tool only retrieves — no writes, no state changes, nothing
+    /// to undo. Read-only tools stay callable in plan mode on top of
+    /// [`crate::PLAN_MODE_READ_ONLY`], which cannot name tools it never sees
+    /// (every MCP-backed retrieval tool). Default `false`: a tool nobody
+    /// classified is refused while planning.
+    fn read_only(&self) -> bool {
+        false
+    }
     /// One-line preview shown in the tool-call card (e.g. the file path).
     fn preview(&self, _args: &Value) -> String {
         String::new()

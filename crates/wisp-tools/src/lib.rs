@@ -35,15 +35,15 @@ pub const MCP_EVENT_PREFIX: &str = "mcp:";
 const DEFAULT_MCP_SEARCH_LIMIT: usize = 5;
 
 /// Tools that stay callable while a session is in plan mode (see
-/// [`ToolEnv::plan_mode`]). Everything else is refused at the registry gate:
-/// writes, shell/python/R, delegation, state changes, and every MCP-backed
-/// tool. `search_mcp_tools` is a schema lookup and is allowed by its own path.
+/// [`ToolEnv::plan_mode`]), on top of any tool that reports
+/// [`Tool::read_only`]. Everything else is refused at the registry gate:
+/// writes, shell/python/R, delegation, and state changes.
+/// `search_mcp_tools` is a schema lookup and is allowed by its own path.
 ///
-/// ponytail: a name whitelist rather than per-tool metadata — one list to read,
-/// and it fails closed for anything nobody classified. It deliberately names
-/// host tools this crate never sees. Upgrade path, once a tool needs to
-/// disagree or MCP `readOnlyHint` should be honoured: a `Tool::read_only()`
-/// method defaulting to false, with this list kept only as the host override.
+/// ponytail: the host override half of the gate — one list to read, naming
+/// host tools this crate never sees. The other half is `Tool::read_only()`,
+/// which covers the tools a list cannot name: MCP retrieval tools, whose
+/// server declares `readOnlyHint`. Both fail closed.
 pub const PLAN_MODE_READ_ONLY: &[&str] = &[
     // wisp-tools built-ins
     "read",
@@ -308,7 +308,7 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
     let name = tool.name();
     // Plan-mode gate, ahead of approvals: a session that is only allowed to
     // plan never reaches the approval prompt for a tool that would execute.
-    if env.plan_mode() && plan_mode_blocks(name) {
+    if env.plan_mode() && plan_mode_blocks(name) && !tool.read_only() {
         return ToolResult::fail(plan_mode_refusal(name));
     }
     // Per-tool approval gate. `Deny` blocks before the call card even shows;
@@ -488,8 +488,31 @@ mod approval_tests {
         fn defer_schema(&self) -> bool {
             true
         }
+        /// What the bundled bio/literature servers declare via `readOnlyHint`.
+        fn read_only(&self) -> bool {
+            true
+        }
         async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
             ToolResult::ok(format!("searched {}", args["query"]))
+        }
+    }
+
+    /// An MCP tool whose server says nothing about writing — the unclassified
+    /// case the gate has to keep refusing.
+    struct DeferredWriteTool;
+    #[async_trait::async_trait]
+    impl Tool for DeferredWriteTool {
+        fn name(&self) -> &str {
+            "zenodo_upload_record"
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(self.name(), "Upload a record.", serde_json::json!({}))
+        }
+        fn defer_schema(&self) -> bool {
+            true
+        }
+        async fn run(&self, _args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+            ToolResult::ok("uploaded")
         }
     }
 
@@ -623,6 +646,44 @@ mod approval_tests {
         assert!(reg.run("write", &write, &executing).await.success);
         assert!(reg.run("read", &read, &executing).await.success);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn plan_mode_lets_read_only_retrieval_through() {
+        let mut reg = Registry { tools: vec![] };
+        reg.add(Box::new(DeferredTool));
+        reg.add(Box::new(DeferredWriteTool));
+        let planning = PlanEnv {
+            root: PathBuf::from("."),
+            plan: true,
+        };
+
+        // Dispatched the way the model reaches a deferred MCP tool.
+        let searched = reg
+            .run(
+                USE_MCP_TOOL,
+                &serde_json::json!({
+                    "tool_name": "pubmed_search_articles",
+                    "tool_input": { "query": "tp53" },
+                }),
+                &planning,
+            )
+            .await;
+        assert!(searched.success, "{}", searched.content);
+        assert!(searched.content.contains("tp53"));
+
+        let blocked = reg
+            .run(
+                USE_MCP_TOOL,
+                &serde_json::json!({
+                    "tool_name": "zenodo_upload_record",
+                    "tool_input": {},
+                }),
+                &planning,
+            )
+            .await;
+        assert!(!blocked.success, "an unhinted MCP tool must stay blocked");
+        assert!(blocked.content.contains("plan mode"), "{}", blocked.content);
     }
 
     #[tokio::test]
