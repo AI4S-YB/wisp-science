@@ -81,7 +81,9 @@ impl DeviceBridgeConfig {
             .parse::<Ipv4Addr>()
             .map_err(|_| "Bind address must be a concrete IPv4 address.".to_string())?;
         if bind_ipv4.is_unspecified() {
-            return Err("Device Bridge cannot bind 0.0.0.0; choose one specific IPv4 address.".into());
+            return Err(
+                "Device Bridge cannot bind 0.0.0.0; choose one specific IPv4 address.".into(),
+            );
         }
         let port = u16::try_from(port)
             .ok()
@@ -233,9 +235,7 @@ impl DeviceBridge {
         Self {
             hub,
             token: Arc::new(StdRwLock::new(None)),
-            actions: Arc::new(StdMutex::new(VecDeque::with_capacity(
-                ACTION_HISTORY_LIMIT,
-            ))),
+            actions: Arc::new(StdMutex::new(VecDeque::with_capacity(ACTION_HISTORY_LIMIT))),
             runtime: Mutex::new(None),
             status: Arc::new(StdMutex::new(DeviceBridgeRuntimeStatus::default())),
         }
@@ -432,19 +432,19 @@ async fn post_action(
                 "action": "ping",
             }))
         }
-        "focus_session" => match request.session_id.as_deref().filter(|id| !id.trim().is_empty()) {
-            Some(session_id) => state
-                .focus
-                .focus_session(session_id)
-                .await
-                .map(|_| {
-                    json!({
-                        "ok": true,
-                        "id": request.id,
-                        "action": "focus_session",
-                        "sessionId": session_id,
-                    })
-                }),
+        "focus_session" => match request
+            .session_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+        {
+            Some(session_id) => state.focus.focus_session(session_id).await.map(|_| {
+                json!({
+                    "ok": true,
+                    "id": request.id,
+                    "action": "focus_session",
+                    "sessionId": session_id,
+                })
+            }),
             None => Err("focus_session requires sessionId.".into()),
         },
         "acknowledge" => {
@@ -510,12 +510,7 @@ fn action_error(
     (status, Json(json!({ "ok": false, "error": error }))).into_response()
 }
 
-fn record_action(
-    state: &HttpState,
-    request: &DeviceActionRequest,
-    ok: bool,
-    error: Option<&str>,
-) {
+fn record_action(state: &HttpState, request: &DeviceActionRequest, ok: bool, error: Option<&str>) {
     let mut actions = state.actions.lock().unwrap();
     if actions.len() == ACTION_HISTORY_LIMIT {
         actions.pop_front();
@@ -638,8 +633,8 @@ pub async fn autostart(app: AppHandle) {
 
 pub async fn settings_status(state: &AppState) -> DeviceBridgeSettingsStatus {
     let enabled = get_setting(&state.store, SETTING_ENABLED).await == "true";
-    let mode = DeviceBridgeMode::parse(&get_setting(&state.store, SETTING_MODE).await)
-        .unwrap_or_default();
+    let mode =
+        DeviceBridgeMode::parse(&get_setting(&state.store, SETTING_MODE).await).unwrap_or_default();
     let has_token = load_token().await.is_some();
     let mut runtime = state.device_bridge.status();
     if runtime.bind_ipv4.is_empty() {
@@ -668,9 +663,7 @@ pub(crate) async fn set_device_bridge(
 ) -> Result<DeviceBridgeSettingsStatus, String> {
     let mode = DeviceBridgeMode::parse(&mode)?;
     if mode == DeviceBridgeMode::Relay {
-        return Err(
-            "Relay mode is reserved for a later phase and is not available yet.".into(),
-        );
+        return Err("Relay mode is reserved for a later phase and is not available yet.".into());
     }
     let config = DeviceBridgeConfig::parse(&bind_ipv4, port)?;
     state
@@ -775,8 +768,7 @@ mod tests {
         DeviceBridgeConfig::parse("127.0.0.1", u32::from(port)).unwrap()
     }
 
-    async fn start_test_bridge(
-    ) -> (Arc<DeviceBridge>, Arc<FakeFocus>, String, String, u16) {
+    async fn start_test_bridge() -> (Arc<DeviceBridge>, Arc<FakeFocus>, String, String, u16) {
         let hub = Arc::new(DeviceHub::default());
         hub.mark_working("frame-a", Some("project-a"));
         let bridge = Arc::new(DeviceBridge::new(hub));
@@ -903,7 +895,10 @@ mod tests {
             .json()
             .await
             .unwrap();
-        assert_eq!(history["actions"].as_array().unwrap().len(), ACTION_HISTORY_LIMIT);
+        assert_eq!(
+            history["actions"].as_array().unwrap().len(),
+            ACTION_HISTORY_LIMIT
+        );
         bridge.stop().await;
     }
 

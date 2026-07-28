@@ -156,9 +156,7 @@ impl DeviceHub {
                 ..
             }
             | AgentEvent::Error { frame_id, .. }
-            | AgentEvent::ReviewFailed { frame_id, .. } => {
-                (frame_id.as_str(), PetState::Failed)
-            }
+            | AgentEvent::ReviewFailed { frame_id, .. } => (frame_id.as_str(), PetState::Failed),
             AgentEvent::ToolResult {
                 frame_id, ok: true, ..
             } => (frame_id.as_str(), PetState::Working),
@@ -192,9 +190,9 @@ impl DeviceHub {
     pub fn acknowledge(&self, requested_session: Option<&str>) -> bool {
         let selected = {
             let state = self.inner.lock().unwrap();
-            requested_session.map(str::to_string).or_else(|| {
-                selected_session(&state).map(|(session_id, _)| session_id.to_string())
-            })
+            requested_session
+                .map(str::to_string)
+                .or_else(|| selected_session(&state).map(|(session_id, _)| session_id.to_string()))
         };
         let Some(session_id) = selected else {
             return false;
@@ -235,9 +233,8 @@ impl DeviceHub {
         }
         let mut state = self.inner.lock().unwrap();
         let mut activity = state.sessions.remove(session_id).unwrap_or_default();
-        let project_changed = project_id.is_some_and(|project_id| {
-            activity.project_id.as_deref() != Some(project_id)
-        });
+        let project_changed =
+            project_id.is_some_and(|project_id| activity.project_id.as_deref() != Some(project_id));
         if let Some(project_id) = project_id {
             activity.project_id = Some(project_id.to_string());
         }
@@ -261,9 +258,7 @@ fn selected_session(state: &HubState) -> Option<(&str, &SessionActivity)> {
 
 fn snapshot_from(state: &HubState) -> PetStateSnapshot {
     let (session_id, pet_state) = selected_session(state)
-        .map(|(session_id, activity)| {
-            (Some(session_id.to_string()), activity.displayed())
-        })
+        .map(|(session_id, activity)| (Some(session_id.to_string()), activity.displayed()))
         .unwrap_or((None, PetState::Idle));
     PetStateSnapshot {
         message_type: "pet_state",
