@@ -912,14 +912,7 @@ impl BridgeServer {
     /// poll below consumes it. Deliberately no short timeout — the user may
     /// answer much later, matching the ACP permission policy.
     async fn ask_user(&self, frame_id: &str, args: &Value) -> Result<String> {
-        let mut body =
-            wisp_tools::ask_user::question_body(args).map_err(anyhow::Error::msg)?;
-        body["source"] = json!("acp");
-        // The built-in note tells the agent to end its turn; here the answer
-        // returns inside this very call, so the note would only mislead.
-        body.as_object_mut()
-            .expect("question_body returns an object")
-            .remove("note");
+        let body = acp_question_body(args).map_err(anyhow::Error::msg)?;
         let request_id = uuid::Uuid::new_v4().to_string();
         self.store
             .insert_ask_user_request(&request_id, frame_id, &body.to_string())
@@ -1107,6 +1100,19 @@ fn get_capabilities_tool_schema() -> Value {
         "description": "Describe the project-scoped Wisp Harness capabilities granted to this ACP session, including intentionally unavailable write operations.",
         "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
     })
+}
+
+/// The card body for a bridge question: the built-in tool's validated shape,
+/// re-sourced to `acp`, minus the built-in note. That note tells the agent to
+/// end its turn and wait for the next user message; here the answer returns
+/// inside this very tool call, so it would only mislead.
+fn acp_question_body(args: &Value) -> Result<Value, String> {
+    let mut body = wisp_tools::ask_user::question_body(args)?;
+    body["source"] = json!("acp");
+    body.as_object_mut()
+        .expect("question_body returns an object")
+        .remove("note");
+    Ok(body)
 }
 
 fn ask_user_tool_schema() -> Value {
@@ -1463,6 +1469,39 @@ mod tests {
     fn sanitizes_custom_tool_parts() {
         assert_eq!(sanitize_tool_part("abc.Def/g"), "abc_Def_g");
         assert_eq!(sanitize_tool_part(""), "tool");
+    }
+
+    #[test]
+    fn acp_question_body_is_the_card_shape_without_the_built_in_note() {
+        let body = acp_question_body(&json!({
+            "question": "Overwrite the results directory?",
+            "options": [{ "label": "Overwrite", "description": "the previous run is lost" }],
+            "allow_freeform": false,
+        }))
+        .unwrap();
+
+        assert_eq!(body["source"], "acp");
+        assert_eq!(body["question"], "Overwrite the results directory?");
+        assert_eq!(body["options"][0]["label"], "Overwrite");
+        assert_eq!(body["allow_freeform"], false);
+        // The built-in note ends the agent's turn; the bridge answers inside
+        // the call, so carrying it over would tell the agent to stop waiting.
+        assert!(body.get("note").is_none(), "{body}");
+        assert!(acp_question_body(&json!({ "question": "  " })).is_err());
+    }
+
+    #[test]
+    fn ask_user_bridge_schema_matches_the_built_in_tool() {
+        let schema = ask_user_tool_schema();
+        assert_eq!(schema["name"], wisp_tools::ask_user::ASK_USER);
+        let properties = &schema["inputSchema"]["properties"];
+        assert_eq!(properties["question"]["type"], "string");
+        assert_eq!(properties["options"]["items"]["required"][0], "label");
+        assert_eq!(properties["allow_freeform"]["type"], "boolean");
+        assert!(schema["description"]
+            .as_str()
+            .unwrap()
+            .contains("blocks until the user answers"));
     }
 
     #[test]

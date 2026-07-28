@@ -677,6 +677,71 @@ test("built-in propose_plan renders a plan card with a working action bar", asyn
   await expect(page.locator(".copy-toast")).toContainText("Plan approved; execution is starting");
 });
 
+test("built-in ask_user renders a question card whose option click sends the answer", async ({ page }) => {
+  await openMockPlanSession(page, "native");
+
+  // The built-in question tool streams through the ordinary tool events; its
+  // result is the card body, so neither event may leave a tool step behind.
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolCall", frame_id: "s1", name: "ask_user", preview: "Which aligner?",
+  });
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s1", name: "ask_user", ok: true,
+    content: JSON.stringify({
+      v: 1,
+      source: "native",
+      question: "Which aligner should the pipeline use?",
+      options: [
+        { label: "STAR", description: "splice-aware, needs more RAM" },
+        { label: "HISAT2", description: "lighter" },
+      ],
+      allow_freeform: true,
+      note: "Question submitted; end your turn.",
+    }),
+  });
+
+  const card = page.getByTestId("question-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Which aligner should the pipeline use?");
+  await expect(card).toContainText("splice-aware, needs more RAM");
+  await expect(card).not.toContainText("end your turn");
+  await expect(page.locator(".step")).toHaveCount(0);
+  // wry's window.prompt is a no-op, so the freeform answer must be in-app.
+  await expect(card.locator(".plan-question-freeform input")).toBeVisible();
+
+  await card.getByRole("button", { name: "STAR" }).click();
+  // ?mock=1 send_message does not update the thread, so assert at the invoke layer.
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    sessionId: "s1", message: "STAR",
+  });
+  await expect(card).toHaveAttribute("data-state", "answered");
+  await expect(card).toContainText("Answer sent to the agent");
+  await expect(card.locator(".plan-question-options")).toHaveCount(0);
+});
+
+test("ACP ask_user card resolves through respond_ask_user and settles", async ({ page }) => {
+  await enterApp(page);
+  await newSessionButton(page).click();
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await composer(page).fill("ACP ASKUSER");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const card = page.getByTestId("question-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Which aligner should the pipeline use?");
+  await expect(card).toHaveAttribute("data-state", "pending");
+
+  await card.getByRole("button", { name: "HISAT2" }).click();
+  // The ACP answer returns inside the agent's own turn, so it resolves the
+  // pending bridge request instead of sending a user message.
+  await expect.poll(() => lastInvokeArgs(page, "respond_ask_user")).toMatchObject({
+    requestId: "ask-1", answer: "HISAT2",
+  });
+  await expect(card).toHaveAttribute("data-state", "answered");
+  await expect(card).toContainText("Answer sent to the agent");
+});
+
 test("composer plan toggle routes ACP and built-in sessions separately", async ({ page }) => {
   await openMockPlanSession(page, "acp");
   let menu = await openAgentMenu(page);

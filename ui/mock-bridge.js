@@ -144,6 +144,8 @@
   const mockAcpSessions = new Set(["s1"]);
   // frame_id -> built-in plan mode flag (settings key frame_plan_mode:<id>).
   const mockPlanMode = {};
+  // Live ACP ask_user requests: request_id -> frame_id.
+  const askUserFrames = {};
   // Agent-created SSH trust edges (ssh_trust_edges_v1). One edge whose
   // destination context no longer exists, to exercise the orphan rendering.
   const mockTrustEdges = [
@@ -722,6 +724,25 @@
               }, 80);
               return fid;
             }
+            if (String(msg).includes("ASKUSER")) {
+              // Both question sources from one dev trigger: the built-in tool
+              // result card, then the ACP bridge's blocking request card.
+              setTimeout(() => {
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "ask_user", preview: "Which aligner?" });
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "ask_user", ok: true, content: JSON.stringify({
+                  v: 1, source: "native", question: "Which aligner should the pipeline use?", allow_freeform: true,
+                  options: [{ label: "STAR", description: "splice-aware, needs more RAM" }, { label: "HISAT2", description: "lighter" }],
+                  note: "Question submitted; end your turn.",
+                }) });
+                emit("agent", { kind: "Done", frame_id: fid });
+                askUserFrames["ask-1"] = fid;
+                emit("ask-user-request", { requestId: "ask-1", frameId: fid, payload: {
+                  v: 1, source: "acp", question: "Overwrite the existing results directory?", allow_freeform: false,
+                  options: [{ label: "Overwrite", description: "the previous run is lost" }, { label: "Write to a new directory" }],
+                } });
+              }, 80);
+              return fid;
+            }
             setTimeout(() => {
               emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Searching literature…" });
               emit("agent", { kind: "ToolCall", frame_id: fid, name: "python", preview: "scimaster-cli search FX-cell" });
@@ -839,6 +860,16 @@
             }
             mockPlanMode[args?.sessionId] = !!args?.enabled;
             return mockPlanMode[args?.sessionId];
+          case "respond_ask_user":
+            setTimeout(() => {
+              emit("ask-user-resolved", {
+                frameId: askUserFrames[args?.requestId] ?? "",
+                requestId: args?.requestId,
+                expired: false,
+              });
+              delete askUserFrames[args?.requestId];
+            }, 0);
+            return null;
           default:
             return null;
         }
