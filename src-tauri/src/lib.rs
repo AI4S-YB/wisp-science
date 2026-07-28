@@ -1939,13 +1939,15 @@ impl Output for TauriOutput {
         });
     }
     fn tool_result(&self, name: &str, ok: bool, content: &str, duration_ms: u64) {
-        // ponytail: attempt_completion's "tool result" IS the final answer bubble,
-        // so the 4000-char preview clip must not apply to it.
-        let clipped: String = if name == "attempt_completion" {
-            content.to_string()
-        } else {
-            content.chars().take(4000).collect()
-        };
+        // ponytail: some tool results ARE the card the UI renders, not a preview
+        // of one — attempt_completion is the final answer bubble, propose_plan is
+        // the plan card's JSON body. A clip would truncate them into junk.
+        let clipped: String =
+            if matches!(name, "attempt_completion" | wisp_tools::plan::PROPOSE_PLAN) {
+                content.to_string()
+            } else {
+                content.chars().take(4000).collect()
+            };
         self.emit(AgentEvent::ToolResult {
             frame_id: self.frame_id.clone(),
             name: name.into(),

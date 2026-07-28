@@ -1978,6 +1978,11 @@ fn App() -> impl IntoView {
                 set_pet_activity(&frame_id, "review");
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    // The plan tool has no call card: its result carries the
+                    // whole plan, and that lands as a plan card instead.
+                    if name == PROPOSE_PLAN_TOOL {
+                        return;
+                    }
                     let idx = process_item_insert_index(v);
                     v.insert(
                         idx,
@@ -2002,6 +2007,18 @@ fn App() -> impl IntoView {
                 set_pet_activity(&frame_id, if ok { "running" } else { "failed" });
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    // A submitted plan renders as the plan card, the same shape
+                    // the ACP path streams and the reload path rebuilds. A
+                    // refused call (bad entries) stays an ordinary tool row so
+                    // the agent's error is visible.
+                    if name == PROPOSE_PLAN_TOOL && ok {
+                        if let Ok(payload) = serde_json::from_str(&content) {
+                            let mut card = parse_plan_card(&payload);
+                            card.state = PlanState::Streaming;
+                            upsert_plan_card(v, card);
+                            return;
+                        }
+                    }
                     let queue_start = process_item_insert_index(v);
                     let idx = v[..queue_start].iter().rposition(
                         |c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name),
@@ -2508,18 +2525,7 @@ fn App() -> impl IntoView {
                     items,
                     transcripts,
                     &update.frame_id,
-                    |rows| {
-                        // Replace only the card this turn is still writing;
-                        // plans from earlier turns stay as the plan's history.
-                        if let Some(index) = rows.iter().rposition(|row| {
-                            matches!(row, ChatItem::Plan(plan) if plan.state == PlanState::Streaming)
-                        }) {
-                            rows[index] = ChatItem::Plan(card);
-                        } else {
-                            let index = trailing_queue_start(rows);
-                            rows.insert(index, ChatItem::Plan(card));
-                        }
-                    },
+                    |rows| upsert_plan_card(rows, card),
                 );
             }
             "ConfigOptions" => {
