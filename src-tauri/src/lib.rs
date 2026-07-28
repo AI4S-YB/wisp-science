@@ -1866,6 +1866,9 @@ struct TauriOutput {
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Shared live approval policy (see `AppState::approvals`).
     approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Built-in plan mode for this session, read once per turn. ACP-bound
+    /// frames never set it — their plan mode lives on the agent side.
+    plan_mode: bool,
     approval_grants: Arc<StdMutex<ApprovalGrants>>,
     /// Incremental-persistence sink: each message the turn produces is sent here
     /// and written to SQLite by a background task, so a crash or mid-turn "new
@@ -2058,6 +2061,9 @@ impl Output for TauriOutput {
     }
     fn danger_auto_approve(&self) -> bool {
         self.approvals.read().map(|p| p.full()).unwrap_or(false)
+    }
+    fn plan_mode(&self) -> bool {
+        self.plan_mode
     }
     fn on_message(&self, msg: &Message) {
         if msg.role == wisp_llm::Role::User {
@@ -4732,6 +4738,7 @@ async fn send_message_inner(
         confirms: state.confirms.clone(),
         awaiting_confirm: state.awaiting_confirm.clone(),
         approvals: state.approvals.clone(),
+        plan_mode: plan_mode_enabled,
         approval_grants: state.approval_grants.clone(),
         persist: Some(persist_tx),
         ui_events: Some(ui_event_tx),
