@@ -1038,7 +1038,13 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             resources: Vec::new(),
                         });
                     }
-                } else if m.tool_name.as_deref() == Some(acp::PLAN_TOOL_NAME) {
+                } else if matches!(
+                    m.tool_name.as_deref(),
+                    // Both plan sources persist the same `{v, source, entries}`
+                    // body; the ACP one as its own row, the built-in one as the
+                    // `propose_plan` result that paired with the model's call.
+                    Some(acp::PLAN_TOOL_NAME) | Some(wisp_tools::plan::PROPOSE_PLAN)
+                ) {
                     out.push(UiItem {
                         role: "plan".into(),
                         text,
@@ -4388,6 +4394,12 @@ async fn send_message_inner(
         agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
             store: state.store.clone(),
         }));
+        if plan_mode_enabled {
+            // Only while planning: outside plan mode there is nothing to approve,
+            // and an always-present tool just invites plans nobody asked for.
+            // Toggling the flag evicts idle runtimes, so this re-runs.
+            agent.add_tool(Box::new(wisp_tools::plan::ProposePlanTool));
+        }
         if delegation_enabled {
             agent.add_tool(Box::new(
                 delegation_tool::DelegateTasksTool::new(

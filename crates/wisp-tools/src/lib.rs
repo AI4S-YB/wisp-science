@@ -64,7 +64,7 @@ pub const PLAN_MODE_READ_ONLY: &[&str] = &[
     "monitor_run",
     "get_delegated_result",
     // The plan proposal tool: plan mode is exactly when it has to run.
-    "propose_plan",
+    plan::PROPOSE_PLAN,
 ];
 
 fn plan_mode_blocks(name: &str) -> bool {

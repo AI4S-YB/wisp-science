@@ -297,6 +297,23 @@ fn reloaded_tool_items_keep_notebook_source() {
 }
 
 #[test]
+fn reloaded_propose_plan_result_rebuilds_the_plan_card() {
+    let plan = wisp_llm::Message::tool(
+        "call-plan",
+        wisp_tools::plan::PROPOSE_PLAN,
+        r#"{"v":1,"source":"native","entries":[{"content":"Read the loader","status":"pending","priority":"high"}]}"#,
+    );
+
+    let items = messages_to_items(&[plan]);
+
+    assert_eq!(items.len(), 1);
+    // "plan" is what LoadedItem::into_chat turns back into a plan card; a
+    // generic tool row here would render the raw JSON instead.
+    assert_eq!(items[0].role, "plan");
+    assert!(items[0].text.contains("\"source\":\"native\""));
+}
+
+#[test]
 fn reloaded_background_completion_keeps_terminal_status() {
     let mut completion = wisp_llm::Message::user(
         r#"{"type":"delegated_batch_completion","result":{"status":"cancelled"}}"#,
