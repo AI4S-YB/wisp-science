@@ -4695,9 +4695,19 @@ fn App() -> impl IntoView {
         )
     };
 
-    // Plan mode is an ACP session mode, so the plan card's action bar only makes
-    // sense while the bound agent is actually in it.
+    // Built-in plan mode for the active session. `None` = the session is
+    // ACP-bound, so the composer's "Plan first" toggle drives the ACP mode
+    // picker instead of this flag. A session-less composer counts as built-in.
+    let local_plan_mode = create_rw_signal::<Option<bool>>(Some(false));
+    let plan_mode_busy = create_rw_signal(false);
+
+    // One flag, two backends, exactly like the composer toggle: a built-in
+    // session reads its own plan flag, an ACP-bound one reads the agent's mode.
+    // The card's action bar only makes sense while plan mode is actually on.
     let plan_mode_active = Signal::derive(move || {
+        if let Some(enabled) = local_plan_mode.get() {
+            return enabled;
+        }
         let Some(session_id) = active_session.get() else {
             return false;
         };
@@ -4708,8 +4718,12 @@ fn App() -> impl IntoView {
 
     // Agents without a plan mode still push plan updates — a Claude Code todo
     // list arrives as one. The card renders, but there is no mode to approve out
-    // of, so it is badged as a read-only compatibility plan instead.
+    // of, so it is badged as a read-only compatibility plan instead. Built-in
+    // sessions always have one to approve out of.
     let plan_compat = Signal::derive(move || {
+        if local_plan_mode.get().is_some() {
+            return false;
+        }
         let Some(session_id) = active_session.get() else {
             return true;
         };
@@ -4729,14 +4743,28 @@ fn App() -> impl IntoView {
         let Some(session_id) = active_session.get_untracked() else {
             return;
         };
-        let exit_mode = acp_session_modes
-            .with_untracked(|all| plan_mode_pair(all.get(&session_id)))
+        // Built-in sessions leave plan mode by clearing their own flag; ACP ones
+        // by switching the agent back to its non-plan mode.
+        let native = local_plan_mode.get_untracked().is_some();
+        let exit_mode = (!native)
+            .then(|| acp_session_modes.with_untracked(|all| plan_mode_pair(all.get(&session_id))))
+            .flatten()
             .map(|(_, exit)| exit);
         spawn_local(async move {
-            // Await the mode switch before sending: `session/set_mode` and
-            // `session/prompt` are separate calls, and a prompt that lands first
-            // just makes the agent re-plan.
-            if let Some(exit_mode) = exit_mode {
+            // Await leaving plan mode before sending: the switch and the prompt
+            // are separate calls, and a prompt that lands first would just run
+            // the next turn with the tool gate still closed.
+            if native {
+                let args = to_value(&serde_json::json!({
+                    "sessionId": session_id.clone(),
+                    "enabled": false,
+                }))
+                .unwrap();
+                if invoke_checked("set_session_plan_mode", args).await.is_err() {
+                    return;
+                }
+                local_plan_mode.set(Some(false));
+            } else if let Some(exit_mode) = exit_mode {
                 if !apply_acp_mode(acp_session_modes, session_id, exit_mode).await {
                     return;
                 }
@@ -5038,11 +5066,6 @@ fn App() -> impl IntoView {
     let auto_review_enabled = create_rw_signal(false);
     let delegation_enabled = create_rw_signal(false);
     let delegation_setting_busy = create_rw_signal(false);
-    // Built-in plan mode for the active session. `None` = the session is
-    // ACP-bound, so the composer's "Plan first" toggle drives the ACP mode
-    // picker instead of this flag. A session-less composer counts as built-in.
-    let local_plan_mode = create_rw_signal::<Option<bool>>(Some(false));
-    let plan_mode_busy = create_rw_signal(false);
     let agent_completion = create_rw_signal(AgentCompletionSettings::default());
     let agent_completion_busy = create_rw_signal(false);
     create_effect(move |_| {
@@ -8895,7 +8918,9 @@ fn App() -> impl IntoView {
                                         if local.is_none() && acp_pair.is_none() {
                                             return None;
                                         }
-                                        let on_plan = local.unwrap_or_else(|| plan_mode_active.get());
+                                        // `plan_mode_active` already resolves the same
+                                        // two backends — keep one source of truth.
+                                        let on_plan = plan_mode_active.get();
                                         Some(view! {
                                             <label class="agent-menu-row"
                                                 title=move || t(locale.get(), if on_plan { "plan.switch_default" } else { "plan.switch_plan" })>
