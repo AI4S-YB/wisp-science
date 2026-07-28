@@ -136,6 +136,7 @@
 .plan-card-head > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
 .plan-card-head strong { color: var(--text); font-size: 11.5px; }
 .plan-card-head > div > span { color: var(--text-faint); font-size: 9.5px; }
+.plan-card-compat { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-faint); font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .plan-card-body { margin: 0; padding: 14px 16px; color: var(--text); font-size: 13px; line-height: 1.62; list-style: none; }
 .plan-card-body > :first-child { margin-top: 0; }
 .plan-card-body > :last-child { margin-bottom: 0; }

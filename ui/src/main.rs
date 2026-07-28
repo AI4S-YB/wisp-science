@@ -505,6 +505,15 @@ fn plan_mode_pair(state: Option<&serde_json::Value>) -> Option<(String, String)>
     Some((plan.to_string(), exit.to_string()))
 }
 
+/// What the plan card's action bar was asked to do. All three end plan mode
+/// except `Modify`, which keeps it so the agent re-plans from the composer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlanDecision {
+    Approve,
+    Modify,
+    SaveExit,
+}
+
 fn acp_current_mode_id(state: Option<&serde_json::Value>) -> Option<&str> {
     state?.get("currentModeId")?.as_str()
 }
@@ -1085,6 +1094,33 @@ fn App() -> impl IntoView {
             active_acp_agent_id.set(next);
         });
     });
+    // `acp-session-state` only fires while a turn runs, so after an app restart
+    // the mode controls would stay hidden until the user sent a message. Seed
+    // the cached `availableModes` on open instead — `or_insert` so a session
+    // that already has live state (including `currentModeId`) is left alone.
+    create_effect(move |_| {
+        let Some(session_id) = active_session.get() else {
+            return;
+        };
+        if acp_session_modes.with_untracked(|all| all.contains_key(&session_id)) {
+            return;
+        }
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "frameId": session_id.clone() })).unwrap();
+            let Ok(value) = invoke_checked("get_acp_session_state", args).await else {
+                return;
+            };
+            let Ok(Some(modes)) =
+                serde_wasm_bindgen::from_value::<Option<serde_json::Value>>(value)
+            else {
+                return;
+            };
+            acp_session_modes.update(|all| {
+                all.entry(session_id).or_insert(modes);
+            });
+        });
+    });
+
     refresh_session_history();
     refresh_folders(folders);
 
@@ -4664,12 +4700,22 @@ fn App() -> impl IntoView {
         })
     });
 
+    // Agents without a plan mode still push plan updates — a Claude Code todo
+    // list arrives as one. The card renders, but there is no mode to approve out
+    // of, so it is badged as a read-only compatibility plan instead.
+    let plan_compat = Signal::derive(move || {
+        let Some(session_id) = active_session.get() else {
+            return true;
+        };
+        acp_session_modes.with(|all| plan_mode_pair(all.get(&session_id)).is_none())
+    });
+
     // ponytail: an ACP plan update is a todo list with no id to approve, so
     // "approve" is the mode switch plus one ordinary turn. Upgrade to a
     // structured approval only if ACP ever gains a plan-decision request.
-    let on_plan_decision = Callback::new(move |approve: bool| {
+    let on_plan_decision = Callback::new(move |decision: PlanDecision| {
         let loc = locale.get_untracked();
-        if !approve {
+        if decision == PlanDecision::Modify {
             focus_composer();
             show_toast(&t(loc, "plan.modify_hint"));
             return;
@@ -4688,6 +4734,13 @@ fn App() -> impl IntoView {
                 if !apply_acp_mode(acp_session_modes, session_id, exit_mode).await {
                     return;
                 }
+            }
+            // The plan itself is already persisted, so "save and exit" is the
+            // mode switch and nothing else — that is its whole difference from
+            // approve.
+            if decision == PlanDecision::SaveExit {
+                show_toast(&t(loc, "plan.saved"));
+                return;
             }
             // A draft in the composer is the user's own go-ahead; only fill in a
             // default so approving never discards what they typed.
@@ -8181,7 +8234,7 @@ fn App() -> impl IntoView {
                                                 i, &item, timestamp, &arts, on_artifact_select, on_file_link,
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), can_undo, edit_message, branch_message, undo_message, sid,
                                                 respond_confirm, on_resume, on_queue,
-                                                plan_mode_active, on_plan_decision,
+                                                plan_mode_active, plan_compat, on_plan_decision,
                                             )}
                                         </div>
                                     }.into_view()
@@ -12392,7 +12445,8 @@ fn render_item(
     on_resume: Callback<usize>,
     on_queue: Callback<QueueOp>,
     plan_mode_active: Signal<bool>,
-    on_plan_decision: Callback<bool>,
+    plan_compat: Signal<bool>,
+    on_plan_decision: Callback<PlanDecision>,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
@@ -12577,7 +12631,8 @@ fn render_item(
             let streaming = plan.state == PlanState::Streaming;
             let entries = plan.entries.clone();
             view! {
-                <article class="plan-card" class:streaming=streaming data-testid="plan-card">
+                <article class="plan-card" class:streaming=streaming
+                    class:compat=move || plan_compat.get() data-testid="plan-card">
                     <header class="plan-card-head">
                         <span class="plan-card-icon">{compose_icon("plan")}</span>
                         <div>
@@ -12590,6 +12645,12 @@ fn render_item(
                                 })
                             }}
                         </div>
+                        {move || plan_compat.get().then(|| view! {
+                            <span class="plan-card-compat" data-testid="plan-compat"
+                                title=move || t(locale.get(), "plan.compat_full")>
+                                {move || t(locale.get(), "plan.compat")}
+                            </span>
+                        })}
                     </header>
                     <ul class="plan-card-body" data-testid="plan-entries">
                         {entries.into_iter().map(|entry| {
@@ -12615,12 +12676,16 @@ fn render_item(
                     {move || plan_mode_active.get().then(|| view! {
                         <footer class="plan-card-actions">
                             <button type="button" class="primary" data-testid="plan-approve"
-                                on:click=move |_| on_plan_decision.call(true)>
+                                on:click=move |_| on_plan_decision.call(PlanDecision::Approve)>
                                 {move || t(locale.get(), "plan.approve")}
                             </button>
                             <button type="button" data-testid="plan-modify"
-                                on:click=move |_| on_plan_decision.call(false)>
+                                on:click=move |_| on_plan_decision.call(PlanDecision::Modify)>
                                 {move || t(locale.get(), "plan.modify")}
+                            </button>
+                            <button type="button" data-testid="plan-save-exit"
+                                on:click=move |_| on_plan_decision.call(PlanDecision::SaveExit)>
+                                {move || t(locale.get(), "plan.save_exit")}
                             </button>
                         </footer>
                     })}

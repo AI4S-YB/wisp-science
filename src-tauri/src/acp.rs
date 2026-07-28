@@ -179,6 +179,46 @@ pub(crate) async fn get_acp_session_agent(
         .map(|binding| binding.agent_profile_id))
 }
 
+/// The mode controls need `availableModes`, but nothing launches the agent until
+/// the first turn, so after an app restart they would stay hidden until the user
+/// sent a message. Serve the cached list for the bound profile instead.
+///
+/// `currentModeId` is deliberately left out: it belongs to a session whose agent
+/// process is gone, and the caller seeds this without overwriting a live one.
+#[tauri::command]
+pub(crate) async fn get_acp_session_state(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    frame_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let project = state.active(window.label());
+    if state
+        .store
+        .frame_project_id(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        != Some(project.id.as_str())
+    {
+        return Err("Session does not belong to the active project.".into());
+    }
+    let Some(binding) = state
+        .store
+        .get_acp_session(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    Ok(state
+        .store
+        .get_setting(&available_modes_key(&binding.profile_fingerprint))
+        .await
+        .map_err(|error| error.to_string())?
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .map(|modes| serde_json::json!({ "availableModes": modes })))
+}
+
 #[tauri::command]
 pub(crate) async fn save_acp_agent(
     state: State<'_, AppState>,
@@ -411,6 +451,10 @@ pub(crate) fn project_mcp_server(
     ))
 }
 
+fn available_modes_key(profile_fingerprint: &str) -> String {
+    format!("acp.available_modes.{profile_fingerprint}")
+}
+
 async fn runtime_for(
     state: &AppState,
     project: &ActiveProject,
@@ -507,6 +551,24 @@ async fn runtime_for(
             .map_err(|error| error.to_string())?;
         (start.session_id, start.state)
     };
+    // `availableModes` decides whether the plan toggle and the plan card actions
+    // render at all, and it is a property of the profile rather than of this
+    // session — cache it so those controls survive an app restart, which leaves
+    // no agent process to ask. Keyed by fingerprint so a profile whose launch
+    // command changed re-learns its modes instead of reusing stale ones.
+    if let Some(modes) = session_state
+        .modes
+        .as_ref()
+        .and_then(|modes| modes.get("availableModes"))
+    {
+        let _ = state
+            .store
+            .set_setting(
+                &available_modes_key(&profile_fingerprint),
+                &modes.to_string(),
+            )
+            .await;
+    }
     let runtime = Arc::new(AcpRuntime {
         profile_id: profile.id.clone(),
         fingerprint: profile_fingerprint.clone(),
@@ -1151,13 +1213,10 @@ pub(crate) async fn set_acp_session_mode(
     {
         return Err("Session does not belong to the active project.".into());
     }
-    let runtime = state
-        .acp_sessions
-        .lock()
-        .await
-        .get(&frame_id)
-        .cloned()
-        .ok_or_else(|| "ACP session is not active.".to_string())?;
+    // Not `acp_sessions` directly: the mode controls are visible from the cached
+    // `availableModes` before the session's first turn, so switching mode has to
+    // launch and resume the agent the same way sending a message would.
+    let runtime = runtime_for(&state, &project, &frame_id, None).await?;
     runtime
         .handle
         .set_mode(runtime.session_id.clone(), mode_id.clone())
