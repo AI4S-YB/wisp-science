@@ -10,8 +10,27 @@
 use tauri::State;
 use wisp_store::Store;
 
+const PLAN_PROMPT_START: &str = "\n\n<plan_mode>";
+const PLAN_PROMPT_END: &str = "</plan_mode>";
+/// ponytail: stage 3b replaces this wording with instructions to call the
+/// `propose_plan` tool, so the whole contract stays a one-const diff.
+const PLAN_PROMPT_SECTION: &str = "\n\n<plan_mode>\nThe user turned on plan mode for this conversation. Investigate the task and produce a plan; do not carry it out.\nResearch first — read files, search the project, and look things up until you actually understand the task. Then write the plan as ordered, concrete steps, each naming what would change and how it would be verified. Call out the open questions and the risks you found.\nDo not execute the plan. Tools that write files, run shell/Python/R code, or otherwise change state are blocked in this mode and will refuse the call; that refusal is expected, not an error to work around. Stop once the plan is written and wait for the user to approve it.\n</plan_mode>";
+
 fn setting_key(frame_id: &str) -> String {
     format!("frame_plan_mode:{frame_id}")
+}
+
+/// Add or remove the plan-mode section on a session's system prompt. Called on
+/// the rebuilt runtime, so a toggle mid-session lands on the next turn (see
+/// `set_session_plan_mode`, which evicts idle runtimes).
+pub(crate) fn sync_plan_prompt(prompt: &mut String, enabled: bool) {
+    crate::sync_prompt_section(
+        prompt,
+        PLAN_PROMPT_START,
+        PLAN_PROMPT_END,
+        PLAN_PROMPT_SECTION,
+        enabled,
+    );
 }
 
 /// Whether this frame is in built-in plan mode. ACP-bound frames always report
@@ -89,6 +108,16 @@ pub(crate) async fn set_session_plan_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_section_toggles_without_stacking() {
+        let mut prompt = String::from("base");
+        sync_plan_prompt(&mut prompt, true);
+        sync_plan_prompt(&mut prompt, true);
+        assert_eq!(prompt.matches(PLAN_PROMPT_START).count(), 1);
+        sync_plan_prompt(&mut prompt, false);
+        assert_eq!(prompt, "base");
+    }
 
     #[tokio::test]
     async fn flag_round_trips_per_frame() {

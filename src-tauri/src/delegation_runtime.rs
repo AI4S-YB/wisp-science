@@ -137,18 +137,13 @@ async fn require_workflow_delegation(
 }
 
 pub(crate) fn sync_delegation_prompt(prompt: &mut String, enabled: bool) {
-    while let Some(start) = prompt.find(DELEGATION_PROMPT_START) {
-        let body_start = start + DELEGATION_PROMPT_START.len();
-        let Some(relative_end) = prompt[body_start..].find(DELEGATION_PROMPT_END) else {
-            prompt.truncate(start);
-            break;
-        };
-        let end = body_start + relative_end + DELEGATION_PROMPT_END.len();
-        prompt.replace_range(start..end, "");
-    }
-    if enabled {
-        prompt.push_str(DELEGATION_PROMPT_SECTION);
-    }
+    crate::sync_prompt_section(
+        prompt,
+        DELEGATION_PROMPT_START,
+        DELEGATION_PROMPT_END,
+        DELEGATION_PROMPT_SECTION,
+        enabled,
+    );
 }
 
 #[tauri::command]

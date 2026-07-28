@@ -2844,6 +2844,24 @@ fn specialist_prompt_section(spec: &specialists::Specialist) -> String {
     format!("\n\n## Specialist: {}\n{}", spec.name, spec.instructions)
 }
 
+/// Idempotently add or remove a delimited system-prompt section. The prompt is
+/// persisted as message 0 and reloaded on every runtime rebuild, so a toggled-off
+/// capability has to strip whatever an earlier turn appended (including a
+/// truncated section from an interrupted write).
+fn sync_prompt_section(prompt: &mut String, start: &str, end: &str, section: &str, enabled: bool) {
+    while let Some(at) = prompt.find(start) {
+        let body = at + start.len();
+        let Some(relative_end) = prompt[body..].find(end) else {
+            prompt.truncate(at);
+            break;
+        };
+        prompt.replace_range(at..body + relative_end + end.len(), "");
+    }
+    if enabled {
+        prompt.push_str(section);
+    }
+}
+
 async fn load_mcp_connections(store: &Store) -> Vec<McpConnection> {
     store
         .get_setting("mcp_connections")
@@ -4167,6 +4185,7 @@ async fn send_message_inner(
     let specialist = specialists::session_specialist(&state.store, &frame_id).await;
     let delegation_enabled =
         delegation_runtime::session_delegation_enabled(&state.store, &frame_id).await;
+    let plan_mode_enabled = plan_mode::session_plan_mode(&state.store, &frame_id).await;
     let (provider, api_url, model, api_key, max_tokens, reasoning_effort) = match &specialist {
         Some(spec) if !spec.model_id.trim().is_empty() => {
             specialists::specialist_llm(&state.store, spec).await
@@ -4397,6 +4416,7 @@ async fn send_message_inner(
         if let Some(message) = agent.ctx.messages.first_mut() {
             if let wisp_llm::Content::Text(prompt) = &mut message.content {
                 delegation_runtime::sync_delegation_prompt(prompt, delegation_enabled);
+                plan_mode::sync_plan_prompt(prompt, plan_mode_enabled);
             }
         }
         if let Some(spec) = &specialist {
