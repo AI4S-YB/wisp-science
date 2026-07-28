@@ -61,10 +61,7 @@ impl Store {
     }
 
     /// Host side: the pendings the turn loop has to surface to the UI.
-    pub async fn pending_ask_user_requests(
-        &self,
-        frame_id: &str,
-    ) -> Result<Vec<(String, String)>> {
+    pub async fn pending_ask_user_requests(&self, frame_id: &str) -> Result<Vec<(String, String)>> {
         Ok(sqlx::query_as(
             "SELECT request_id, payload_json FROM ask_user_requests \
              WHERE frame_id=? AND status='pending' ORDER BY created_at, rowid",
@@ -169,7 +166,10 @@ mod tests {
 
         assert!(store.answer_ask_user_request("ask-1", "yes").await.unwrap());
         assert!(
-            !store.answer_ask_user_request("ask-1", "again").await.unwrap(),
+            !store
+                .answer_ask_user_request("ask-1", "again")
+                .await
+                .unwrap(),
             "a second answer is refused"
         );
 

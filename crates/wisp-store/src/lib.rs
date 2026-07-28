@@ -27,7 +27,6 @@ mod sessions;
 mod turn_undo;
 
 pub use acp_sessions::AcpSessionBinding;
-pub use ask_user_requests::AskUserPoll;
 pub use agent_workflow_attempts::{
     AgentWorkflowAttempt, AgentWorkflowAttemptStart, AgentWorkflowAttemptStatus,
 };
@@ -36,6 +35,7 @@ pub use agent_workflows::{
     AgentDelegationRootLimits, AgentWorkflow, AgentWorkflowStatus, AgentWorkflowStep,
     MAX_ROOT_AGENT_DEPTH, MAX_ROOT_AGENT_TASKS,
 };
+pub use ask_user_requests::AskUserPoll;
 pub use external_session_cache::ExternalSessionCacheRecord;
 pub use library::{
     LibraryItem, LibraryItemDetail, LibraryItemVersion, LibraryStore, NewLibraryItem,

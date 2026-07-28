@@ -886,7 +886,11 @@ async fn surface_pending_asks(
         }
         asks.insert(request_id.clone(), frame_id.to_string());
         drop(asks);
-        state.awaiting_confirm.lock().unwrap().insert(frame_id.to_string());
+        state
+            .awaiting_confirm
+            .lock()
+            .unwrap()
+            .insert(frame_id.to_string());
         state.device_hub.mark_needs_user(frame_id, None);
         let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap_or_default();
         emit_ask_event(
