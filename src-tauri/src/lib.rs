@@ -1752,6 +1752,10 @@ struct AppState {
     sessions: tokio::sync::Mutex<HashMap<String, Arc<SessionRuntime>>>,
     acp_sessions: acp::AcpRuntimeMap,
     acp_permissions: tokio::sync::Mutex<HashMap<String, String>>,
+    /// Live ACP `ask_user` requests (request id → frame id), mirroring
+    /// `acp_permissions`. Membership also marks a reloaded pending row as
+    /// still answerable; rows absent here expire on reload.
+    acp_asks: tokio::sync::Mutex<HashMap<String, String>>,
     /// Session ids with an in-flight agent turn (for the projects dashboard).
     running_turns: tokio::sync::Mutex<HashSet<String>>,
     /// Frames currently owned by the persisted background-completion
@@ -4147,6 +4151,7 @@ async fn send_message_inner(
             acp::run_acp_turn(
                 state,
                 &app,
+                Some(window_label),
                 &ap,
                 &frame_id,
                 acp_agent_id.as_deref().filter(|id| !id.trim().is_empty()),
@@ -6095,6 +6100,7 @@ pub fn run() {
                 sessions: tokio::sync::Mutex::new(HashMap::new()),
                 acp_sessions: tokio::sync::Mutex::new(HashMap::new()),
                 acp_permissions: tokio::sync::Mutex::new(HashMap::new()),
+                acp_asks: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
                 completion_dispatches: tokio::sync::Mutex::new(HashSet::new()),
                 project_activity: StdMutex::new(HashMap::new()),
@@ -6215,6 +6221,7 @@ pub fn run() {
             acp::test_acp_agent,
             acp::authenticate_acp_agent,
             acp::respond_acp_permission,
+            acp::respond_ask_user,
             acp::set_acp_session_config,
             acp::set_acp_session_mode,
             test_reviewer_backend,

@@ -2083,6 +2083,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             EXTERNAL_SESSION_CACHE_MIGRATION.to_string(),
             TURN_FILE_UNDO_MIGRATION.to_string(),
             SESSION_BRANCH_LINEAGE_MIGRATION.to_string(),
+            ASK_USER_REQUESTS_MIGRATION.to_string(),
         ]
     );
 

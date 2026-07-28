@@ -8,6 +8,7 @@ mod agent_workflow_attempts;
 mod agent_workflow_deliveries;
 mod agent_workflows;
 mod artifacts;
+mod ask_user_requests;
 mod codex_imports;
 mod execution_contexts;
 mod external_session_cache;
@@ -26,6 +27,7 @@ mod sessions;
 mod turn_undo;
 
 pub use acp_sessions::AcpSessionBinding;
+pub use ask_user_requests::AskUserPoll;
 pub use agent_workflow_attempts::{
     AgentWorkflowAttempt, AgentWorkflowAttemptStart, AgentWorkflowAttemptStatus,
 };
@@ -87,6 +89,7 @@ const CODEX_IMPORTS_MIGRATION: &str = "0024_codex_imports";
 const EXTERNAL_SESSION_CACHE_MIGRATION: &str = "0025_external_session_cache";
 const TURN_FILE_UNDO_MIGRATION: &str = "0026_turn_file_undo";
 const SESSION_BRANCH_LINEAGE_MIGRATION: &str = "0027_session_branch_lineage";
+const ASK_USER_REQUESTS_MIGRATION: &str = "0028_ask_user_requests";
 
 #[derive(Clone)]
 pub struct Store {
@@ -389,6 +392,29 @@ impl Store {
         if !Self::migration_applied(pool, SESSION_BRANCH_LINEAGE_MIGRATION).await? {
             Self::add_columns_if_missing(pool, "frames", &[("branched_from", "TEXT")]).await?;
             Self::record_migration(pool, SESSION_BRANCH_LINEAGE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, ASK_USER_REQUESTS_MIGRATION).await? {
+            // The ACP bridge's ask_user handshake: the bridge process INSERTs
+            // and polls, the host answers or expires. SQLite is the only
+            // channel the two processes share.
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS ask_user_requests (\
+                 request_id TEXT PRIMARY KEY, \
+                 frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+                 payload_json TEXT NOT NULL, \
+                 answer TEXT, \
+                 status TEXT NOT NULL DEFAULT 'pending', \
+                 created_at INTEGER NOT NULL, answered_at INTEGER)",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS ix_ask_user_requests_frame \
+                 ON ask_user_requests(frame_id,status)",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, ASK_USER_REQUESTS_MIGRATION).await?;
         }
         Ok(())
     }
