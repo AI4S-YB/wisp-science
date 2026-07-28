@@ -67,6 +67,11 @@ and does not generate a billable validation image.
 | OpenAI (Responses API) | OpenAI reasoning/tool-call models through `/v1/responses` | API URL, Model ID, API key |
 | Anthropic | Claude API through `/v1/messages` | API URL, Model ID, API key |
 
+OpenAI-compatible reasoning streams are normalized into one reasoning channel.
+Empty `content` placeholders sent alongside Alibaba/DashScope
+`reasoning_content` chunks are ignored, so a continuous thought process remains
+one disclosure in the conversation.
+
 For OpenAI-compatible and Responses API profiles, Wisp sends its internal
 `python` REPL tool as `wisp_python` and maps returned calls back to `python`.
 This avoids the reserved `python` function-name collision on Codex models,
