@@ -295,6 +295,34 @@ fn ensure_named_tool_calls(calls: &[ToolCall]) -> Result<()> {
     Ok(())
 }
 
+fn append_stream_content_delta(
+    delta: &Value,
+    content: &mut String,
+    reasoning: &mut String,
+    sink: &mut dyn StreamSink,
+) {
+    // Some compatible endpoints (notably Alibaba/DashScope thinking streams)
+    // include `content: ""` beside every non-empty `reasoning_content` delta.
+    // Emitting that empty text event breaks an otherwise contiguous reasoning
+    // run into one UI disclosure per token fragment.
+    if let Some(t) = delta
+        .get("content")
+        .and_then(|v| v.as_str())
+        .filter(|t| !t.is_empty())
+    {
+        content.push_str(t);
+        sink.on_text(t);
+    }
+    if let Some(r) = delta
+        .get("reasoning_content")
+        .and_then(|v| v.as_str())
+        .filter(|r| !r.is_empty())
+    {
+        reasoning.push_str(r);
+        sink.on_reasoning(r);
+    }
+}
+
 #[async_trait]
 impl Provider for OpenAiProvider {
     fn name(&self) -> &str {
@@ -407,14 +435,7 @@ impl Provider for OpenAiProvider {
                         continue;
                     };
                     let delta = choice.get("delta").cloned().unwrap_or(Value::Null);
-                    if let Some(t) = delta.get("content").and_then(|v| v.as_str()) {
-                        content.push_str(t);
-                        sink.on_text(t);
-                    }
-                    if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
-                        reasoning.push_str(r);
-                        sink.on_reasoning(r);
-                    }
+                    append_stream_content_delta(&delta, &mut content, &mut reasoning, sink);
                     if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                         for tc in tcs {
                             let i = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -504,6 +525,47 @@ fn parse_usage_obj(u: &Value) -> Option<Usage> {
 mod tests {
     use super::*;
     use crate::message::Message;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        text: Vec<String>,
+        reasoning: Vec<String>,
+    }
+
+    impl StreamSink for RecordingSink {
+        fn on_text(&mut self, delta: &str) {
+            self.text.push(delta.into());
+        }
+
+        fn on_reasoning(&mut self, delta: &str) {
+            self.reasoning.push(delta.into());
+        }
+
+        fn on_tool_call(&mut self, _: usize, _: &str, _: &str) {}
+
+        fn on_usage(&mut self, _: Usage) {}
+    }
+
+    #[test]
+    fn ignores_empty_content_between_alibaba_reasoning_deltas() {
+        let mut content = String::new();
+        let mut reasoning = String::new();
+        let mut sink = RecordingSink::default();
+
+        for delta in [
+            json!({"content": "", "reasoning_content": "column in"}),
+            json!({"content": "", "reasoning_content": " test fixtures"}),
+            json!({"content": "", "reasoning_content": ""}),
+            json!({"content": "Fixed.", "reasoning_content": null}),
+        ] {
+            append_stream_content_delta(&delta, &mut content, &mut reasoning, &mut sink);
+        }
+
+        assert_eq!(content, "Fixed.");
+        assert_eq!(reasoning, "column in test fixtures");
+        assert_eq!(sink.text, ["Fixed."]);
+        assert_eq!(sink.reasoning, ["column in", " test fixtures"]);
+    }
 
     #[test]
     fn parses_cache_hits_across_providers() {
