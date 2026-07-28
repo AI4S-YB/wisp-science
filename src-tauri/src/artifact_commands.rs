@@ -177,6 +177,7 @@ mod tests {
     fn artifact_registration_requires_an_existing_file() {
         let root = std::env::temp_dir().join(format!("wisp_register_artifact_{}", Uuid::new_v4()));
         std::fs::create_dir_all(root.join("results")).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         std::fs::write(root.join("results/report.csv"), b"a,b\n1,2\n").unwrap();
 
         assert_eq!(
