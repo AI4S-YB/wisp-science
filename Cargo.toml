@@ -17,7 +17,7 @@ members = [
 default-members = ["crates/wisp-cli"]
 
 [workspace.package]
-version = "0.26.0"
+version = "0.27.0"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
