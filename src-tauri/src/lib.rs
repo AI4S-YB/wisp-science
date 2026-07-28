@@ -45,6 +45,7 @@ mod memory_commands;
 mod models;
 mod native_delegation;
 mod pet_commands;
+mod plan_mode;
 mod plugins;
 mod project_commands;
 mod project_reader;
@@ -1865,6 +1866,9 @@ struct TauriOutput {
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Shared live approval policy (see `AppState::approvals`).
     approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Built-in plan mode for this session, read once per turn. ACP-bound
+    /// frames never set it — their plan mode lives on the agent side.
+    plan_mode: bool,
     approval_grants: Arc<StdMutex<ApprovalGrants>>,
     /// Incremental-persistence sink: each message the turn produces is sent here
     /// and written to SQLite by a background task, so a crash or mid-turn "new
@@ -2057,6 +2061,9 @@ impl Output for TauriOutput {
     }
     fn danger_auto_approve(&self) -> bool {
         self.approvals.read().map(|p| p.full()).unwrap_or(false)
+    }
+    fn plan_mode(&self) -> bool {
+        self.plan_mode
     }
     fn on_message(&self, msg: &Message) {
         if msg.role == wisp_llm::Role::User {
@@ -2841,6 +2848,24 @@ async fn active_skill_index(store: &Store, ap: &ActiveProject) -> Arc<SkillIndex
 /// a specialist. Description is UI-only and deliberately excluded.
 fn specialist_prompt_section(spec: &specialists::Specialist) -> String {
     format!("\n\n## Specialist: {}\n{}", spec.name, spec.instructions)
+}
+
+/// Idempotently add or remove a delimited system-prompt section. The prompt is
+/// persisted as message 0 and reloaded on every runtime rebuild, so a toggled-off
+/// capability has to strip whatever an earlier turn appended (including a
+/// truncated section from an interrupted write).
+fn sync_prompt_section(prompt: &mut String, start: &str, end: &str, section: &str, enabled: bool) {
+    while let Some(at) = prompt.find(start) {
+        let body = at + start.len();
+        let Some(relative_end) = prompt[body..].find(end) else {
+            prompt.truncate(at);
+            break;
+        };
+        prompt.replace_range(at..body + relative_end + end.len(), "");
+    }
+    if enabled {
+        prompt.push_str(section);
+    }
 }
 
 async fn load_mcp_connections(store: &Store) -> Vec<McpConnection> {
@@ -4166,6 +4191,7 @@ async fn send_message_inner(
     let specialist = specialists::session_specialist(&state.store, &frame_id).await;
     let delegation_enabled =
         delegation_runtime::session_delegation_enabled(&state.store, &frame_id).await;
+    let plan_mode_enabled = plan_mode::session_plan_mode(&state.store, &frame_id).await;
     let (provider, api_url, model, api_key, max_tokens, reasoning_effort) = match &specialist {
         Some(spec) if !spec.model_id.trim().is_empty() => {
             specialists::specialist_llm(&state.store, spec).await
@@ -4396,6 +4422,7 @@ async fn send_message_inner(
         if let Some(message) = agent.ctx.messages.first_mut() {
             if let wisp_llm::Content::Text(prompt) = &mut message.content {
                 delegation_runtime::sync_delegation_prompt(prompt, delegation_enabled);
+                plan_mode::sync_plan_prompt(prompt, plan_mode_enabled);
             }
         }
         if let Some(spec) = &specialist {
@@ -4711,6 +4738,7 @@ async fn send_message_inner(
         confirms: state.confirms.clone(),
         awaiting_confirm: state.awaiting_confirm.clone(),
         approvals: state.approvals.clone(),
+        plan_mode: plan_mode_enabled,
         approval_grants: state.approval_grants.clone(),
         persist: Some(persist_tx),
         ui_events: Some(ui_event_tx),
@@ -6104,6 +6132,8 @@ pub fn run() {
             delegation_runtime::list_agent_workflows,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,
+            plan_mode::get_session_plan_mode,
+            plan_mode::set_session_plan_mode,
             delegation_completion::get_session_agent_completion,
             delegation_completion::set_session_agent_completion,
             delegation_runtime::create_dynamic_agent_workflow,

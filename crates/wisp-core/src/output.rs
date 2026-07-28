@@ -56,6 +56,11 @@ pub trait Output: Send + Sync {
     fn danger_auto_approve(&self) -> bool {
         false
     }
+    /// True while the session is in plan mode, so the tool registry refuses
+    /// everything outside its read-only set. Default `false`.
+    fn plan_mode(&self) -> bool {
+        false
+    }
     /// Fired once per message appended to the context during a turn (user,
     /// assistant, tool). Lets the host persist incrementally so a crash or a
     /// mid-turn "new session" doesn't lose the whole turn. Default: no-op.
@@ -123,6 +128,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     fn danger_auto_approve(&self) -> bool {
         self.out.danger_auto_approve()
+    }
+    fn plan_mode(&self) -> bool {
+        self.out.plan_mode()
     }
     fn is_cancelled(&self) -> bool {
         self.cancel

@@ -4979,11 +4979,20 @@ fn App() -> impl IntoView {
     let auto_review_enabled = create_rw_signal(false);
     let delegation_enabled = create_rw_signal(false);
     let delegation_setting_busy = create_rw_signal(false);
+    // Built-in plan mode for the active session. `None` = the session is
+    // ACP-bound, so the composer's "Plan first" toggle drives the ACP mode
+    // picker instead of this flag. A session-less composer counts as built-in.
+    let local_plan_mode = create_rw_signal::<Option<bool>>(Some(false));
+    let plan_mode_busy = create_rw_signal(false);
     let agent_completion = create_rw_signal(AgentCompletionSettings::default());
     let agent_completion_busy = create_rw_signal(false);
     create_effect(move |_| {
         delegation_enabled.set(false);
         delegation_setting_busy.set(false);
+        plan_mode_busy.set(false);
+        // Reset before the fetch: otherwise the previous session's flag shows
+        // on the new one for as long as the round trip takes.
+        local_plan_mode.set(Some(false));
         agent_completion.set(AgentCompletionSettings::default());
         agent_completion_busy.set(false);
         let Some(session_id) = active_session.get() else {
@@ -4995,6 +5004,10 @@ fn App() -> impl IntoView {
                 .await
                 .ok()
                 .and_then(|value| value.as_bool());
+            let plan = invoke_checked("get_session_plan_mode", args.clone())
+                .await
+                .ok()
+                .map(|value| value.as_bool());
             let completion = invoke_checked("get_session_agent_completion", args)
                 .await
                 .ok()
@@ -5003,6 +5016,7 @@ fn App() -> impl IntoView {
                 });
             if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
                 delegation_enabled.set(enabled.unwrap_or(false));
+                local_plan_mode.set(plan.unwrap_or(None));
                 agent_completion.set(completion.unwrap_or_default());
             }
         });
@@ -8809,12 +8823,20 @@ fn App() -> impl IntoView {
                                 <div class="compose-menu agent-menu" role="menu"
                                     aria-label=move || t(locale.get(), "composer.agent_options")>
                                     {move || {
-                                        // Shortcut for the plan/default pair of the ACP mode picker
-                                        // in the model menu; agents without a plan mode get no row.
-                                        let session_id = active_session.get()?;
-                                        let (plan_mode, exit_mode) = acp_session_modes
-                                            .with(|all| plan_mode_pair(all.get(&session_id)))?;
-                                        let on_plan = plan_mode_active.get();
+                                        // One control, two backends: ACP-bound sessions switch the
+                                        // agent's own plan/default mode pair (and get no row when the
+                                        // agent has none), built-in sessions flip the local flag.
+                                        let session_id = active_session.get();
+                                        let local = local_plan_mode.get();
+                                        let acp_pair = match (&local, &session_id) {
+                                            (None, Some(id)) => acp_session_modes
+                                                .with(|all| plan_mode_pair(all.get(id))),
+                                            _ => None,
+                                        };
+                                        if local.is_none() && acp_pair.is_none() {
+                                            return None;
+                                        }
+                                        let on_plan = local.unwrap_or_else(|| plan_mode_active.get());
                                         Some(view! {
                                             <label class="agent-menu-row"
                                                 title=move || t(locale.get(), if on_plan { "plan.switch_default" } else { "plan.switch_plan" })>
@@ -8822,11 +8844,56 @@ fn App() -> impl IntoView {
                                                 <span class="toggle agent-menu-toggle">
                                                     <input type="checkbox" data-testid="plan-first-toggle"
                                                         prop:checked=on_plan
+                                                        disabled=move || plan_mode_busy.get()
                                                         on:change=move |ev| {
                                                             let enabled = event_target_checked(&ev);
-                                                            let target = if enabled { plan_mode.clone() } else { exit_mode.clone() };
-                                                            let session_id = session_id.clone();
                                                             let loc = locale.get_untracked();
+                                                            let Some((plan_mode, exit_mode)) = acp_pair.clone() else {
+                                                                local_plan_mode.set(Some(enabled));
+                                                                plan_mode_busy.set(true);
+                                                                spawn_local(async move {
+                                                                    let (session_id, created_session) = match active_session.get_untracked() {
+                                                                        Some(session_id) => (session_id, false),
+                                                                        None if enabled => {
+                                                                            let Some(session_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {
+                                                                                local_plan_mode.set(Some(false));
+                                                                                plan_mode_busy.set(false);
+                                                                                return;
+                                                                            };
+                                                                            (session_id, true)
+                                                                        }
+                                                                        None => {
+                                                                            local_plan_mode.set(Some(false));
+                                                                            plan_mode_busy.set(false);
+                                                                            return;
+                                                                        }
+                                                                    };
+                                                                    let args = to_value(&serde_json::json!({
+                                                                        "sessionId": session_id.clone(),
+                                                                        "enabled": enabled,
+                                                                    })).unwrap();
+                                                                    let saved = invoke_checked("set_session_plan_mode", args).await
+                                                                        .ok()
+                                                                        .and_then(|value| value.as_bool());
+                                                                    if created_session {
+                                                                        active_session.set(Some(session_id.clone()));
+                                                                        items.set(vec![]);
+                                                                        refresh_session_history();
+                                                                    }
+                                                                    if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
+                                                                        local_plan_mode.set(Some(saved.unwrap_or(!enabled)));
+                                                                        plan_mode_busy.set(false);
+                                                                    }
+                                                                    if saved.is_some() {
+                                                                        show_toast(&t(loc, if enabled { "plan.enabled" } else { "plan.default_enabled" }));
+                                                                    }
+                                                                });
+                                                                return;
+                                                            };
+                                                            let target = if enabled { plan_mode } else { exit_mode };
+                                                            let Some(session_id) = session_id.clone() else {
+                                                                return;
+                                                            };
                                                             spawn_local(async move {
                                                                 if apply_acp_mode(acp_session_modes, session_id, target).await {
                                                                     show_toast(&t(loc, if enabled { "plan.enabled" } else { "plan.default_enabled" }));

@@ -33,6 +33,53 @@ const USE_MCP_TOOL: &str = "use_mcp_tool";
 /// derives the matching result name.
 pub const MCP_EVENT_PREFIX: &str = "mcp:";
 const DEFAULT_MCP_SEARCH_LIMIT: usize = 5;
+
+/// Tools that stay callable while a session is in plan mode (see
+/// [`ToolEnv::plan_mode`]). Everything else is refused at the registry gate:
+/// writes, shell/python/R, delegation, state changes, and every MCP-backed
+/// tool. `search_mcp_tools` is a schema lookup and is allowed by its own path.
+///
+/// ponytail: a name whitelist rather than per-tool metadata — one list to read,
+/// and it fails closed for anything nobody classified. It deliberately names
+/// host tools this crate never sees. Upgrade path, once a tool needs to
+/// disagree or MCP `readOnlyHint` should be honoured: a `Tool::read_only()`
+/// method defaulting to false, with this list kept only as the host override.
+pub const PLAN_MODE_READ_ONLY: &[&str] = &[
+    // wisp-tools built-ins
+    "read",
+    "search",
+    "grep",
+    "view_image",
+    "update_plan",
+    "attempt_completion",
+    // wisp-core / wisp-skills
+    "search_memory",
+    "search_skills",
+    "use_skill",
+    // Desktop host tools that only read or retrieve
+    "web_scan",
+    "web_open_tab",
+    "web_screenshot",
+    "get_run",
+    "monitor_run",
+    "get_delegated_result",
+    // The plan proposal tool: plan mode is exactly when it has to run.
+    "propose_plan",
+];
+
+fn plan_mode_blocks(name: &str) -> bool {
+    !PLAN_MODE_READ_ONLY.contains(&name)
+}
+
+/// Refusal text for a blocked call. Written at the agent, not the user: it has
+/// to steer the model back to planning instead of hunting for a workaround.
+fn plan_mode_refusal(name: &str) -> String {
+    format!(
+        "tool '{name}' is unavailable: this conversation is in plan mode, so it investigates and \
+         writes a plan instead of executing one. Keep researching with read-only tools and finish \
+         the plan; the user approves it before anything runs."
+    )
+}
 const MAX_MCP_SEARCH_LIMIT: usize = 10;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 2_048;
 
@@ -259,6 +306,11 @@ impl Registry {
 
 async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -> ToolResult {
     let name = tool.name();
+    // Plan-mode gate, ahead of approvals: a session that is only allowed to
+    // plan never reaches the approval prompt for a tool that would execute.
+    if env.plan_mode() && plan_mode_blocks(name) {
+        return ToolResult::fail(plan_mode_refusal(name));
+    }
     // Per-tool approval gate. `Deny` blocks before the call card even shows;
     // `Ask` shows the card then routes through `confirm`; `Allow` runs as before.
     let approval = match (env.approval_mode(name).await, tool.minimum_approval()) {
@@ -524,6 +576,53 @@ mod approval_tests {
         // Allow: runs without asking.
         let (ran, res) = run_with(Approval::Allow, false).await;
         assert!(ran && res.success, "allow must run the tool");
+    }
+
+    struct PlanEnv {
+        root: PathBuf,
+        plan: bool,
+    }
+    #[async_trait::async_trait]
+    impl ToolEnv for PlanEnv {
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+        async fn confirm(&self, _message: &str) -> bool {
+            true
+        }
+        fn plan_mode(&self) -> bool {
+            self.plan
+        }
+        async fn emit(&self, _event: ToolEvent) {}
+    }
+
+    #[tokio::test]
+    async fn plan_mode_blocks_writers_and_lets_readers_through() {
+        let dir = std::env::temp_dir().join("wisp-plan-mode-gate");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("note.txt"), "hello").unwrap();
+        let reg = Registry::builtins();
+        let write = serde_json::json!({ "path": "gated.txt", "content": "no" });
+        let read = serde_json::json!({ "path": dir.join("note.txt").to_string_lossy() });
+
+        let planning = PlanEnv {
+            root: dir.clone(),
+            plan: true,
+        };
+        let blocked = reg.run("write", &write, &planning).await;
+        assert!(!blocked.success);
+        assert!(blocked.content.contains("plan mode"), "{}", blocked.content);
+        assert!(!dir.join("gated.txt").exists(), "the write must not happen");
+        assert!(reg.run("read", &read, &planning).await.success);
+
+        // Same calls with plan mode off: the gate is invisible.
+        let executing = PlanEnv {
+            root: dir.clone(),
+            plan: false,
+        };
+        assert!(reg.run("write", &write, &executing).await.success);
+        assert!(reg.run("read", &read, &executing).await.success);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

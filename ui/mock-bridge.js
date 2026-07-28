@@ -140,6 +140,8 @@
   let nextCustomCredential = 1;
   // frame_id -> enabled execution context ids, mirroring session_execution_contexts.
   const sessionContexts = {};
+  // frame_id -> built-in plan mode flag (settings key frame_plan_mode:<id>).
+  const mockPlanMode = {};
   // Agent-created SSH trust edges (ssh_trust_edges_v1). One edge whose
   // destination context no longer exists, to exercise the orphan rendering.
   const mockTrustEdges = [
@@ -820,6 +822,13 @@
             edits.push(version);
             return version;
           }
+          // Built-in plan mode: `null` would mean "ACP-bound", which hides the
+          // composer toggle, so the mock always answers with a real boolean.
+          case "get_session_plan_mode":
+            return mockPlanMode[args?.sessionId] ?? false;
+          case "set_session_plan_mode":
+            mockPlanMode[args?.sessionId] = !!args?.enabled;
+            return mockPlanMode[args?.sessionId];
           default:
             return null;
         }

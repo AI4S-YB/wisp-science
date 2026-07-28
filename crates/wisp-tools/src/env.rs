@@ -106,6 +106,12 @@ pub trait ToolEnv: Send + Sync {
     async fn approval_mode(&self, _tool: &str) -> Approval {
         Approval::Allow
     }
+    /// Whether this session is in plan mode: the agent researches and drafts a
+    /// plan, so `Registry::run` refuses every tool outside
+    /// [`crate::PLAN_MODE_READ_ONLY`]. Default `false`.
+    fn plan_mode(&self) -> bool {
+        false
+    }
     /// Whether the "full" approval scope is active — auto-approve everything,
     /// dangerous commands included. Only the shell danger check consults this;
     /// default `false` keeps the CLI and tests prompting on dangerous commands.
