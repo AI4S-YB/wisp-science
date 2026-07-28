@@ -314,6 +314,23 @@ fn reloaded_propose_plan_result_rebuilds_the_plan_card() {
 }
 
 #[test]
+fn reloaded_ask_user_result_rebuilds_the_question_card() {
+    let question = wisp_llm::Message::tool(
+        "call-ask",
+        wisp_tools::ask_user::ASK_USER,
+        r#"{"v":1,"source":"native","question":"Which aligner?","options":[{"label":"STAR","description":""}],"allow_freeform":true}"#,
+    );
+
+    let items = messages_to_items(&[question]);
+
+    assert_eq!(items.len(), 1);
+    // "question" is what LoadedItem::into_chat turns back into a question
+    // card; a generic tool row here would render the raw JSON instead.
+    assert_eq!(items[0].role, "question");
+    assert!(items[0].text.contains("Which aligner?"));
+}
+
+#[test]
 fn reloaded_background_completion_keeps_terminal_status() {
     let mut completion = wisp_llm::Message::user(
         r#"{"type":"delegated_batch_completion","result":{"status":"cancelled"}}"#,

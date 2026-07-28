@@ -497,6 +497,61 @@ pub(super) async fn user_index_to_keep_after_db(
     Ok(user_message_start(&msgs, user_index))
 }
 
+/// The frame's ACP `ask_user` rows, appended after the transcript (a pending
+/// or expired question is always the frame's latest activity). A pending row
+/// whose request is no longer live in `acp_asks` is expired here: the bridge
+/// process that could consume its answer died with the turn, so the card
+/// reloads as a dead one instead of inviting an answer nobody reads.
+async fn ask_user_items(state: &AppState, frame_id: &str) -> Vec<UiItem> {
+    let rows = state
+        .store
+        .ask_user_rows_for_frame(frame_id)
+        .await
+        .unwrap_or_default();
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let live: std::collections::HashSet<String> =
+        state.acp_asks.lock().await.keys().cloned().collect();
+    let newly_expired: std::collections::HashSet<String> = state
+        .store
+        .expire_ask_user_requests_except(frame_id, &live)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(request_id, _)| request_id)
+        .collect();
+    rows.into_iter()
+        .map(|(request_id, payload_json, status)| {
+            let status = if newly_expired.contains(&request_id) {
+                "expired".to_string()
+            } else {
+                status
+            };
+            let mut payload: serde_json::Value =
+                serde_json::from_str(&payload_json).unwrap_or_default();
+            if let Some(object) = payload.as_object_mut() {
+                object.insert("request_id".into(), request_id.into());
+                object.insert("status".into(), status.into());
+            }
+            UiItem {
+                role: "question".into(),
+                text: payload.to_string(),
+                tool_name: None,
+                ok: None,
+                duration_ms: None,
+                input: None,
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+                resources: Vec::new(),
+            }
+        })
+        .collect()
+}
+
 pub(super) fn transcript_page_items(
     page: &wisp_store::SessionTranscriptPage,
 ) -> Result<Vec<UiItem>, String> {
@@ -662,7 +717,10 @@ pub(super) async fn load_session(
             rt.set_last_seq(page.latest_seq);
         }
     }
-    let items = transcript_page_items(&page)?;
+    let mut items = transcript_page_items(&page)?;
+    if before_seq.is_none() {
+        items.extend(ask_user_items(&state, &id).await);
+    }
     Ok(SessionTranscriptPage {
         items,
         next_before_seq: page.next_before_seq,

@@ -187,6 +187,9 @@ impl BridgeServer {
             monitor_run_tool_schema(),
             cancel_run_tool_schema(),
         ];
+        if self.cfg.frame_id.is_some() {
+            tools.push(ask_user_tool_schema());
+        }
         if let Some(frame_id) = self.cfg.frame_id.as_deref() {
             let session_enabled =
                 crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id).await;
@@ -366,6 +369,15 @@ impl BridgeServer {
                     )
                     .await;
                 (result.content, !result.success)
+            }
+            "ask_user" => {
+                let Some(frame_id) = self.cfg.frame_id.as_deref() else {
+                    return Err(anyhow!("ask_user requires a conversation frame"));
+                };
+                match self.ask_user(frame_id, &args).await {
+                    Ok(answer) => (answer, false),
+                    Err(e) => (e.to_string(), true),
+                }
             }
             "wisp_get_delegated_result" => {
                 let Some(frame_id) = self.cfg.frame_id.as_deref() else {
@@ -892,6 +904,30 @@ impl BridgeServer {
         };
         tool.run(args, &env).await
     }
+
+    /// Park the agent's question in the store and block until the host
+    /// answers or expires it. This process shares nothing with the host but
+    /// SQLite, so the pending row IS the handshake: the host's turn loop
+    /// surfaces it to the UI, `respond_ask_user` writes the answer, and the
+    /// poll below consumes it. Deliberately no short timeout — the user may
+    /// answer much later, matching the ACP permission policy.
+    async fn ask_user(&self, frame_id: &str, args: &Value) -> Result<String> {
+        let body = acp_question_body(args).map_err(anyhow::Error::msg)?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.store
+            .insert_ask_user_request(&request_id, frame_id, &body.to_string())
+            .await?;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            match self.store.poll_ask_user_answer(&request_id).await? {
+                wisp_store::AskUserPoll::Pending => {}
+                wisp_store::AskUserPoll::Answered(answer) => return Ok(answer),
+                wisp_store::AskUserPoll::Gone => {
+                    return Err(anyhow!("the question expired before it was answered"))
+                }
+            }
+        }
+    }
 }
 
 async fn filter_skills(
@@ -1063,6 +1099,51 @@ fn get_capabilities_tool_schema() -> Value {
         "name": "wisp_get_capabilities",
         "description": "Describe the project-scoped Wisp Harness capabilities granted to this ACP session, including intentionally unavailable write operations.",
         "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+    })
+}
+
+/// The card body for a bridge question: the built-in tool's validated shape,
+/// re-sourced to `acp`, minus the built-in note. That note tells the agent to
+/// end its turn and wait for the next user message; here the answer returns
+/// inside this very tool call, so it would only mislead.
+fn acp_question_body(args: &Value) -> Result<Value, String> {
+    let mut body = wisp_tools::ask_user::question_body(args)?;
+    body["source"] = json!("acp");
+    body.as_object_mut()
+        .expect("question_body returns an object")
+        .remove("note");
+    Ok(body)
+}
+
+fn ask_user_tool_schema() -> Value {
+    json!({
+        "name": "ask_user",
+        "description": "Ask the Wisp user a question and wait for their decision. Use it when you hit \
+             a real fork only they can settle — a destructive step, a choice between approaches, \
+             missing requirements — not for confirmations you can infer. Offer the plausible choices \
+             as options and leave freeform on unless the answer must be one of them. This call blocks \
+             until the user answers; the answer is returned as the tool result.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": { "type": "string", "description": "The question, complete and self-contained." },
+                "options": {
+                    "type": "array",
+                    "description": "Suggested answers the user can pick with one click.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": { "type": "string", "description": "Short answer text; picking it sends exactly this." },
+                            "description": { "type": "string", "description": "Optional one-line consequence or context." }
+                        },
+                        "required": ["label"]
+                    }
+                },
+                "allow_freeform": { "type": "boolean", "description": "Let the user type their own answer. Defaults to true." }
+            },
+            "required": ["question"],
+            "additionalProperties": false
+        }
     })
 }
 
@@ -1388,6 +1469,39 @@ mod tests {
     fn sanitizes_custom_tool_parts() {
         assert_eq!(sanitize_tool_part("abc.Def/g"), "abc_Def_g");
         assert_eq!(sanitize_tool_part(""), "tool");
+    }
+
+    #[test]
+    fn acp_question_body_is_the_card_shape_without_the_built_in_note() {
+        let body = acp_question_body(&json!({
+            "question": "Overwrite the results directory?",
+            "options": [{ "label": "Overwrite", "description": "the previous run is lost" }],
+            "allow_freeform": false,
+        }))
+        .unwrap();
+
+        assert_eq!(body["source"], "acp");
+        assert_eq!(body["question"], "Overwrite the results directory?");
+        assert_eq!(body["options"][0]["label"], "Overwrite");
+        assert_eq!(body["allow_freeform"], false);
+        // The built-in note ends the agent's turn; the bridge answers inside
+        // the call, so carrying it over would tell the agent to stop waiting.
+        assert!(body.get("note").is_none(), "{body}");
+        assert!(acp_question_body(&json!({ "question": "  " })).is_err());
+    }
+
+    #[test]
+    fn ask_user_bridge_schema_matches_the_built_in_tool() {
+        let schema = ask_user_tool_schema();
+        assert_eq!(schema["name"], wisp_tools::ask_user::ASK_USER);
+        let properties = &schema["inputSchema"]["properties"];
+        assert_eq!(properties["question"]["type"], "string");
+        assert_eq!(properties["options"]["items"]["required"][0], "label");
+        assert_eq!(properties["allow_freeform"]["type"], "boolean");
+        assert!(schema["description"]
+            .as_str()
+            .unwrap()
+            .contains("blocks until the user answers"));
     }
 
     #[test]

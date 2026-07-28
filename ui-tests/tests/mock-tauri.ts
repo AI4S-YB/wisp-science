@@ -493,6 +493,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const acpBindings: Record<string, string> =
     mockPlanFlow === "acp" || mockPlanFlow === "compat" ? { s1: "acp-test" } : {};
   const acpPermissionFrames: Record<string, string> = {};
+  const askUserFrames: Record<string, string> = {};
   const acpLongResolvers: Record<string, (value: string) => void> = {};
   let mockCredentials: Record<string, boolean> = {
     openalex_api_key: false,
@@ -1383,6 +1384,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               emit("permission-resolved", { frameId, requestId });
               emit("agent", { kind: "Done", frame_id: frameId, stop_reason: "end_turn" });
               delete acpPermissionFrames[requestId];
+            }, 0);
+            return null;
+          case "respond_ask_user":
+            setTimeout(() => {
+              const requestId = String(arg("requestId"));
+              const frameId = askUserFrames[requestId] ?? "";
+              emit("ask-user-resolved", { frameId, requestId, expired: false });
+              delete askUserFrames[requestId];
             }, 0);
             return null;
           case "credential_status":
@@ -2331,6 +2340,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 if (String(msg).includes("PERMISSION")) {
                   acpPermissionFrames["permission-1"] = fid;
                   emit("permission-request", { requestId: "permission-1", frameId: fid, toolCall: { toolCallId: "tool-b", title: "Run checks" }, options: [{ id: "allow", name: "Allow once", kind: "allowonce" }, { id: "reject", name: "Reject", kind: "rejectonce" }] });
+                }
+                if (String(msg).includes("ASKUSER")) {
+                  askUserFrames["ask-1"] = fid;
+                  emit("ask-user-request", { requestId: "ask-1", frameId: fid, payload: {
+                    v: 1, source: "acp", question: "Which aligner should the pipeline use?", allow_freeform: true,
+                    options: [{ label: "STAR", description: "splice-aware, needs more RAM" }, { label: "HISAT2", description: "lighter" }],
+                  } });
                 }
                 emit("agent", { kind: "Text", frame_id: fid, delta: "Hello from ACP." });
                 if (!String(msg).includes("LONG") && !String(msg).includes("PERMISSION")) emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });

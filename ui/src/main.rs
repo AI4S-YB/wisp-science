@@ -1978,9 +1978,9 @@ fn App() -> impl IntoView {
                 set_pet_activity(&frame_id, "review");
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                    // The plan tool has no call card: its result carries the
-                    // whole plan, and that lands as a plan card instead.
-                    if name == PROPOSE_PLAN_TOOL {
+                    // The plan and question tools have no call card: their
+                    // results carry the whole body, and that lands as a card.
+                    if name == PROPOSE_PLAN_TOOL || name == ASK_USER_TOOL {
                         return;
                     }
                     let idx = process_item_insert_index(v);
@@ -2016,6 +2016,16 @@ fn App() -> impl IntoView {
                             let mut card = parse_plan_card(&payload);
                             card.state = PlanState::Streaming;
                             upsert_plan_card(v, card);
+                            return;
+                        }
+                    }
+                    // A submitted question renders as the question card; each
+                    // call is its own question, so append instead of upsert. A
+                    // refused call stays an ordinary tool row.
+                    if name == ASK_USER_TOOL && ok {
+                        if let Ok(payload) = serde_json::from_str(&content) {
+                            let idx = process_item_insert_index(v);
+                            v.insert(idx, ChatItem::Question(parse_question_card(&payload)));
                             return;
                         }
                     }
@@ -2645,6 +2655,71 @@ fn App() -> impl IntoView {
         let _ = listen("permission-resolved", &acp_resolved_js).await;
     });
 
+    // ACP `ask_user`: the bridge parks the agent's question until the user
+    // answers, so the card mirrors the permission flow — request event inserts
+    // it, resolved event settles it.
+    let ask_user_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let Ok(request) = serde_wasm_bindgen::from_value::<AskUserRequest>(payload) else {
+            return;
+        };
+        let mut card = parse_question_card(&request.payload);
+        card.source = PlanSource::Acp;
+        card.request_id = Some(request.request_id);
+        card.state = QuestionState::Pending;
+        notify_desktop(&request.frame_id, "attention", &card.question);
+        route_items(
+            active_session,
+            items,
+            transcripts,
+            &request.frame_id,
+            |rows| {
+                let idx = process_item_insert_index(rows);
+                rows.insert(idx, ChatItem::Question(card));
+            },
+        );
+    }) as Box<dyn FnMut(JsValue)>);
+    let ask_user_js: js_sys::Function = ask_user_cb
+        .as_ref()
+        .unchecked_ref::<js_sys::Function>()
+        .clone();
+    ask_user_cb.forget();
+    spawn_local(async move {
+        let _ = listen("ask-user-request", &ask_user_js).await;
+    });
+
+    let ask_resolved_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let Ok(resolved) = serde_wasm_bindgen::from_value::<AskUserResolved>(payload) else {
+            return;
+        };
+        route_items(
+            active_session,
+            items,
+            transcripts,
+            &resolved.frame_id,
+            |rows| {
+                for row in rows {
+                    if let ChatItem::Question(card) = row {
+                        if card.request_id.as_deref() == Some(resolved.request_id.as_str()) {
+                            card.state = if resolved.expired {
+                                QuestionState::Expired
+                            } else {
+                                QuestionState::Answered
+                            };
+                        }
+                    }
+                }
+            },
+        );
+    }) as Box<dyn FnMut(JsValue)>);
+    let ask_resolved_js: js_sys::Function = ask_resolved_cb
+        .as_ref()
+        .unchecked_ref::<js_sys::Function>()
+        .clone();
+    ask_resolved_cb.forget();
+    spawn_local(async move {
+        let _ = listen("ask-user-resolved", &ask_resolved_js).await;
+    });
+
     let stop = move |_| {
         if stopping_session.get().is_some() {
             return;
@@ -3176,10 +3251,15 @@ fn App() -> impl IntoView {
                                 outlines.insert(id.clone(), page.outline.clone());
                             });
                             (
-                                page.items
-                                    .into_iter()
-                                    .map(LoadedItem::into_chat)
-                                    .collect::<Vec<_>>(),
+                                {
+                                    let mut chats = page
+                                        .items
+                                        .into_iter()
+                                        .map(LoadedItem::into_chat)
+                                        .collect::<Vec<_>>();
+                                    settle_question_cards(&mut chats);
+                                    chats
+                                },
                                 Some(TranscriptPageState {
                                     next_before_seq: page.next_before_seq,
                                     user_offset: page.user_offset,
@@ -3350,8 +3430,9 @@ fn App() -> impl IntoView {
                                 conversation_outlines.update(|outlines| {
                                     outlines.insert(id.clone(), page.outline.clone());
                                 });
-                                let chats: Vec<ChatItem> =
+                                let mut chats: Vec<ChatItem> =
                                     page.items.into_iter().map(LoadedItem::into_chat).collect();
+                                settle_question_cards(&mut chats);
                                 transcript_pages.update(|pages| {
                                     pages.insert(
                                         id.clone(),
@@ -4384,8 +4465,9 @@ fn App() -> impl IntoView {
                 conversation_outlines.update(|outlines| {
                     outlines.insert(id.clone(), page.outline.clone());
                 });
-                let chats: Vec<ChatItem> =
+                let mut chats: Vec<ChatItem> =
                     page.items.into_iter().map(LoadedItem::into_chat).collect();
+                settle_question_cards(&mut chats);
                 transcript_pages.update(|pages| {
                     pages.insert(
                         id.clone(),
@@ -4482,6 +4564,9 @@ fn App() -> impl IntoView {
             transcripts.update(|saved| {
                 let current = saved.entry(id.clone()).or_default();
                 current.splice(0..0, older.iter().cloned());
+                // Settle over the merged window: an old page's question finds
+                // its answering user message in the rows already loaded.
+                settle_question_cards(current);
             });
             transcript_pages.update(|pages| {
                 pages.insert(
@@ -4583,11 +4668,13 @@ fn App() -> impl IntoView {
                     return;
                 };
                 let target_local = target.saturating_sub(page.user_offset);
-                let chats = page
+                let mut chats = page
                     .items
                     .into_iter()
                     .map(LoadedItem::into_chat)
                     .collect::<Vec<_>>();
+                settle_question_cards(&mut chats);
+                let chats = chats;
                 let loaded_turns = chats
                     .iter()
                     .filter(|item| {
@@ -4785,6 +4872,45 @@ fn App() -> impl IntoView {
             show_toast(&t(loc, "plan.executing"));
         });
     });
+
+    // Answer a question card. Built-in source: the answer is an ordinary user
+    // message on the normal send path — the agent reads it next turn. ACP
+    // source: resolve the bridge's pending request; the answer returns inside
+    // the agent's still-running turn.
+    let on_question_answer =
+        Callback::new(move |(ui_index, request_id, answer): (usize, Option<String>, String)| {
+            let answer = answer.trim().to_string();
+            if answer.is_empty() {
+                return;
+            }
+            // Settle the card before sending: the send appends rows, so the
+            // pre-send index is still the card's.
+            items.update(|rows| {
+                if let Some(ChatItem::Question(card)) = rows.get_mut(ui_index) {
+                    card.state = QuestionState::Answered;
+                }
+            });
+            match request_id {
+                Some(request_id) => spawn_local(async move {
+                    let args = to_value(&serde_json::json!({
+                        "requestId": request_id,
+                        "answer": answer,
+                    }))
+                    .unwrap();
+                    let _ = invoke_checked("respond_ask_user", args).await;
+                }),
+                None => {
+                    // The send callback reads the composer synchronously, so
+                    // swap the answer in and restore any draft right after.
+                    let draft = input.get_untracked();
+                    input.set(answer);
+                    send.call(ComposerSendAction::Normal);
+                    if !draft.trim().is_empty() {
+                        input.set(draft);
+                    }
+                }
+            }
+        });
 
     let on_sidebar_resize_start = move |ev: web_sys::MouseEvent| {
         ev.prevent_default();
@@ -8264,6 +8390,7 @@ fn App() -> impl IntoView {
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), can_undo, edit_message, branch_message, undo_message, sid,
                                                 respond_confirm, on_resume, on_queue,
                                                 plan_mode_active, plan_compat, on_plan_decision,
+                                                on_question_answer,
                                             )}
                                         </div>
                                     }.into_view()
@@ -11858,6 +11985,7 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::ReviewTransition { .. } => "review-transition-row",
         ChatItem::Review(_) => "tool-wrap",
         ChatItem::Plan(_) => "tool-wrap plan-wrap",
+        ChatItem::Question(_) => "tool-wrap plan-question-wrap",
     }
 }
 
@@ -12478,6 +12606,7 @@ fn render_item(
     plan_mode_active: Signal<bool>,
     plan_compat: Signal<bool>,
     on_plan_decision: Callback<PlanDecision>,
+    on_question_answer: Callback<(usize, Option<String>, String)>,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
@@ -12721,6 +12850,67 @@ fn render_item(
                         </footer>
                     })}
                 </article>
+            }.into_view()
+        }
+        ChatItem::Question(question) => {
+            let state = question.state;
+            let pending = state == QuestionState::Pending;
+            let request_id = question.request_id.clone();
+            let options = question.options.clone();
+            // A question with no options can only be answered freeform.
+            let allow_freeform = question.allow_freeform || options.is_empty();
+            let freeform = create_rw_signal(String::new());
+            let data_state = match state {
+                QuestionState::Pending => "pending",
+                QuestionState::Answered => "answered",
+                QuestionState::Expired => "expired",
+            };
+            let request_id_keydown = request_id.clone();
+            let request_id_click = request_id.clone();
+            view! {
+                <section class="plan-question-card" data-testid="question-card" data-state=data_state>
+                    <div class="plan-question-head">
+                        <span class="plan-question-icon">{compose_icon("chat")}</span>
+                        <strong>{move || t(locale.get(), "plan.question.title")}</strong>
+                    </div>
+                    <p class="plan-question-text">{question.question.clone()}</p>
+                    {(pending && !options.is_empty()).then(|| view! {
+                        <div class="plan-question-options">{options.into_iter().map(|option| {
+                            let request_id = request_id.clone();
+                            let answer = option.label.clone();
+                            view! {
+                                <button type="button"
+                                    on:click=move |_| on_question_answer.call((ui_index, request_id.clone(), answer.clone()))>
+                                    <strong>{option.label}</strong>
+                                    {(!option.description.is_empty()).then(|| view! { <span>{option.description}</span> })}
+                                </button>
+                            }
+                        }).collect_view()}</div>
+                    })}
+                    {(pending && allow_freeform).then(|| view! {
+                        <div class="plan-question-freeform">
+                            <input type="text" prop:value=move || freeform.get()
+                                placeholder=move || t(locale.get(), "plan.question.placeholder")
+                                on:input=move |event| freeform.set(event_target_value(&event))
+                                on:keydown=move |event: web_sys::KeyboardEvent| {
+                                    if event.key() == "Enter" && !event.shift_key() {
+                                        event.prevent_default();
+                                        on_question_answer.call((ui_index, request_id_keydown.clone(), freeform.get()));
+                                    }
+                                } />
+                            <button type="button" class="primary" disabled=move || freeform.get().trim().is_empty()
+                                on:click=move |_| on_question_answer.call((ui_index, request_id_click.clone(), freeform.get()))>
+                                {move || t(locale.get(), "plan.question.send")}
+                            </button>
+                        </div>
+                    })}
+                    {(state == QuestionState::Answered).then(|| view! {
+                        <footer class="plan-question-note">{move || t(locale.get(), "plan.answer_sent")}</footer>
+                    })}
+                    {(state == QuestionState::Expired).then(|| view! {
+                        <footer class="plan-question-note expired">{move || t(locale.get(), "plan.question.expired")}</footer>
+                    })}
+                </section>
             }.into_view()
         }
         ChatItem::Review(report) => {

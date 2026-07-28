@@ -795,9 +795,11 @@ async fn begin_acp_turn(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_acp_turn(
     state: &AppState,
     app: &AppHandle,
+    window_label: Option<&str>,
     project: &ActiveProject,
     frame_id: &str,
     profile_id: Option<&str>,
@@ -809,6 +811,7 @@ pub(crate) async fn run_acp_turn(
     run_acp_turn_with_kind(
         state,
         app,
+        window_label,
         project,
         frame_id,
         profile_id,
@@ -831,6 +834,7 @@ pub(crate) async fn run_acp_internal_turn(
     run_acp_turn_with_kind(
         state,
         app,
+        None,
         project,
         frame_id,
         None,
@@ -843,9 +847,142 @@ pub(crate) async fn run_acp_internal_turn(
     .await
 }
 
+/// `emit_to` the turn's own window when it has one; internal turns (review
+/// correction, channels) have no window and fall back to a broadcast.
+fn emit_ask_event(
+    app: &AppHandle,
+    window_label: Option<&str>,
+    event: &str,
+    payload: serde_json::Value,
+) {
+    match window_label {
+        Some(label) => {
+            let _ = app.emit_to(label, event, payload);
+        }
+        None => {
+            let _ = app.emit(event, payload);
+        }
+    }
+}
+
+/// Surface new pending bridge `ask_user` rows to the UI. `acp_asks` doubles as
+/// the seen-set: a row already registered was already emitted, and an answered
+/// row leaves the pending query before it leaves the map.
+async fn surface_pending_asks(
+    state: &AppState,
+    app: &AppHandle,
+    window_label: Option<&str>,
+    frame_id: &str,
+) {
+    let pending = state
+        .store
+        .pending_ask_user_requests(frame_id)
+        .await
+        .unwrap_or_default();
+    for (request_id, payload_json) in pending {
+        let mut asks = state.acp_asks.lock().await;
+        if asks.contains_key(&request_id) {
+            continue;
+        }
+        asks.insert(request_id.clone(), frame_id.to_string());
+        drop(asks);
+        state.awaiting_confirm.lock().unwrap().insert(frame_id.to_string());
+        state.device_hub.mark_needs_user(frame_id, None);
+        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap_or_default();
+        emit_ask_event(
+            app,
+            window_label,
+            "ask-user-request",
+            serde_json::json!({
+                "frameId": frame_id,
+                "requestId": request_id,
+                "payload": payload,
+            }),
+        );
+    }
+}
+
+/// Turn-end sweep: a pending ask that outlived its turn can never be answered
+/// (the bridge poll dies with the agent), so expire it and settle the card.
+async fn settle_expired_asks(
+    state: &AppState,
+    app: &AppHandle,
+    window_label: Option<&str>,
+    frame_id: &str,
+) {
+    let expired = state
+        .store
+        .expire_ask_user_requests_except(frame_id, &HashSet::new())
+        .await
+        .unwrap_or_default();
+    state
+        .acp_asks
+        .lock()
+        .await
+        .retain(|_, owner| owner != frame_id);
+    if !state
+        .acp_permissions
+        .lock()
+        .await
+        .values()
+        .any(|owner| owner == frame_id)
+    {
+        state.awaiting_confirm.lock().unwrap().remove(frame_id);
+        state.device_hub.resolve_needs_user(frame_id);
+    }
+    for (request_id, _) in expired {
+        emit_ask_event(
+            app,
+            window_label,
+            "ask-user-resolved",
+            serde_json::json!({
+                "frameId": frame_id,
+                "requestId": request_id,
+                "expired": true,
+            }),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_acp_turn_with_kind(
     state: &AppState,
     app: &AppHandle,
+    window_label: Option<&str>,
+    project: &ActiveProject,
+    frame_id: &str,
+    profile_id: Option<&str>,
+    message: &str,
+    attachments: &[String],
+    injected_context: &[String],
+    artifact_references: &[PathBuf],
+    turn_kind: AcpTurnKind,
+) -> Result<String, String> {
+    let result = run_acp_turn_inner(
+        state,
+        app,
+        window_label,
+        project,
+        frame_id,
+        profile_id,
+        message,
+        attachments,
+        injected_context,
+        artifact_references,
+        turn_kind,
+    )
+    .await;
+    // Runs on every exit path, success or error — asks must never outlive
+    // their turn as live cards.
+    settle_expired_asks(state, app, window_label, frame_id).await;
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_acp_turn_inner(
+    state: &AppState,
+    app: &AppHandle,
+    window_label: Option<&str>,
     project: &ActiveProject,
     frame_id: &str,
     profile_id: Option<&str>,
@@ -902,9 +1039,15 @@ async fn run_acp_turn_with_kind(
     let mut tools: Vec<AcpToolEnvelope> = Vec::new();
     // Plans are revised in place during a turn; only the last one is persisted.
     let mut plan: Option<serde_json::Value> = None;
+    // The bridge's ask_user runs in a separate process whose only channel is
+    // the store, so pendings are discovered by polling while the turn runs.
+    let mut ask_tick = tokio::time::interval(Duration::from_millis(500));
     let outcome = loop {
         tokio::select! {
             result = &mut prompt => break result.map_err(|error| error.to_string())?,
+            _ = ask_tick.tick() => {
+                surface_pending_asks(state, app, window_label, frame_id).await;
+            }
             event = runtime.handle.next_event() => match event {
                 Some(AcpSessionEvent::Update { kind, payload, .. }) => {
                     if matches!(kind, AcpUpdateKind::AgentMessage | AcpUpdateKind::AgentThought) {
@@ -1129,13 +1272,19 @@ pub(crate) async fn respond_acp_permission(
         .respond_permission(request_id.clone(), option_id)
         .map_err(|error| error.to_string())?;
     state.acp_permissions.lock().await.remove(&request_id);
-    if !state
+    let frame_has_permissions = state
         .acp_permissions
         .lock()
         .await
         .values()
-        .any(|owner| owner == &frame_id)
-    {
+        .any(|owner| owner == &frame_id);
+    let frame_has_asks = state
+        .acp_asks
+        .lock()
+        .await
+        .values()
+        .any(|owner| owner == &frame_id);
+    if !frame_has_permissions && !frame_has_asks {
         state.awaiting_confirm.lock().unwrap().remove(&frame_id);
         state.device_hub.resolve_needs_user(&frame_id);
     }
@@ -1144,6 +1293,67 @@ pub(crate) async fn respond_acp_permission(
         serde_json::json!({
             "frameId": frame_id,
             "requestId": request_id,
+        }),
+    );
+    Ok(())
+}
+
+/// Resolve a pending bridge `ask_user` request: write the answer for the
+/// bridge's poll loop to consume and settle the card. The permission flow's
+/// shape, with the store standing in for the oneshot — the bridge lives in
+/// another process.
+#[tauri::command]
+pub(crate) async fn respond_ask_user(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    request_id: String,
+    answer: String,
+) -> Result<(), String> {
+    let answer = answer.trim().to_string();
+    if answer.is_empty() {
+        return Err("The answer is empty.".into());
+    }
+    let frame_id = state
+        .acp_asks
+        .lock()
+        .await
+        .get(&request_id)
+        .cloned()
+        .ok_or_else(|| "This question is no longer pending.".to_string())?;
+    if !state
+        .store
+        .answer_ask_user_request(&request_id, &answer)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        state.acp_asks.lock().await.remove(&request_id);
+        return Err("This question is no longer pending.".into());
+    }
+    state.acp_asks.lock().await.remove(&request_id);
+    let frame_has_asks = state
+        .acp_asks
+        .lock()
+        .await
+        .values()
+        .any(|owner| owner == &frame_id);
+    let frame_has_permissions = state
+        .acp_permissions
+        .lock()
+        .await
+        .values()
+        .any(|owner| owner == &frame_id);
+    if !frame_has_asks && !frame_has_permissions {
+        state.awaiting_confirm.lock().unwrap().remove(&frame_id);
+        state.device_hub.resolve_needs_user(&frame_id);
+    }
+    let _ = app.emit_to(
+        window.label(),
+        "ask-user-resolved",
+        serde_json::json!({
+            "frameId": frame_id,
+            "requestId": request_id,
+            "expired": false,
         }),
     );
     Ok(())
@@ -1242,6 +1452,11 @@ pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
         .lock()
         .await
         .retain(|_, owner| owner != frame_id);
+    state
+        .acp_asks
+        .lock()
+        .await
+        .retain(|_, owner| owner != frame_id);
     state.awaiting_confirm.lock().unwrap().remove(frame_id);
     state.device_hub.resolve_needs_user(frame_id);
 }
@@ -1260,6 +1475,11 @@ pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
     }
     state
         .acp_permissions
+        .lock()
+        .await
+        .retain(|_, owner| owner != frame_id);
+    state
+        .acp_asks
         .lock()
         .await
         .retain(|_, owner| owner != frame_id);
