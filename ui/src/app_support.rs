@@ -3181,6 +3181,27 @@ fn wrap_markdown_tables_with_copy_controls(html: String, locale: Locale) -> Stri
     out
 }
 
+fn wrap_markdown_code_blocks_with_copy_controls(html: String, locale: Locale) -> String {
+    let copy_label = html_escape(&t(locale, "tool.copy_code"));
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find(r#"<pre class="md-code">"#) {
+        out.push_str(&rest[..start]);
+        let pre_rest = &rest[start..];
+        let Some(end) = pre_rest.find("</pre>") else {
+            out.push_str(pre_rest);
+            return out;
+        };
+        let pre_html = &pre_rest[..end + "</pre>".len()];
+        out.push_str(&format!(
+            r#"<div class="md-code-card"><button type="button" class="md-code-copy" title="{copy_label}" aria-label="{copy_label}"><span class="gi copy" aria-hidden="true"></span></button>{pre_html}</div>"#
+        ));
+        rest = &pre_rest[end + "</pre>".len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub(super) fn normalize_settings_mut(cfg: &mut Settings) {
     cfg.provider = provider_value(&cfg.provider).into();
     cfg.api_url = cfg.api_url.trim().into();
@@ -5715,6 +5736,7 @@ pub(super) fn enrich_md_html(
     html = wrap_code_filenames_as_art_refs(html, arts);
     html = strip_list_markers_before_art_refs(&html);
     html = html.replace("<pre><code", "<pre class=\"md-code\"><code");
+    html = wrap_markdown_code_blocks_with_copy_controls(html, locale);
     html = wrap_markdown_tables_with_copy_controls(html, locale);
     html
 }
@@ -5861,6 +5883,20 @@ mod art_ref_marker_tests {
     }
 
     #[test]
+    fn wraps_markdown_code_blocks_with_copy_controls() {
+        let html = r#"<p>Example</p><pre class="md-code"><code class="language-rust">fn main() {}
+</code></pre>"#;
+        let out = wrap_markdown_code_blocks_with_copy_controls(html.into(), Locale::En);
+        assert!(out.contains("md-code-card"));
+        assert!(out.contains("md-code-copy"));
+        assert!(out.contains(r#"aria-label="Copy code""#));
+        assert!(out.contains(
+            r#"<code class="language-rust">fn main() {}
+</code></pre>"#
+        ));
+    }
+
+    #[test]
     fn table_data_to_tsv_uses_tabs_and_newlines() {
         let t = TableData {
             headers: vec!["Gene".into(), "TPM".into()],
@@ -5885,6 +5921,16 @@ pub(super) fn handle_md_click(
         .target()
         .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
     while let Some(n) = el {
+        if n.class_list().contains("md-code-copy") {
+            ev.prevent_default();
+            ev.stop_propagation();
+            if let Ok(Some(card)) = n.closest(".md-code-card") {
+                if let Ok(Some(code)) = card.query_selector("pre.md-code code") {
+                    copy_text(code.text_content().unwrap_or_default());
+                }
+            }
+            return;
+        }
         if n.class_list().contains("md-table-copy") {
             if let Ok(Some(card)) = n.closest(".md-table-card") {
                 if let Ok(Some(table)) = card.query_selector("table") {
