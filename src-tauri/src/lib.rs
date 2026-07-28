@@ -1040,6 +1040,22 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             resources: Vec::new(),
                         });
                     }
+                } else if m.tool_name.as_deref() == Some(wisp_tools::ask_user::ASK_USER) {
+                    // The question card body, same pattern as the plan row.
+                    out.push(UiItem {
+                        role: "question".into(),
+                        text,
+                        tool_name: None,
+                        ok: None,
+                        duration_ms: None,
+                        input: None,
+                        model_name: None,
+                        call_id: None,
+                        kind: None,
+                        status: None,
+                        locations: None,
+                        resources: Vec::new(),
+                    });
                 } else if matches!(
                     m.tool_name.as_deref(),
                     // Both plan sources persist the same `{v, source, entries}`
@@ -1958,14 +1974,16 @@ impl Output for TauriOutput {
     }
     fn tool_result(&self, name: &str, ok: bool, content: &str, duration_ms: u64) {
         // ponytail: some tool results ARE the card the UI renders, not a preview
-        // of one — attempt_completion is the final answer bubble, propose_plan is
-        // the plan card's JSON body. A clip would truncate them into junk.
-        let clipped: String =
-            if matches!(name, "attempt_completion" | wisp_tools::plan::PROPOSE_PLAN) {
-                content.to_string()
-            } else {
-                content.chars().take(4000).collect()
-            };
+        // of one — attempt_completion is the final answer bubble, propose_plan
+        // and ask_user are card JSON bodies. A clip would truncate them into junk.
+        let clipped: String = if matches!(
+            name,
+            "attempt_completion" | wisp_tools::plan::PROPOSE_PLAN | wisp_tools::ask_user::ASK_USER
+        ) {
+            content.to_string()
+        } else {
+            content.chars().take(4000).collect()
+        };
         self.emit(AgentEvent::ToolResult {
             frame_id: self.frame_id.clone(),
             name: name.into(),
@@ -4420,6 +4438,9 @@ async fn send_message_inner(
         agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
             store: state.store.clone(),
         }));
+        // Always registered, not just in plan mode: a fork during execution
+        // deserves a question as much as one during planning.
+        agent.add_tool(Box::new(wisp_tools::ask_user::AskUserTool));
         if plan_mode_enabled {
             // Only while planning: outside plan mode there is nothing to approve,
             // and an always-present tool just invites plans nobody asked for.

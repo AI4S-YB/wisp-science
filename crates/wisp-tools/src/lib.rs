@@ -5,6 +5,7 @@
 //! the LLM, and dispatches tool calls. Extra tools (Python `repl`, MCP) are
 //! added with [`Registry::add`].
 
+pub mod ask_user;
 pub mod attempt_completion;
 pub mod edit;
 pub mod env;
@@ -65,6 +66,8 @@ pub const PLAN_MODE_READ_ONLY: &[&str] = &[
     "get_delegated_result",
     // The plan proposal tool: plan mode is exactly when it has to run.
     plan::PROPOSE_PLAN,
+    // Questions are read-only; planning is exactly when forks surface.
+    ask_user::ASK_USER,
 ];
 
 fn plan_mode_blocks(name: &str) -> bool {
