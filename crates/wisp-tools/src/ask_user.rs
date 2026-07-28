@@ -171,10 +171,9 @@ mod tests {
     fn options_are_optional_but_freeform_only_questions_need_freeform() {
         let body = question_body(&json!({ "question": "Proceed how?" })).unwrap();
         assert_eq!(body["options"], json!([]));
-        assert!(question_body(
-            &json!({ "question": "Proceed how?", "allow_freeform": false })
-        )
-        .is_err());
+        assert!(
+            question_body(&json!({ "question": "Proceed how?", "allow_freeform": false })).is_err()
+        );
     }
 
     #[test]

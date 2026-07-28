@@ -180,7 +180,8 @@ API, timeout, or JSON parsing failures are shown in the chat rather than
 silently disappearing. One-shot ACP reviewer calls time out after 90 seconds
 and can be cancelled with the active turn. Automatic correction instructions
 remain control-plane messages instead of being added to the user-authored
-conversation history.
+conversation history. **Go to transcript** on a finding scrolls to the cited
+message even when token-usage or reviewer-status rows appear between turns.
 
 ## Importing Codex CLI and Claude Code conversations
 

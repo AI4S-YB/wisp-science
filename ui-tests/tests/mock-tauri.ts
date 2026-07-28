@@ -2473,6 +2473,25 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               }, 1200);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("REVIEWBASE")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Earlier answer." });
+                emit("agent", {
+                  kind: "Usage",
+                  frame_id: fid,
+                  round: 1,
+                  input: 100,
+                  output: 10,
+                  reasoning: 0,
+                  cached: 0,
+                  ctx_tokens: 110,
+                  max_context: 8_000,
+                });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("AUTOREVIEWUNREVIEWABLE")) {
               const incompleteReport = {
                 id: "review-auto-unreviewable",
@@ -2529,7 +2548,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 reviewer_effort: "high",
                 findings: [
                   {
-                    message_index: 1,
+                    message_index: 3,
                     claim: "The analysis reports 5 significant genes.",
                     evidence: "The tool result reports 3 significant genes.",
                     fix: "Change the count from 5 to 3.",

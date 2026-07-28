@@ -134,6 +134,14 @@ pub(crate) fn jump_chat_to_user(index: usize) {
     );
 }
 
+/// Jump to one rendered transcript item by its UI row index.
+pub(crate) fn jump_chat_to_item(index: usize) {
+    jump_chat_scroll(
+        CHAT_SCROLLER_ID,
+        &format!("[data-ui-index=\"{index}\"], [data-ui-indices~=\"{index}\"]"),
+    );
+}
+
 /// Jump to the latest user turn (floating "Your last message" pill).
 pub(crate) fn jump_chat_to_last_user() {
     jump_chat_scroll_last_user(CHAT_SCROLLER_ID);

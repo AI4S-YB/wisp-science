@@ -20,12 +20,11 @@ use agent_workflows::{
 };
 use bindings::{
     attach_chat_autoscroll, clear_selection, close_mcp_app, force_chat_bottom, invoke,
-    invoke_checked, invoke_timeout, is_mac, is_windows, jump_chat_to_last_user,
-    jump_chat_to_user, listen,
-    listen_native_file_drop, mount_mcp_app, mount_terminal, native_drop_in_composer,
-    open_external_url, park_mcp_app, pasted_image_count, preserve_chat_prepend_position,
-    preview_selection, schedule_chat_follow, set_saved_marks, set_terminal_active,
-    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    invoke_checked, invoke_timeout, is_mac, is_windows, jump_chat_to_item, jump_chat_to_last_user,
+    jump_chat_to_user, listen, listen_native_file_drop, mount_mcp_app, mount_terminal,
+    native_drop_in_composer, open_external_url, park_mcp_app, pasted_image_count,
+    preserve_chat_prepend_position, preview_selection, schedule_chat_follow, set_saved_marks,
+    set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -4629,6 +4628,14 @@ fn App() -> impl IntoView {
         });
     });
 
+    let jump_to_review_message = Callback::new(move |message_index: usize| {
+        if let Some(ui_index) =
+            items.with_untracked(|rows| review_message_ui_index(rows, message_index))
+        {
+            jump_chat_to_item(ui_index);
+        }
+    });
+
     let jump_to_conversation_outline =
         Callback::new(move |(target, before_seq): (usize, Option<i64>)| {
             let Some(id) = active_session.get_untracked() else {
@@ -8284,8 +8291,16 @@ fn App() -> impl IntoView {
                                     let mut h = std::collections::hash_map::DefaultHasher::new();
                                     for (idx, it) in &run { (idx, it.fingerprint()).hash(&mut h); }
                                     true.hash(&mut h);
+                                    let ui_indices = run
+                                        .iter()
+                                        .map(|(index, _)| index.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
                                     let items_only = run.into_iter().map(|(_, item)| item).collect();
-                                    rows.push((start, h.finish(), ThreadRow::Activity { items: items_only }));
+                                    rows.push((start, h.finish(), ThreadRow::Activity {
+                                        items: items_only,
+                                        ui_indices,
+                                    }));
                                     i = end;
                                 } else if is_tool_activity(&list[i]) {
                                     let start = i;
@@ -8304,8 +8319,17 @@ fn App() -> impl IntoView {
                                     let mut h = std::collections::hash_map::DefaultHasher::new();
                                     for (idx, it) in &run { (idx, it.fingerprint()).hash(&mut h); }
                                     live.hash(&mut h);
+                                    let ui_indices = run
+                                        .iter()
+                                        .map(|(index, _)| index.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
                                     let items_only: Vec<ChatItem> = run.into_iter().map(|(_, c)| c).collect();
-                                    rows.push((start, h.finish(), ThreadRow::Steps { items: items_only, live }));
+                                    rows.push((start, h.finish(), ThreadRow::Steps {
+                                        items: items_only,
+                                        live,
+                                        ui_indices,
+                                    }));
                                     i = j;
                                 } else {
                                     let commentary = is_commentary_at(list, i);
@@ -8390,18 +8414,18 @@ fn App() -> impl IntoView {
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), can_undo, edit_message, branch_message, undo_message, sid,
                                                 respond_confirm, on_resume, on_queue,
                                                 plan_mode_active, plan_compat, on_plan_decision,
-                                                on_question_answer,
+                                                on_question_answer, jump_to_review_message,
                                             )}
                                         </div>
                                     }.into_view()
                                 }
-                                ThreadRow::Steps { items, live } => {
+                                ThreadRow::Steps { items, live, ui_indices } => {
                                     let sid = active_session.get().unwrap_or_default();
                                     // ponytail: position-keyed; move to stable
                                     // row ids if mid-list edits ever shift groups.
                                     let group_id = format!("{sid}:steps:{start}");
                                     view! {
-                                        <div class="steps-wrap">{
+                                        <div class="steps-wrap" data-ui-indices=ui_indices>{
                                             render_steps_group(
                                                 items,
                                                 live,
@@ -8412,11 +8436,11 @@ fn App() -> impl IntoView {
                                         }</div>
                                     }.into_view()
                                 },
-                                ThreadRow::Activity { items } => {
+                                ThreadRow::Activity { items, ui_indices } => {
                                     let sid = active_session.get().unwrap_or_default();
                                     let group_id = format!("{sid}:activity:{start}");
                                     view! {
-                                        <div class="steps-wrap">{
+                                        <div class="steps-wrap" data-ui-indices=ui_indices>{
                                             render_steps_group(
                                                 items,
                                                 false,
@@ -12023,9 +12047,11 @@ enum ThreadRow {
     Steps {
         items: Vec<ChatItem>,
         live: bool,
+        ui_indices: String,
     },
     Activity {
         items: Vec<ChatItem>,
+        ui_indices: String,
     },
 }
 
@@ -12607,6 +12633,7 @@ fn render_item(
     plan_compat: Signal<bool>,
     on_plan_decision: Callback<PlanDecision>,
     on_question_answer: Callback<(usize, Option<String>, String)>,
+    on_review_jump: Callback<usize>,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
@@ -12971,7 +12998,7 @@ fn render_item(
                                 <span class=severity_class>{finding.severity}</span>
                                 <span class="review-pill status">{move || t(locale.get(), status_key)}</span>
                                 <button type="button" class="tool-btn review-jump"
-                                    on:click=move |_| scroll_to_transcript(message_index)>
+                                    on:click=move |_| on_review_jump.call(message_index)>
                                     {move || t(locale.get(), "review.go_to_transcript")}
                                 </button>
                             </div>

@@ -2925,12 +2925,62 @@ pub(super) fn scroll_picker_item(selector: &str, index: usize) {
     }
 }
 
-pub(super) fn scroll_to_transcript(index: usize) {
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-        return;
-    };
-    if let Ok(Some(row)) = document.query_selector(&format!("[data-ui-index=\"{index}\"]")) {
-        row.scroll_into_view();
+/// Map the reviewer's `[msg:N]` index to the live UI row. Usage, reviewer
+/// handoffs, approvals, and review cards are UI-only and must not shift it.
+pub(super) fn review_message_ui_index(items: &[ChatItem], message_index: usize) -> Option<usize> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| match item {
+            ChatItem::User(text) | ChatItem::Assistant { text, .. } | ChatItem::Reasoning(text) => {
+                !text.trim().is_empty()
+            }
+            ChatItem::Tool { name, .. } => name != "attempt_completion",
+            ChatItem::AcpTool { .. } | ChatItem::Plan(_) | ChatItem::Question(_) => true,
+            ChatItem::QueuedUser { .. }
+            | ChatItem::ApprovalPending { .. }
+            | ChatItem::AcpPermission { .. }
+            | ChatItem::Usage { .. }
+            | ChatItem::ReviewTransition { .. }
+            | ChatItem::Review(_) => false,
+        })
+        .nth(message_index)
+        .map(|(ui_index, _)| ui_index)
+}
+
+#[cfg(test)]
+mod review_jump_tests {
+    use super::review_message_ui_index;
+    use crate::dto::{ChatItem, ReviewTransitionPhase};
+
+    fn assistant(text: &str) -> ChatItem {
+        ChatItem::Assistant {
+            text: text.into(),
+            model: None,
+            resources: vec![],
+        }
+    }
+
+    #[test]
+    fn review_indices_ignore_ui_only_rows() {
+        let items = vec![
+            ChatItem::User("earlier question".into()),
+            assistant("earlier answer"),
+            ChatItem::Usage {
+                input: 10,
+                output: 2,
+                reasoning: 0,
+                cached: 0,
+            },
+            ChatItem::ReviewTransition {
+                phase: ReviewTransitionPhase::Reviewing,
+                model: None,
+            },
+            ChatItem::User("current question".into()),
+            assistant("problematic answer"),
+        ];
+
+        assert_eq!(review_message_ui_index(&items, 3), Some(5));
     }
 }
 
