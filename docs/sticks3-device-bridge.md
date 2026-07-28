@@ -130,6 +130,80 @@ State values are `idle`, `working`, `review`, `needs_user`, `done`, and
 `seq` increases monotonically whenever the authoritative state changes.
 `sessionId` lets the physical button focus the relevant desktop session.
 
+### `GET /pet/manifest`
+
+Requires `X-Wisp-Device-Token`. When the desktop Pet setting points to a valid
+Codex-compatible v2 Pet package, this endpoint describes the frames available
+to StickS3:
+
+```json
+{
+  "type": "pet_manifest",
+  "protocol": 1,
+  "enabled": true,
+  "id": "wispy",
+  "displayName": "Wispy",
+  "revision": "64-character-lowercase-sha256",
+  "format": "png",
+  "frameWidth": 120,
+  "frameHeight": 130,
+  "frameIntervalMs": 180,
+  "frameCounts": {
+    "idle": 7,
+    "working": 6,
+    "review": 6,
+    "needs_user": 6,
+    "done": 5,
+    "failed": 8
+  }
+}
+```
+
+The revision covers the Pet manifest, atlas contents, validation data,
+effective frame counts, identity, and StickS3 rendering parameters. It changes
+whenever any StickS3-visible Pet output can change.
+
+If the desktop Pet is disabled, unconfigured, or invalid, the endpoint still
+returns HTTP 200 with `enabled: false`. It may include a short reason, but never
+includes the configured Pet directory or another local path:
+
+```json
+{
+  "type": "pet_manifest",
+  "protocol": 1,
+  "enabled": false,
+  "reason": "Pet is disabled."
+}
+```
+
+### `GET /pet/frame?revision=<revision>&state=<state>&frame=<index>`
+
+Requires `X-Wisp-Device-Token`. A successful response is an immutable,
+transparent `image/png` frame with exact dimensions `120×130` and an accurate
+`Content-Length`. Wisp Science crops one `192×208` atlas cell and scales it at
+the same aspect ratio. PNG and WebP v2 source atlases are supported.
+
+The accepted states form a closed list:
+
+| Bridge state | v2 atlas row | Row index | Default frame count |
+|---|---|---:|---:|
+| `idle` | `idle` | 0 | 7 |
+| `working` | `running` | 7 | 6 |
+| `review` | `review` | 8 | 6 |
+| `needs_user` | `waiting` | 6 | 6 |
+| `done` | `jumping` | 4 | 5 |
+| `failed` | `failed` | 5 | 8 |
+
+Valid `validation.json` cell data overrides the default frame counts in both
+the manifest and frame-index validation. Unknown states and invalid or
+out-of-range frame requests return HTTP 400 or 404. A stale revision returns
+HTTP 409 so the device can fetch the manifest again. If no valid Pet is
+available, the frame endpoint returns HTTP 404.
+
+The endpoint accepts no path, filename, dimensions, or arbitrary file
+parameter. Rendered frames are held in a bounded in-memory cache keyed by
+revision, state, and frame; changing revision invalidates the previous cache.
+
 ### `POST /action`
 
 Requires `X-Wisp-Device-Token`. Only three actions are accepted:
@@ -188,6 +262,8 @@ the replacement starts. Application exit also stops the listener.
 - Relay server mode is designed but not implemented or deployed.
 - There is no cloud relay, router port-forwarding workflow, or automatic
   pairing.
+- Pet resources use the configured local desktop Pet only; there is no remote
+  Pet catalog or Pet upload endpoint.
 - StickS3 cannot approve tools, submit prompts, run commands, or read full
   conversation content.
 - One bounded action stream is provided for diagnostics; there is no complex

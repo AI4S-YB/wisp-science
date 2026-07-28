@@ -5,22 +5,34 @@
 //! pre-shared token. The action surface is a closed list and never enters the
 //! Agent/tool execution path.
 
-use crate::{desktop_lifecycle, device_hub::DeviceHub, AppState};
+use crate::{
+    desktop_lifecycle,
+    device_hub::DeviceHub,
+    pet_commands::{load_pet_source, ValidatedPetSource},
+    AppState,
+};
 use async_trait::async_trait;
 use axum::{
-    extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    body::{Body, Bytes},
+    extract::{DefaultBodyLimit, Query, State},
+    http::{
+        header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG},
+        HeaderMap, StatusCode, Uri,
+    },
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use base64::Engine;
+use image::{codecs::png::PngEncoder, imageops::FilterType, ImageEncoder, ImageFormat};
 use ring::{hmac, rand as ring_rand};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    path::Path,
     sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock},
 };
 use tauri::{AppHandle, Manager, State as TauriState};
@@ -40,6 +52,60 @@ const SETTING_PORT: &str = "device_bridge_port";
 const DEVICE_TOKEN_HEADER: &str = "x-wisp-device-token";
 const ACTION_HISTORY_LIMIT: usize = 50;
 const MAX_ACTION_ID_BYTES: usize = 160;
+const PET_FRAME_WIDTH: u32 = 120;
+const PET_FRAME_HEIGHT: u32 = 130;
+const PET_FRAME_INTERVAL_MS: u32 = 180;
+const PET_ATLAS_CELL_WIDTH: u32 = 192;
+const PET_ATLAS_CELL_HEIGHT: u32 = 208;
+const PET_FRAME_CACHE_LIMIT: usize = 48;
+const MAX_PET_FRAME_BYTES: usize = 512 * 1024;
+
+#[derive(Clone, Copy)]
+struct PetStateSpec {
+    bridge_state: &'static str,
+    atlas_state: &'static str,
+    row: u32,
+    default_frames: u8,
+}
+
+const PET_STATE_SPECS: [PetStateSpec; 6] = [
+    PetStateSpec {
+        bridge_state: "idle",
+        atlas_state: "idle",
+        row: 0,
+        default_frames: 7,
+    },
+    PetStateSpec {
+        bridge_state: "working",
+        atlas_state: "running",
+        row: 7,
+        default_frames: 6,
+    },
+    PetStateSpec {
+        bridge_state: "review",
+        atlas_state: "review",
+        row: 8,
+        default_frames: 6,
+    },
+    PetStateSpec {
+        bridge_state: "needs_user",
+        atlas_state: "waiting",
+        row: 6,
+        default_frames: 6,
+    },
+    PetStateSpec {
+        bridge_state: "done",
+        atlas_state: "jumping",
+        row: 4,
+        default_frames: 5,
+    },
+    PetStateSpec {
+        bridge_state: "failed",
+        atlas_state: "failed",
+        row: 5,
+        default_frames: 8,
+    },
+];
 
 /// The bridge transport is explicit from v1 so adding the out-of-LAN relay
 /// later does not overload LAN bind settings or silently change exposure.
@@ -162,6 +228,105 @@ struct DeviceActionRequest {
     session_id: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetManifestResponse {
+    r#type: &'static str,
+    protocol: u8,
+    enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_interval_ms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_counts: Option<BTreeMap<&'static str, u8>>,
+}
+
+impl PetManifestResponse {
+    fn disabled(reason: &'static str) -> Self {
+        Self {
+            r#type: "pet_manifest",
+            protocol: 1,
+            enabled: false,
+            reason: Some(reason),
+            id: None,
+            display_name: None,
+            revision: None,
+            format: None,
+            frame_width: None,
+            frame_height: None,
+            frame_interval_ms: None,
+            frame_counts: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PetFrameQuery {
+    revision: String,
+    state: String,
+    frame: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PetFrameCacheKey {
+    revision: String,
+    state: String,
+    frame: u8,
+}
+
+#[derive(Default)]
+struct PetFrameCache {
+    revision: Option<String>,
+    entries: VecDeque<(PetFrameCacheKey, Bytes)>,
+}
+
+impl PetFrameCache {
+    fn invalidate(&mut self) {
+        self.entries.clear();
+        self.revision = None;
+    }
+
+    fn prepare_revision(&mut self, revision: &str) {
+        if self.revision.as_deref() != Some(revision) {
+            self.entries.clear();
+            self.revision = Some(revision.to_string());
+        }
+    }
+
+    fn get(&mut self, key: &PetFrameCacheKey) -> Option<Bytes> {
+        self.prepare_revision(&key.revision);
+        self.entries
+            .iter()
+            .find(|(cached, _)| cached == key)
+            .map(|(_, bytes)| bytes.clone())
+    }
+
+    fn insert(&mut self, key: PetFrameCacheKey, bytes: Bytes) {
+        self.prepare_revision(&key.revision);
+        if self.entries.iter().any(|(cached, _)| cached == &key) {
+            return;
+        }
+        if self.entries.len() == PET_FRAME_CACHE_LIMIT {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((key, bytes));
+    }
+}
+
 #[async_trait]
 pub(crate) trait SessionFocus: Send + Sync {
     async fn focus_session(&self, session_id: &str) -> Result<(), String>;
@@ -211,8 +376,10 @@ impl SessionFocus for TauriSessionFocus {
 #[derive(Clone)]
 struct HttpState {
     hub: Arc<DeviceHub>,
+    store: Store,
     token: Arc<StdRwLock<Option<Vec<u8>>>>,
     actions: Arc<StdMutex<VecDeque<DeviceActionRecord>>>,
+    pet_frames: Arc<StdMutex<PetFrameCache>>,
     focus: Arc<dyn SessionFocus>,
 }
 
@@ -224,18 +391,22 @@ struct RunningBridge {
 
 pub struct DeviceBridge {
     hub: Arc<DeviceHub>,
+    store: Store,
     token: Arc<StdRwLock<Option<Vec<u8>>>>,
     actions: Arc<StdMutex<VecDeque<DeviceActionRecord>>>,
+    pet_frames: Arc<StdMutex<PetFrameCache>>,
     runtime: Mutex<Option<RunningBridge>>,
     status: Arc<StdMutex<DeviceBridgeRuntimeStatus>>,
 }
 
 impl DeviceBridge {
-    pub fn new(hub: Arc<DeviceHub>) -> Self {
+    pub fn new(hub: Arc<DeviceHub>, store: Store) -> Self {
         Self {
             hub,
+            store,
             token: Arc::new(StdRwLock::new(None)),
             actions: Arc::new(StdMutex::new(VecDeque::with_capacity(ACTION_HISTORY_LIMIT))),
+            pet_frames: Arc::new(StdMutex::new(PetFrameCache::default())),
             runtime: Mutex::new(None),
             status: Arc::new(StdMutex::new(DeviceBridgeRuntimeStatus::default())),
         }
@@ -280,8 +451,10 @@ impl DeviceBridge {
         *self.token.write().unwrap() = Some(token.into_bytes());
         let router = router(HttpState {
             hub: self.hub.clone(),
+            store: self.store.clone(),
             token: self.token.clone(),
             actions: self.actions.clone(),
+            pet_frames: self.pet_frames.clone(),
             focus,
         });
         let (shutdown, shutdown_rx) = oneshot::channel();
@@ -377,6 +550,8 @@ fn router(state: HttpState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/state", get(get_state))
+        .route("/pet/manifest", get(get_pet_manifest))
+        .route("/pet/frame", get(get_pet_frame))
         .route("/action", post(post_action))
         .route("/actions", get(get_actions))
         .layer(DefaultBodyLimit::max(4 * 1024))
@@ -389,6 +564,219 @@ async fn health() -> Json<Value> {
         "service": "wisp-device-bridge",
         "protocol": 1,
     }))
+}
+
+enum CurrentPet {
+    Available(ValidatedPetSource),
+    Unavailable(&'static str),
+}
+
+async fn current_pet(store: &Store) -> CurrentPet {
+    let enabled = store
+        .get_setting("pet_enabled")
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|value| value == "true");
+    if !enabled {
+        return CurrentPet::Unavailable("Pet is disabled.");
+    }
+    let directory = store
+        .get_setting("pet_directory")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if directory.trim().is_empty() {
+        return CurrentPet::Unavailable("Pet is not configured.");
+    }
+    match tokio::task::spawn_blocking(move || load_pet_source(Path::new(&directory))).await {
+        Ok(Ok(source)) => CurrentPet::Available(source),
+        Ok(Err(_)) | Err(_) => CurrentPet::Unavailable("Configured Pet is invalid."),
+    }
+}
+
+fn pet_frame_count(source: &ValidatedPetSource, spec: PetStateSpec) -> u8 {
+    source
+        .frame_counts
+        .get(spec.atlas_state)
+        .copied()
+        .unwrap_or(spec.default_frames)
+}
+
+fn pet_revision(source: &ValidatedPetSource) -> String {
+    let mut revision = Sha256::new();
+    revision.update(b"wisp-sticks3-pet-protocol-1\0");
+    revision.update(source.package_revision.as_bytes());
+    revision.update(b"\0png\0");
+    revision.update(PET_FRAME_WIDTH.to_le_bytes());
+    revision.update(PET_FRAME_HEIGHT.to_le_bytes());
+    revision.update(PET_FRAME_INTERVAL_MS.to_le_bytes());
+    revision.update(PET_ATLAS_CELL_WIDTH.to_le_bytes());
+    revision.update(PET_ATLAS_CELL_HEIGHT.to_le_bytes());
+    revision.update(b"resize:lanczos3\0");
+    for spec in PET_STATE_SPECS {
+        revision.update(spec.bridge_state.as_bytes());
+        revision.update([0]);
+        revision.update(spec.atlas_state.as_bytes());
+        revision.update([0]);
+        revision.update(spec.row.to_le_bytes());
+        revision.update([pet_frame_count(source, spec)]);
+    }
+    format!("{:x}", revision.finalize())
+}
+
+async fn get_pet_manifest(State(state): State<HttpState>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    let source = match current_pet(&state.store).await {
+        CurrentPet::Available(source) => source,
+        CurrentPet::Unavailable(reason) => {
+            state.pet_frames.lock().unwrap().invalidate();
+            return Json(PetManifestResponse::disabled(reason)).into_response();
+        }
+    };
+    let revision = pet_revision(&source);
+    state.pet_frames.lock().unwrap().prepare_revision(&revision);
+    let frame_counts = PET_STATE_SPECS
+        .into_iter()
+        .map(|spec| (spec.bridge_state, pet_frame_count(&source, spec)))
+        .collect();
+    let manifest = PetManifestResponse {
+        r#type: "pet_manifest",
+        protocol: 1,
+        enabled: true,
+        reason: None,
+        id: Some(source.id.clone()),
+        display_name: Some(source.display_name.clone()),
+        revision: Some(revision),
+        format: Some("png"),
+        frame_width: Some(PET_FRAME_WIDTH),
+        frame_height: Some(PET_FRAME_HEIGHT),
+        frame_interval_ms: Some(PET_FRAME_INTERVAL_MS),
+        frame_counts: Some(frame_counts),
+    };
+    Json(manifest).into_response()
+}
+
+async fn get_pet_frame(State(state): State<HttpState>, headers: HeaderMap, uri: Uri) -> Response {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    let Query(query) = match Query::<PetFrameQuery>::try_from_uri(&uri) {
+        Ok(query) => query,
+        Err(_) => {
+            return pet_frame_error(StatusCode::BAD_REQUEST, "Invalid Pet frame request.");
+        }
+    };
+    let spec = match PET_STATE_SPECS
+        .into_iter()
+        .find(|spec| spec.bridge_state == query.state)
+    {
+        Some(spec) => spec,
+        None => return pet_frame_error(StatusCode::BAD_REQUEST, "Unknown Pet state."),
+    };
+    let source = match current_pet(&state.store).await {
+        CurrentPet::Available(source) => source,
+        CurrentPet::Unavailable(_) => {
+            state.pet_frames.lock().unwrap().invalidate();
+            return pet_frame_error(StatusCode::NOT_FOUND, "No valid Pet is available.");
+        }
+    };
+    let revision = pet_revision(&source);
+    state.pet_frames.lock().unwrap().prepare_revision(&revision);
+    if query.revision != revision {
+        return pet_frame_error(StatusCode::CONFLICT, "Pet revision changed.");
+    }
+    if query.frame >= pet_frame_count(&source, spec) {
+        return pet_frame_error(StatusCode::NOT_FOUND, "Pet frame does not exist.");
+    }
+
+    let cache_key = PetFrameCacheKey {
+        revision: revision.clone(),
+        state: spec.bridge_state.to_string(),
+        frame: query.frame,
+    };
+    if let Some(bytes) = state.pet_frames.lock().unwrap().get(&cache_key) {
+        return pet_frame_response(bytes, &cache_key);
+    }
+
+    let frame = query.frame;
+    let bytes =
+        match tokio::task::spawn_blocking(move || render_pet_frame(source, spec, frame)).await {
+            Ok(Ok(bytes)) => Bytes::from(bytes),
+            Ok(Err(_)) | Err(_) => {
+                return pet_frame_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Pet frame could not be rendered.",
+                );
+            }
+        };
+    state
+        .pet_frames
+        .lock()
+        .unwrap()
+        .insert(cache_key.clone(), bytes.clone());
+    pet_frame_response(bytes, &cache_key)
+}
+
+fn render_pet_frame(
+    source: ValidatedPetSource,
+    spec: PetStateSpec,
+    frame: u8,
+) -> Result<Vec<u8>, String> {
+    let format = match source.spritesheet_mime {
+        "image/png" => ImageFormat::Png,
+        "image/webp" => ImageFormat::WebP,
+        _ => return Err("unsupported Pet spritesheet format".into()),
+    };
+    let atlas = image::load_from_memory_with_format(&source.spritesheet, format)
+        .map_err(|_| "Pet spritesheet could not be decoded".to_string())?
+        .into_rgba8();
+    if atlas.dimensions() != (PET_ATLAS_CELL_WIDTH * 8, PET_ATLAS_CELL_HEIGHT * 11) {
+        return Err("Pet spritesheet dimensions changed".into());
+    }
+    let x = u32::from(frame) * PET_ATLAS_CELL_WIDTH;
+    let y = spec.row * PET_ATLAS_CELL_HEIGHT;
+    let cropped =
+        image::imageops::crop_imm(&atlas, x, y, PET_ATLAS_CELL_WIDTH, PET_ATLAS_CELL_HEIGHT)
+            .to_image();
+    let resized = image::imageops::resize(
+        &cropped,
+        PET_FRAME_WIDTH,
+        PET_FRAME_HEIGHT,
+        FilterType::Lanczos3,
+    );
+    let mut output = Vec::new();
+    PngEncoder::new(&mut output)
+        .write_image(
+            resized.as_raw(),
+            PET_FRAME_WIDTH,
+            PET_FRAME_HEIGHT,
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|_| "Pet frame could not be encoded".to_string())?;
+    if output.len() > MAX_PET_FRAME_BYTES {
+        return Err("Pet frame exceeds output limit".into());
+    }
+    Ok(output)
+}
+
+fn pet_frame_response(bytes: Bytes, key: &PetFrameCacheKey) -> Response {
+    let etag = format!("\"{}-{}-{}\"", key.revision, key.state, key.frame);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "image/png")
+        .header(CONTENT_LENGTH, bytes.len().to_string())
+        .header(CACHE_CONTROL, "private, max-age=31536000, immutable")
+        .header(ETAG, etag)
+        .body(Body::from(bytes))
+        .unwrap()
+}
+
+fn pet_frame_error(status: StatusCode, error: &'static str) -> Response {
+    (status, Json(json!({ "ok": false, "error": error }))).into_response()
 }
 
 async fn get_state(State(state): State<HttpState>, headers: HeaderMap) -> Response {
@@ -737,7 +1125,12 @@ pub(crate) async fn revoke_device_bridge_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use image::{ImageBuffer, Rgba, RgbaImage};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     #[derive(Default)]
     struct FakeFocus {
@@ -768,10 +1161,19 @@ mod tests {
         DeviceBridgeConfig::parse("127.0.0.1", u32::from(port)).unwrap()
     }
 
-    async fn start_test_bridge() -> (Arc<DeviceBridge>, Arc<FakeFocus>, String, String, u16) {
+    async fn test_store() -> (Store, PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("wisp-device-bridge-store-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        (Store::open(&root.join("wisp.sqlite")).await.unwrap(), root)
+    }
+
+    async fn start_test_bridge_with_store(
+        store: Store,
+    ) -> (Arc<DeviceBridge>, Arc<FakeFocus>, String, String, u16) {
         let hub = Arc::new(DeviceHub::default());
         hub.mark_working("frame-a", Some("project-a"));
-        let bridge = Arc::new(DeviceBridge::new(hub));
+        let bridge = Arc::new(DeviceBridge::new(hub, store));
         let focus = Arc::new(FakeFocus::default());
         let token = "test-token-that-is-not-logged".to_string();
         let port = free_port();
@@ -786,6 +1188,76 @@ mod tests {
             format!("http://127.0.0.1:{port}"),
             port,
         )
+    }
+
+    async fn start_test_bridge() -> (
+        Arc<DeviceBridge>,
+        Arc<FakeFocus>,
+        String,
+        String,
+        u16,
+        PathBuf,
+    ) {
+        let (store, root) = test_store().await;
+        let (bridge, focus, token, url, port) = start_test_bridge_with_store(store).await;
+        (bridge, focus, token, url, port, root)
+    }
+
+    fn pet_directory(name: &str) -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("wisp-device-pet-{name}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    fn row_color(row: u32) -> [u8; 4] {
+        [
+            10 + row as u8 * 17,
+            220 - row as u8 * 11,
+            30 + row as u8 * 13,
+            63 + row as u8 * 13,
+        ]
+    }
+
+    fn write_test_atlas(directory: &Path, format: ImageFormat) -> &'static str {
+        let atlas: RgbaImage = ImageBuffer::from_fn(
+            PET_ATLAS_CELL_WIDTH * 8,
+            PET_ATLAS_CELL_HEIGHT * 11,
+            |_, y| Rgba(row_color(y / PET_ATLAS_CELL_HEIGHT)),
+        );
+        let (file_name, manifest_path) = match format {
+            ImageFormat::Png => ("spritesheet.png", "spritesheet.png"),
+            ImageFormat::WebP => ("spritesheet.webp", "spritesheet.webp"),
+            _ => panic!("unsupported test format"),
+        };
+        atlas
+            .save_with_format(directory.join(file_name), format)
+            .unwrap();
+        manifest_path
+    }
+
+    fn write_test_pet(directory: &Path, format: ImageFormat) {
+        let spritesheet_path = write_test_atlas(directory, format);
+        fs::write(
+            directory.join("pet.json"),
+            serde_json::json!({
+                "id": "wispy",
+                "displayName": "Wispy",
+                "description": "test pet",
+                "spriteVersionNumber": 2,
+                "spritesheetPath": spritesheet_path,
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    async fn enable_test_pet(store: &Store, directory: &Path) {
+        store.set_setting("pet_enabled", "true").await.unwrap();
+        store
+            .set_setting("pet_directory", &directory.to_string_lossy())
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -812,8 +1284,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_is_public_but_state_requires_the_exact_token() {
-        let (bridge, _, token, url, _) = start_test_bridge().await;
+    async fn health_is_public_but_state_and_pet_routes_require_the_exact_token() {
+        let (bridge, _, token, url, _, store_root) = start_test_bridge().await;
         let client = reqwest::Client::new();
         let health: Value = client
             .get(format!("{url}/health"))
@@ -827,28 +1299,34 @@ mod tests {
             health,
             json!({"ok": true, "service": "wisp-device-bridge", "protocol": 1})
         );
-        assert_eq!(
-            client
-                .get(format!("{url}/state"))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::UNAUTHORIZED
-        );
-        assert_eq!(
-            client
-                .get(format!("{url}/state"))
-                .header("X-Wisp-Device-Token", "wrong")
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::UNAUTHORIZED
-        );
+        for path in [
+            "/state",
+            "/pet/manifest",
+            "/pet/frame?revision=none&state=idle&frame=0",
+        ] {
+            assert_eq!(
+                client
+                    .get(format!("{url}{path}"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                client
+                    .get(format!("{url}{path}"))
+                    .header("X-Wisp-Device-Token", "wrong")
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
         let state: Value = client
             .get(format!("{url}/state"))
-            .header("X-Wisp-Device-Token", token)
+            .header("X-Wisp-Device-Token", &token)
             .send()
             .await
             .unwrap()
@@ -859,12 +1337,33 @@ mod tests {
         assert_eq!(state["state"], "working");
         assert_eq!(state["sessionId"], "frame-a");
         assert!(state.get("seq").is_some());
+
+        let manifest: Value = client
+            .get(format!("{url}/pet/manifest"))
+            .header("X-Wisp-Device-Token", token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            manifest,
+            json!({
+                "type": "pet_manifest",
+                "protocol": 1,
+                "enabled": false,
+                "reason": "Pet is disabled.",
+            })
+        );
         bridge.stop().await;
+        drop(bridge);
+        let _ = fs::remove_dir_all(store_root);
     }
 
     #[tokio::test]
     async fn action_surface_is_bounded_and_ping_has_no_focus_side_effect() {
-        let (bridge, focus, token, url, _) = start_test_bridge().await;
+        let (bridge, focus, token, url, _, store_root) = start_test_bridge().await;
         let client = reqwest::Client::new();
         let unknown = client
             .post(format!("{url}/action"))
@@ -900,11 +1399,13 @@ mod tests {
             ACTION_HISTORY_LIMIT
         );
         bridge.stop().await;
+        drop(bridge);
+        let _ = fs::remove_dir_all(store_root);
     }
 
     #[tokio::test]
     async fn focus_session_rejects_missing_and_orphaned_sessions() {
-        let (bridge, focus, token, url, _) = start_test_bridge().await;
+        let (bridge, focus, token, url, _, store_root) = start_test_bridge().await;
         let client = reqwest::Client::new();
         for session_id in ["missing", "orphan"] {
             let response = client
@@ -934,11 +1435,209 @@ mod tests {
         assert_eq!(valid.status(), StatusCode::OK);
         assert_eq!(focus.calls.load(Ordering::SeqCst), 3);
         bridge.stop().await;
+        drop(bridge);
+        let _ = fs::remove_dir_all(store_root);
+    }
+
+    #[tokio::test]
+    async fn png_pet_manifest_frames_mapping_validation_and_revision_are_enforced() {
+        let directory = pet_directory("png");
+        write_test_pet(&directory, ImageFormat::Png);
+        fs::write(
+            directory.join("validation.json"),
+            serde_json::json!({
+                "ok": true,
+                "columns": 8,
+                "rows": 11,
+                "width": PET_ATLAS_CELL_WIDTH * 8,
+                "height": PET_ATLAS_CELL_HEIGHT * 11,
+                "cells": [
+                    {"state": "running", "column": 0, "used": true},
+                    {"state": "running", "column": 1, "used": true},
+                    {"state": "running", "column": 2, "used": false}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (store, store_root) = test_store().await;
+        enable_test_pet(&store, &directory).await;
+        let (bridge, _, token, url, _) = start_test_bridge_with_store(store).await;
+        let client = reqwest::Client::new();
+
+        let manifest: Value = client
+            .get(format!("{url}/pet/manifest"))
+            .header("X-Wisp-Device-Token", &token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(manifest["type"], "pet_manifest");
+        assert_eq!(manifest["protocol"], 1);
+        assert_eq!(manifest["enabled"], true);
+        assert_eq!(manifest["id"], "wispy");
+        assert_eq!(manifest["displayName"], "Wispy");
+        assert_eq!(manifest["format"], "png");
+        assert_eq!(manifest["frameWidth"], PET_FRAME_WIDTH);
+        assert_eq!(manifest["frameHeight"], PET_FRAME_HEIGHT);
+        assert_eq!(manifest["frameIntervalMs"], PET_FRAME_INTERVAL_MS);
+        assert_eq!(
+            manifest["frameCounts"],
+            json!({
+                "idle": 7,
+                "working": 2,
+                "review": 6,
+                "needs_user": 6,
+                "done": 5,
+                "failed": 8,
+            })
+        );
+        let revision = manifest["revision"].as_str().unwrap();
+        assert_eq!(revision.len(), 64);
+        assert!(revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+
+        for spec in PET_STATE_SPECS {
+            let response = client
+                .get(format!(
+                    "{url}/pet/frame?revision={revision}&state={}&frame=0",
+                    spec.bridge_state
+                ))
+                .header("X-Wisp-Device-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[CONTENT_TYPE],
+                axum::http::HeaderValue::from_static("image/png")
+            );
+            let content_length = response
+                .headers()
+                .get(CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let bytes = response.bytes().await.unwrap();
+            assert_eq!(content_length, bytes.len());
+            let frame = image::load_from_memory_with_format(&bytes, ImageFormat::Png)
+                .unwrap()
+                .into_rgba8();
+            assert_eq!(frame.dimensions(), (PET_FRAME_WIDTH, PET_FRAME_HEIGHT));
+            assert_eq!(
+                frame.get_pixel(PET_FRAME_WIDTH / 2, PET_FRAME_HEIGHT / 2).0,
+                row_color(spec.row),
+                "wrong atlas row for {}",
+                spec.bridge_state
+            );
+        }
+
+        let out_of_range = client
+            .get(format!(
+                "{url}/pet/frame?revision={revision}&state=working&frame=2"
+            ))
+            .header("X-Wisp-Device-Token", &token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(out_of_range.status(), StatusCode::NOT_FOUND);
+
+        for query in [
+            format!("revision={revision}&state=../../pet.json&frame=0"),
+            format!("revision={revision}&state=idle&frame=0&path=pet.json"),
+        ] {
+            let response = client
+                .get(format!("{url}/pet/frame?{query}"))
+                .header("X-Wisp-Device-Token", &token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        let mut pet_json: Value =
+            serde_json::from_slice(&fs::read(directory.join("pet.json")).unwrap()).unwrap();
+        pet_json["displayName"] = json!("Wispy revised");
+        fs::write(directory.join("pet.json"), pet_json.to_string()).unwrap();
+        let stale = client
+            .get(format!(
+                "{url}/pet/frame?revision={revision}&state=idle&frame=0"
+            ))
+            .header("X-Wisp-Device-Token", &token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let revised: Value = client
+            .get(format!("{url}/pet/manifest"))
+            .header("X-Wisp-Device-Token", &token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_ne!(revised["revision"], revision);
+
+        bridge.stop().await;
+        drop(bridge);
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_dir_all(store_root);
+    }
+
+    #[tokio::test]
+    async fn webp_pet_is_rendered_as_a_transparent_png_frame() {
+        let directory = pet_directory("webp");
+        write_test_pet(&directory, ImageFormat::WebP);
+        let (store, store_root) = test_store().await;
+        enable_test_pet(&store, &directory).await;
+        let (bridge, _, token, url, _) = start_test_bridge_with_store(store).await;
+        let client = reqwest::Client::new();
+        let manifest: Value = client
+            .get(format!("{url}/pet/manifest"))
+            .header("X-Wisp-Device-Token", &token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(manifest["enabled"], true);
+        assert_eq!(manifest["format"], "png");
+        let revision = manifest["revision"].as_str().unwrap();
+        let response = client
+            .get(format!(
+                "{url}/pet/frame?revision={revision}&state=idle&frame=0"
+            ))
+            .header("X-Wisp-Device-Token", &token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let frame =
+            image::load_from_memory_with_format(&response.bytes().await.unwrap(), ImageFormat::Png)
+                .unwrap()
+                .into_rgba8();
+        assert_eq!(frame.dimensions(), (PET_FRAME_WIDTH, PET_FRAME_HEIGHT));
+        assert_eq!(
+            frame.get_pixel(PET_FRAME_WIDTH / 2, PET_FRAME_HEIGHT / 2).0,
+            row_color(0)
+        );
+
+        bridge.stop().await;
+        drop(bridge);
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_dir_all(store_root);
     }
 
     #[tokio::test]
     async fn repeated_start_reuses_one_listener_and_stop_releases_the_port() {
-        let (bridge, focus, token, url, port) = start_test_bridge().await;
+        let (bridge, focus, token, url, port, store_root) = start_test_bridge().await;
         bridge
             .start(test_config(port), token.clone(), focus)
             .await
@@ -954,5 +1653,8 @@ mod tests {
         bridge.stop().await;
         let rebound = TcpListener::bind(("127.0.0.1", port)).await;
         assert!(rebound.is_ok(), "listener port was not released");
+        drop(rebound);
+        drop(bridge);
+        let _ = fs::remove_dir_all(store_root);
     }
 }
