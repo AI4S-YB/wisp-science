@@ -33,6 +33,8 @@ mod delegation_resources;
 mod delegation_runtime;
 mod delegation_tool;
 mod desktop_lifecycle;
+mod device_bridge;
+mod device_hub;
 mod dynamic_workflow;
 mod file_browser;
 mod harvest;
@@ -1718,6 +1720,8 @@ struct AppState {
     run_manager: run_context::RunManager,
     runtime_manager: wisp_runtime::RuntimeManager,
     browser_bridge: Arc<browser_bridge::BrowserBridge>,
+    device_bridge: Arc<device_bridge::DeviceBridge>,
+    device_hub: Arc<device_hub::DeviceHub>,
     active: std::sync::RwLock<HashMap<String, ActiveProject>>,
     /// One runtime per conversation frame id. Locked only briefly to clone the
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
@@ -1861,6 +1865,7 @@ struct TauriOutput {
     app: AppHandle,
     frame_id: String,
     project_id: String,
+    device_hub: Arc<device_hub::DeviceHub>,
     confirms: ConfirmMap,
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Shared live approval policy (see `AppState::approvals`).
@@ -1881,16 +1886,29 @@ struct TauriOutput {
 
 impl TauriOutput {
     fn emit(&self, event: AgentEvent) {
-        if !matches!(event, AgentEvent::ToolPresentation { .. }) {
-            channels::publish_agent_event(&event);
-        }
+        self.device_hub
+            .apply_agent_event(&event, Some(&self.project_id));
         if should_persist_ui_event(&event) {
             if let Some(tx) = &self.ui_events {
                 let _ = tx.send(event.clone());
             }
         }
-        let _ = self.app.emit("agent", event);
+        emit_agent_event_to_surfaces(&self.app, event);
     }
+}
+
+fn emit_agent_event_to_surfaces(app: &AppHandle, event: AgentEvent) {
+    if !matches!(event, AgentEvent::ToolPresentation { .. }) {
+        channels::publish_agent_event(&event);
+    }
+    let _ = app.emit("agent", event);
+}
+
+fn emit_agent_event(app: &AppHandle, event: AgentEvent) {
+    app.state::<AppState>()
+        .device_hub
+        .apply_agent_event(&event, None);
+    emit_agent_event_to_surfaces(app, event);
 }
 
 fn should_persist_ui_event(event: &AgentEvent) -> bool {
@@ -2033,6 +2051,8 @@ impl Output for TauriOutput {
             .lock()
             .unwrap()
             .insert(self.frame_id.clone());
+        self.device_hub
+            .mark_needs_user(&self.frame_id, Some(&self.project_id));
         let _ = self.app.emit(
             "confirm-request",
             ConfirmRequest {
@@ -2047,6 +2067,7 @@ impl Output for TauriOutput {
             .unwrap_or(wisp_tools::ConfirmDecision::Denied { feedback: None });
         self.confirms.lock().unwrap().remove(&self.frame_id);
         self.awaiting_confirm.lock().unwrap().remove(&self.frame_id);
+        self.device_hub.resolve_needs_user(&self.frame_id);
         decision
     }
     fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
@@ -4065,6 +4086,9 @@ async fn send_message_inner(
             .await
             .map_err(|error| error.to_string())?
             .len();
+        state
+            .device_hub
+            .mark_working(&frame_id, Some(ap.id.as_str()));
         state.running_turns.lock().await.insert(frame_id.clone());
         let result = if resume {
             acp::run_acp_internal_turn(state, &app, &ap, &frame_id, &message).await
@@ -4096,8 +4120,8 @@ async fn send_message_inner(
                 }
                 state.running_turns.lock().await.remove(&frame_id);
                 mark_seen_if_viewed(state, &frame_id).await;
-                let _ = app.emit(
-                    "agent",
+                emit_agent_event(
+                    &app,
                     AgentEvent::Done {
                         frame_id: frame_id.clone(),
                         stop_reason: Some(_stop_reason),
@@ -4108,8 +4132,8 @@ async fn send_message_inner(
             Err(error) => {
                 state.running_turns.lock().await.remove(&frame_id);
                 mark_seen_if_viewed(state, &frame_id).await;
-                let _ = app.emit(
-                    "agent",
+                emit_agent_event(
+                    &app,
                     AgentEvent::Error {
                         frame_id,
                         message: error.clone(),
@@ -4455,6 +4479,9 @@ async fn send_message_inner(
             }
         }
     }
+    state
+        .device_hub
+        .mark_working(&frame_id, Some(ap.id.as_str()));
     // User-triggered /compact — never part of a model turn. Archive + fold the
     // in-memory context, rewrite only the persisted message rows (the visual
     // transcript in session_ui_events keeps the full history), and report via
@@ -4470,8 +4497,8 @@ async fn send_message_inner(
                         format!("compact: persisting the rewritten context failed: {e}")
                     })?;
                 rt.set_last_seq(agent.ctx.messages.len() as i64);
-                let _ = app.emit(
-                    "agent",
+                emit_agent_event(
+                    &app,
                     AgentEvent::Compaction {
                         frame_id: frame_id.clone(),
                         before,
@@ -4479,8 +4506,8 @@ async fn send_message_inner(
                         strategy: "manual".into(),
                     },
                 );
-                let _ = app.emit(
-                    "agent",
+                emit_agent_event(
+                    &app,
                     AgentEvent::Done {
                         frame_id: frame_id.clone(),
                         stop_reason: None,
@@ -4489,8 +4516,8 @@ async fn send_message_inner(
                 return Ok(frame_id);
             }
             Err(e) => {
-                let _ = app.emit(
-                    "agent",
+                emit_agent_event(
+                    &app,
                     AgentEvent::Error {
                         frame_id: frame_id.clone(),
                         message: e.clone(),
@@ -4593,8 +4620,8 @@ async fn send_message_inner(
                     )
                     .await;
                     if !resources.is_empty() {
-                        let _ = resource_app.emit(
-                            "agent",
+                        emit_agent_event(
+                            &resource_app,
                             AgentEvent::Resources {
                                 frame_id: fid.clone(),
                                 seq,
@@ -4708,6 +4735,7 @@ async fn send_message_inner(
         app: app.clone(),
         frame_id: frame_id.clone(),
         project_id: ap.id.clone(),
+        device_hub: state.device_hub.clone(),
         confirms: state.confirms.clone(),
         awaiting_confirm: state.awaiting_confirm.clone(),
         approvals: state.approvals.clone(),
@@ -4794,8 +4822,8 @@ async fn send_message_inner(
 
     match result {
         Ok(_) => {
-            let _ = app.emit(
-                "agent",
+            emit_agent_event(
+                &app,
                 AgentEvent::Done {
                     frame_id: frame_id.clone(),
                     stop_reason: None,
@@ -4804,8 +4832,8 @@ async fn send_message_inner(
             Ok(frame_id)
         }
         Err(e) => {
-            let _ = app.emit(
-                "agent",
+            emit_agent_event(
+                &app,
                 AgentEvent::Error {
                     frame_id: frame_id.clone(),
                     message: format!("{e}"),
@@ -5183,8 +5211,8 @@ async fn persist_review(
 }
 
 fn emit_review(app: &AppHandle, frame_id: &str, report: review::ReviewReport) {
-    let _ = app.emit(
-        "agent",
+    emit_agent_event(
+        app,
         AgentEvent::Review {
             frame_id: frame_id.to_string(),
             report,
@@ -5292,8 +5320,8 @@ async fn automatic_review_acp(
         return;
     }
 
-    let _ = app.emit(
-        "agent",
+    emit_agent_event(
+        app,
         AgentEvent::ReviewStarted {
             frame_id: frame_id.to_string(),
         },
@@ -5301,8 +5329,8 @@ async fn automatic_review_acp(
     match generate_review(state, frame_id, &msgs, Some(cancel)).await {
         Err(error) => {
             tracing::warn!("automatic ACP review failed for {frame_id}: {error}");
-            let _ = app.emit(
-                "agent",
+            emit_agent_event(
+                app,
                 AgentEvent::ReviewFailed {
                     frame_id: frame_id.to_string(),
                     message: error,
@@ -5321,8 +5349,8 @@ async fn automatic_review_acp(
                     }
                     _ => "ACP Agent".into(),
                 };
-                let _ = app.emit(
-                    "agent",
+                emit_agent_event(
+                    app,
                     AgentEvent::CorrectionStarted {
                         frame_id: frame_id.to_string(),
                         model,
@@ -5482,23 +5510,33 @@ async fn review_session(
         {
             return Err("Nothing to review yet.".into());
         }
-        app.emit(
-            "agent",
+        emit_agent_event(
+            &app,
             AgentEvent::ReviewStarted {
                 frame_id: frame_id.clone(),
             },
-        )
-        .map_err(|e| format!("{e}"))?;
-        let report = generate_review(&state, &frame_id, &msgs, None).await?;
+        );
+        let report = match generate_review(&state, &frame_id, &msgs, None).await {
+            Ok(report) => report,
+            Err(error) => {
+                emit_agent_event(
+                    &app,
+                    AgentEvent::ReviewFailed {
+                        frame_id: frame_id.clone(),
+                        message: error.clone(),
+                    },
+                );
+                return Err(error);
+            }
+        };
         persist_review(&state.store, &frame_id, msgs.len(), &report).await;
-        app.emit(
-            "agent",
+        emit_agent_event(
+            &app,
             AgentEvent::Review {
                 frame_id: frame_id.clone(),
                 report,
             },
-        )
-        .map_err(|e| format!("{e}"))?;
+        );
         Ok(())
     }
     .await;
@@ -5909,6 +5947,9 @@ pub fn run() {
             let browser_bridge = tauri::async_runtime::block_on(
                 browser_bridge::BrowserBridge::start(browser_extension_dir),
             );
+            let device_hub = Arc::new(device_hub::DeviceHub::default());
+            let device_bridge =
+                Arc::new(device_bridge::DeviceBridge::new(device_hub.clone()));
             if let Ok((attempts, workflows)) = tauri::async_runtime::block_on(
                 store.recover_interrupted_agent_workflows(),
             ) {
@@ -5923,6 +5964,8 @@ pub fn run() {
                 run_manager,
                 runtime_manager,
                 browser_bridge,
+                device_bridge,
+                device_hub,
                 active: std::sync::RwLock::new(HashMap::from([(
                     "main".to_string(),
                     ActiveProject {
@@ -5964,6 +6007,12 @@ pub fn run() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     channels::autostart(handle).await;
+                });
+            }
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    device_bridge::autostart(handle).await;
                 });
             }
             app_commands::start_python_bootstrap(app.handle());
@@ -6037,6 +6086,10 @@ pub fn run() {
             channels::weixin_bind_start,
             channels::weixin_bind_poll,
             channels::weixin_unbind,
+            device_bridge::set_device_bridge,
+            device_bridge::get_device_bridge_token,
+            device_bridge::rotate_device_bridge_token,
+            device_bridge::revoke_device_bridge_token,
             acp::list_acp_agents,
             acp::get_acp_session_agent,
             acp::save_acp_agent,
@@ -6254,6 +6307,8 @@ pub fn run() {
                 macos_exit_in_progress.store(true, Ordering::SeqCst);
             }
             if matches!(_event, tauri::RunEvent::Exit) {
+                let device_bridge = _app.state::<AppState>().device_bridge.clone();
+                tauri::async_runtime::block_on(device_bridge.stop());
                 let runtime_manager = _app.state::<AppState>().runtime_manager.clone();
                 tauri::async_runtime::block_on(runtime_manager.shutdown_all());
                 _app.state::<terminal_sessions::TerminalManager>()

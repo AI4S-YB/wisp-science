@@ -6213,7 +6213,7 @@ test("chat-with-claude creation opens a new session with the interview prompt", 
   )).toBeGreaterThan(0);
 });
 
-test("remote access settings: Feishu QR/manual setup and WeChat QR binding", async ({ page }) => {
+test("remote access settings: Feishu, WeChat, and StickS3 setup", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Remote Access");
 
@@ -6223,8 +6223,10 @@ test("remote access settings: Feishu QR/manual setup and WeChat QR binding", asy
   await expect(page.getByTestId("channel-routing-help").getByText("/session", { exact: true })).toBeVisible();
   await expect(page.getByTestId("feishu-channel-row")).toBeVisible();
   await expect(page.getByTestId("weixin-channel-row")).toBeVisible();
+  await expect(page.getByTestId("sticks3-channel-row")).toBeVisible();
   await expect(page.getByTestId("feishu-enabled")).toBeDisabled();
   await expect(page.getByTestId("weixin-enabled")).toBeDisabled();
+  await expect(page.getByTestId("sticks3-enabled")).toBeDisabled();
 
   // Feishu subpage: existing applications still have a manual, keyring-backed
   // setup path.
@@ -6269,6 +6271,53 @@ test("remote access settings: Feishu QR/manual setup and WeChat QR binding", asy
   await page.getByTestId("weixin-channel-row").click();
   await page.getByTestId("weixin-unbind").click();
   await expect(page.getByTestId("weixin-bind")).toBeVisible({ timeout: 10_000 });
+
+  // StickS3 is the third Remote Access peer. LAN is usable now; Relay is an
+  // explicit, disabled future transport instead of being conflated with LAN.
+  await page.locator(".settings-head-back").click();
+  await page.getByTestId("sticks3-channel-row").click();
+  await expect(page.getByTestId("sticks3-channel-card")).toBeVisible();
+  await expect(page.locator('input[name="device-bridge-mode"][value="lan"]')).toBeChecked();
+  await expect(page.locator('input[name="device-bridge-mode"][value="relay"]')).toBeDisabled();
+
+  // UI validation rejects wildcard binding before invoking Tauri.
+  await page.getByTestId("sticks3-bind-ipv4").fill("0.0.0.0");
+  await page.getByTestId("sticks3-save").click();
+  await expect(page.getByText("0.0.0.0 is not allowed. Choose one specific IPv4 address.")).toBeVisible();
+  await expect.poll(async () => (await invokeArgsList(page, "set_device_bridge")).length).toBe(0);
+
+  await page.getByTestId("sticks3-bind-ipv4").fill("127.0.0.1");
+  await page.getByTestId("sticks3-port").fill("18766");
+  await page.getByTestId("sticks3-enabled-detail").check();
+  await expect.poll(() => lastInvokeArgs(page, "set_device_bridge")).toMatchObject({
+    enabled: true,
+    mode: "lan",
+    bindIpv4: "127.0.0.1",
+    port: 18766,
+  });
+  await expect(page.getByTestId("sticks3-detail-state")).toHaveText("Listening");
+  await expect(page.getByTestId("sticks3-listening-url")).toContainText("http://127.0.0.1:18766");
+
+  await page.getByTestId("sticks3-rotate-token").click();
+  await expect(page.getByText(/previous token stopped working immediately/i)).toBeVisible();
+  await expect(page.getByTestId("sticks3-copy-token")).toBeEnabled();
+  await page.getByTestId("sticks3-copy-token").click();
+  await expect.poll(async () => (await invokeArgsList(page, "get_device_bridge_token")).length).toBe(1);
+  await page.getByTestId("sticks3-revoke-token").click();
+  await expect(page.getByTestId("sticks3-copy-token")).toBeDisabled();
+});
+
+test("StickS3 listener errors remain visible without breaking settings", async ({ page }) => {
+  await enterApp(page, "/?mockDeviceBridgeError=1");
+  await openSettingsSection(page, "Remote Access");
+  await page.getByTestId("sticks3-channel-row").click();
+  await page.getByTestId("sticks3-bind-ipv4").fill("127.0.0.1");
+  await page.getByTestId("sticks3-port").fill("18766");
+  await page.getByTestId("sticks3-enabled-detail").check();
+
+  await expect(page.getByTestId("sticks3-detail-state")).toHaveText("Error");
+  await expect(page.getByTestId("sticks3-runtime-error")).toContainText("address already in use");
+  await expect(page.getByTestId("sticks3-channel-card")).toBeVisible();
 });
 
 test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescanning", async ({ page }) => {

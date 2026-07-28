@@ -897,6 +897,52 @@ pub(crate) struct ChannelsStatus {
     pub(crate) weixin_state: String,
     #[serde(default)]
     pub(crate) weixin_detail: String,
+    #[serde(default)]
+    pub(crate) device: DeviceBridgeStatus,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceBridgeStatus {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_device_bridge_mode")]
+    pub(crate) mode: String,
+    #[serde(default)]
+    pub(crate) has_token: bool,
+    #[serde(default)]
+    pub(crate) state: String,
+    #[serde(default)]
+    pub(crate) bind_ipv4: String,
+    #[serde(default = "default_device_bridge_port")]
+    pub(crate) port: u16,
+    #[serde(default)]
+    pub(crate) url: Option<String>,
+    #[serde(default)]
+    pub(crate) detail: String,
+}
+
+fn default_device_bridge_port() -> u16 {
+    18_766
+}
+
+fn default_device_bridge_mode() -> String {
+    "lan".into()
+}
+
+impl Default for DeviceBridgeStatus {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: default_device_bridge_mode(),
+            has_token: false,
+            state: "stopped".into(),
+            bind_ipv4: String::new(),
+            port: default_device_bridge_port(),
+            url: None,
+            detail: String::new(),
+        }
+    }
 }
 
 /// Mirror of `src-tauri` `channels::WeixinBindStart`.

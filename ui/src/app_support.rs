@@ -4913,6 +4913,7 @@ pub(super) fn settings_subpage_label(
         "channels" => channels_open.map(|key| match key {
             "feishu" => t(loc, "channels.feishu.title").into(),
             "weixin" => t(loc, "channels.weixin.title").into(),
+            "sticks3" => t(loc, "channels.device.title").into(),
             other => other.to_string(),
         }),
         _ => None,

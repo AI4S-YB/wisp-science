@@ -21,6 +21,7 @@ pub(super) async fn confirm_response(
     };
     let pending = state.confirms.lock().unwrap().remove(&session_id);
     if let Some(pending) = pending {
+        state.device_hub.resolve_needs_user(&session_id);
         if approved {
             let scope = scope.unwrap_or_else(|| "once".into());
             if matches!(scope.as_str(), "session" | "project" | "global") {

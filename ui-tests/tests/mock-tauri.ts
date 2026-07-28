@@ -515,7 +515,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     weixin_bound: false,
     weixin_state: "stopped",
     weixin_detail: "",
+    device: {
+      enabled: false,
+      mode: "lan",
+      hasToken: false,
+      state: "stopped",
+      bindIpv4: "",
+      port: 18766,
+      url: null as string | null,
+      detail: "",
+    },
   };
+  let mockDeviceToken = "";
+  let mockDeviceTokenSequence = 0;
   let mockFeishuPollCount = 0;
   let mockApprovalGrants = [
     {
@@ -1332,7 +1344,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "list_custom_credentials":
             return mockCustomCredentials.map((credential) => ({ ...credential }));
           case "channels_status":
-            return { ...mockChannels };
+            return { ...mockChannels, device: { ...mockChannels.device } };
           case "set_feishu_channel":
             mockChannels.feishu_enabled = Boolean(arg("enabled"));
             mockChannels.feishu_international = Boolean(arg("international"));
@@ -1382,6 +1394,49 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             mockChannels.weixin_bound = false;
             mockChannels.weixin_enabled = false;
             mockChannels.weixin_state = "stopped";
+            return null;
+          case "set_device_bridge": {
+            const enabled = Boolean(arg("enabled"));
+            const bindIpv4 = String(arg("bindIpv4") ?? "");
+            const port = Number(arg("port") ?? 0);
+            mockChannels.device.enabled = enabled;
+            mockChannels.device.mode = String(arg("mode") ?? "lan");
+            mockChannels.device.bindIpv4 = bindIpv4;
+            mockChannels.device.port = port;
+            mockChannels.device.detail = "";
+            if (!enabled) {
+              mockChannels.device.state = "stopped";
+              mockChannels.device.url = null;
+              mockChannels.device.hasToken = false;
+              mockDeviceToken = "";
+              return { ...mockChannels.device };
+            }
+            if (!mockDeviceToken) {
+              mockDeviceTokenSequence += 1;
+              mockDeviceToken = `mock-sticks3-token-${mockDeviceTokenSequence}`;
+              mockChannels.device.hasToken = true;
+            }
+            if (query.get("mockDeviceBridgeError") === "1") {
+              mockChannels.device.state = "error";
+              mockChannels.device.url = null;
+              mockChannels.device.detail = `Cannot listen on ${bindIpv4}:${port}: address already in use`;
+              throw new Error(mockChannels.device.detail);
+            }
+            mockChannels.device.state = "listening";
+            mockChannels.device.url = `http://${bindIpv4}:${port}`;
+            return { ...mockChannels.device };
+          }
+          case "rotate_device_bridge_token":
+            mockDeviceTokenSequence += 1;
+            mockDeviceToken = `mock-sticks3-token-${mockDeviceTokenSequence}`;
+            mockChannels.device.hasToken = true;
+            return mockDeviceToken;
+          case "get_device_bridge_token":
+            if (!mockDeviceToken) throw new Error("No Device Bridge token exists. Generate one first.");
+            return mockDeviceToken;
+          case "revoke_device_bridge_token":
+            mockDeviceToken = "";
+            mockChannels.device.hasToken = false;
             return null;
           case "list_ssh_hosts":
             return [{

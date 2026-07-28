@@ -3,14 +3,34 @@
 //! `open` signal is hoisted so the shared settings breadcrumb can render it;
 //! everything else is self-contained and fetched on mount.
 
-use crate::app_support::js_error_text;
+use crate::app_support::{copy_text, js_error_text};
 use crate::bindings::invoke_checked;
 use crate::dto::{ChannelsStatus, FeishuBindPoll, FeishuBindStart, WeixinBindStart};
 use crate::i18n::{localize_backend, t, Locale};
 use crate::text::{event_target_checked, event_target_input};
 use leptos::*;
 use serde_wasm_bindgen::to_value;
+use std::net::Ipv4Addr;
 use wasm_bindgen::JsValue;
+
+const DEFAULT_DEVICE_BRIDGE_PORT: u16 = 18_766;
+
+fn validate_device_fields(bind_ipv4: &str, port: &str) -> Result<(String, u16), &'static str> {
+    let address = bind_ipv4
+        .trim()
+        .parse::<Ipv4Addr>()
+        .map_err(|_| "channels.device.invalid_ipv4")?;
+    if address.is_unspecified() {
+        return Err("channels.device.unspecified_ipv4");
+    }
+    let port = port
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+        .ok_or("channels.device.invalid_port")?;
+    Ok((address.to_string(), port))
+}
 
 /// Promise-backed sleep so the QR poll can be a plain async loop.
 async fn sleep_ms(ms: i32) {
@@ -25,6 +45,7 @@ async fn sleep_ms(ms: i32) {
 fn state_label(locale: Locale, state: &str) -> String {
     match state {
         "running" => t(locale, "channels.state.running"),
+        "listening" => t(locale, "channels.device.state.listening"),
         "connecting" => t(locale, "channels.state.connecting"),
         "error" => t(locale, "channels.state.error"),
         _ => t(locale, "channels.state.stopped"),
@@ -34,7 +55,7 @@ fn state_label(locale: Locale, state: &str) -> String {
 
 fn state_tone(state: &str) -> &'static str {
     match state {
-        "running" => "running",
+        "running" | "listening" => "running",
         "connecting" => "connecting",
         "error" => "error",
         _ => "stopped",
@@ -55,6 +76,8 @@ pub(super) fn ChannelsPane(
     let feishu_poll_gen = create_rw_signal(0usize);
     let msg = create_rw_signal(None::<(bool, String)>);
     let qr = create_rw_signal(None::<WeixinBindStart>);
+    let device_bind_ipv4 = create_rw_signal(String::new());
+    let device_port = create_rw_signal(DEFAULT_DEVICE_BRIDGE_PORT.to_string());
     // Bumped to cancel a stale QR poll loop (new scan, unbind, unmount race).
     let poll_gen = create_rw_signal(0usize);
 
@@ -64,6 +87,8 @@ pub(super) fn ChannelsPane(
                 if let Ok(s) = serde_wasm_bindgen::from_value::<ChannelsStatus>(v) {
                     let _ = feishu_app_id.try_set(s.feishu_app_id.clone());
                     let _ = feishu_international.try_set(s.feishu_international);
+                    let _ = device_bind_ipv4.try_set(s.device.bind_ipv4.clone());
+                    let _ = device_port.try_set(s.device.port.to_string());
                     let _ = status.try_set(Some(s));
                 }
             }
@@ -338,6 +363,108 @@ pub(super) fn ChannelsPane(
         });
     });
 
+    let save_device = Callback::new(move |enabled: bool| {
+        let (bind_ipv4, port) = match validate_device_fields(
+            &device_bind_ipv4.get_untracked(),
+            &device_port.get_untracked(),
+        ) {
+            Ok(fields) => fields,
+            Err(key) => {
+                msg.set(Some((false, t(locale.get_untracked(), key).into())));
+                return;
+            }
+        };
+        let arg = to_value(&serde_json::json!({
+            "enabled": enabled,
+            "mode": "lan",
+            "bindIpv4": bind_ipv4,
+            "port": port,
+        }))
+        .unwrap();
+        spawn_local(async move {
+            match invoke_checked("set_device_bridge", arg).await {
+                Ok(_) => {
+                    let _ = msg.try_set(Some((
+                        true,
+                        t(locale.get_untracked(), "channels.device.saved").into(),
+                    )));
+                }
+                Err(error) => {
+                    let _ = msg.try_set(Some((
+                        false,
+                        localize_backend(locale.get_untracked(), &js_error_text(error)),
+                    )));
+                }
+            }
+            refresh.call(());
+        });
+    });
+
+    let rotate_device_token = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            match invoke_checked("rotate_device_bridge_token", JsValue::UNDEFINED).await {
+                Ok(_) => {
+                    let _ = msg.try_set(Some((
+                        true,
+                        t(locale.get_untracked(), "channels.device.token_rotated").into(),
+                    )));
+                }
+                Err(error) => {
+                    let _ = msg.try_set(Some((
+                        false,
+                        localize_backend(locale.get_untracked(), &js_error_text(error)),
+                    )));
+                }
+            }
+            refresh.call(());
+        });
+    });
+
+    let copy_device_token = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            match invoke_checked("get_device_bridge_token", JsValue::UNDEFINED).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<String>(value) {
+                    Ok(token) => {
+                        copy_text(token);
+                        let _ = msg.try_set(Some((
+                            true,
+                            t(locale.get_untracked(), "channels.device.token_copied").into(),
+                        )));
+                    }
+                    Err(error) => {
+                        let _ = msg.try_set(Some((false, error.to_string())));
+                    }
+                },
+                Err(error) => {
+                    let _ = msg.try_set(Some((
+                        false,
+                        localize_backend(locale.get_untracked(), &js_error_text(error)),
+                    )));
+                }
+            }
+        });
+    });
+
+    let revoke_device_token = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            match invoke_checked("revoke_device_bridge_token", JsValue::UNDEFINED).await {
+                Ok(_) => {
+                    let _ = msg.try_set(Some((
+                        true,
+                        t(locale.get_untracked(), "channels.device.token_revoked").into(),
+                    )));
+                }
+                Err(error) => {
+                    let _ = msg.try_set(Some((
+                        false,
+                        localize_backend(locale.get_untracked(), &js_error_text(error)),
+                    )));
+                }
+            }
+            refresh.call(());
+        });
+    });
+
     let msg_view =
         move || {
             msg.get().map(|(ok, text)| view! {
@@ -375,6 +502,19 @@ pub(super) fn ChannelsPane(
                 } else {
                     t(locale.get(), "channels.weixin.not_bound").to_string()
                 }}
+            </span>
+        }
+    };
+    let device_badge = move || {
+        let s = status.get().unwrap_or_default().device;
+        let state = if s.enabled {
+            s.state
+        } else {
+            "stopped".into()
+        };
+        view! {
+            <span class=format!("badge channel-state-{}", state_tone(&state)) data-testid="sticks3-state">
+                {state_label(locale.get(), &state)}
             </span>
         }
     };
@@ -535,7 +675,7 @@ pub(super) fn ChannelsPane(
                 </div>
             </div>
         }.into_view(),
-        Some(_) => view! {
+        Some("weixin") => view! {
             <div class="settings-pane settings-pane-subpage" data-testid="weixin-channel-card">
                 {msg_view}
                 <div class="channel-bind-row">
@@ -590,6 +730,128 @@ pub(super) fn ChannelsPane(
                 })}
             </div>
         }.into_view(),
+        Some("sticks3") => view! {
+            <div class="settings-pane settings-pane-subpage" data-testid="sticks3-channel-card">
+                {msg_view}
+                <div class="channel-bind-row">
+                    <div>
+                        <strong>{move || t(locale.get(), "channels.device.heading")}</strong>
+                        <p>{move || t(locale.get(), "channels.device.hint")}</p>
+                    </div>
+                    <span class=move || {
+                        let state = status.get().unwrap_or_default().device.state;
+                        format!("badge channel-state-{}", state_tone(&state))
+                    } data-testid="sticks3-detail-state">
+                        {move || state_label(locale.get(), &status.get().unwrap_or_default().device.state)}
+                    </span>
+                </div>
+
+                <div class="device-mode-grid" role="radiogroup" aria-label=move || t(locale.get(), "channels.device.mode")>
+                    <label class="device-mode-option selected">
+                        <input type="radio" name="device-bridge-mode" value="lan"
+                            prop:checked=move || status.get().unwrap_or_default().device.mode != "relay" />
+                        <span>
+                            <strong>{move || t(locale.get(), "channels.device.mode_lan")}</strong>
+                            <small>{move || t(locale.get(), "channels.device.mode_lan_hint")}</small>
+                        </span>
+                    </label>
+                    <label class="device-mode-option disabled">
+                        <input type="radio" name="device-bridge-mode" value="relay" disabled=true
+                            prop:checked=move || status.get().unwrap_or_default().device.mode == "relay" />
+                        <span>
+                            <strong>
+                                {move || t(locale.get(), "channels.device.mode_relay")}
+                                " · "
+                                {move || t(locale.get(), "channels.device.planned")}
+                            </strong>
+                            <small>{move || t(locale.get(), "channels.device.mode_relay_hint")}</small>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="settings-form-grid">
+                    <label class="span-2 settings-check">
+                        <input type="checkbox" data-testid="sticks3-enabled-detail"
+                            prop:checked=move || status.get().unwrap_or_default().device.enabled
+                            on:change=move |ev| save_device.call(event_target_checked(&ev)) />
+                        <span>{move || t(locale.get(), "channels.device.toggle")}</span>
+                    </label>
+                    <label>
+                        <span>{move || t(locale.get(), "channels.device.bind_ipv4")}</span>
+                        <input type="text" inputmode="decimal" data-testid="sticks3-bind-ipv4"
+                            placeholder="10.10.87.103"
+                            prop:value=move || device_bind_ipv4.get()
+                            on:input=move |ev| device_bind_ipv4.set(event_target_input(&ev).value()) />
+                    </label>
+                    <label>
+                        <span>{move || t(locale.get(), "channels.device.port")}</span>
+                        <input type="number" min="1" max="65535" data-testid="sticks3-port"
+                            prop:value=move || device_port.get()
+                            on:input=move |ev| device_port.set(event_target_input(&ev).value()) />
+                    </label>
+                </div>
+                {move || {
+                    let device = status.get().unwrap_or_default().device;
+                    device.url.map(|url| view! {
+                        <p class="settings-field-hint" data-testid="sticks3-listening-url">
+                            {format!("{}: {url}", t(locale.get(), "channels.device.current_url"))}
+                        </p>
+                    })
+                }}
+                {move || {
+                    let detail = status.get().unwrap_or_default().device.detail;
+                    (!detail.is_empty()).then(|| view! {
+                        <p class="settings-field-error" data-testid="sticks3-runtime-error">{detail}</p>
+                    })
+                }}
+                <p class="settings-field-hint">{move || t(locale.get(), "channels.device.bind_hint")}</p>
+
+                <div class="device-token-row">
+                    <div>
+                        <strong>{move || t(locale.get(), "channels.device.token")}</strong>
+                        <p>{move || {
+                            if status.get().unwrap_or_default().device.has_token {
+                                t(locale.get(), "channels.device.token_stored")
+                            } else {
+                                t(locale.get(), "channels.device.token_missing")
+                            }
+                        }}</p>
+                    </div>
+                    <div class="row">
+                        <button type="button" data-testid="sticks3-rotate-token"
+                            on:click=move |_| rotate_device_token.call(())>
+                            {move || {
+                                if status.get().unwrap_or_default().device.has_token {
+                                    t(locale.get(), "channels.device.rotate_token")
+                                } else {
+                                    t(locale.get(), "channels.device.generate_token")
+                                }
+                            }}
+                        </button>
+                        <button type="button" data-testid="sticks3-copy-token"
+                            prop:disabled=move || !status.get().unwrap_or_default().device.has_token
+                            on:click=move |_| copy_device_token.call(())>
+                            {move || t(locale.get(), "channels.device.copy_token")}
+                        </button>
+                        <button type="button" class="danger" data-testid="sticks3-revoke-token"
+                            prop:disabled=move || !status.get().unwrap_or_default().device.has_token
+                            on:click=move |_| revoke_device_token.call(())>
+                            {move || t(locale.get(), "channels.device.revoke_token")}
+                        </button>
+                    </div>
+                </div>
+
+                <p class="settings-note device-security-note">{move || t(locale.get(), "channels.device.security")}</p>
+                <div class="row settings-footer">
+                    <span class="settings-footer-note">{move || t(locale.get(), "channels.secret_note")}</span>
+                    <button type="button" class="primary" data-testid="sticks3-save"
+                        on:click=move |_| save_device.call(status.get_untracked().unwrap_or_default().device.enabled)>
+                        {move || t(locale.get(), "settings.save")}
+                    </button>
+                </div>
+            </div>
+        }.into_view(),
+        Some(_) => view! { <div></div> }.into_view(),
         None => view! {
             <div class="settings-pane settings-pane-list">
                 <p class="settings-note">{move || t(locale.get(), "channels.desc")}</p>
@@ -656,6 +918,37 @@ pub(super) fn ChannelsPane(
                                     prop:disabled=move || !status.get().map(|s| s.weixin_bound).unwrap_or(false)
                                     prop:checked=move || status.get().map(|s| s.weixin_enabled).unwrap_or(false)
                                     on:change=move |ev| set_weixin_enabled.call(event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                        </div>
+                    </div>
+                    <div class="settings-list-row settings-list-row-link" data-testid="sticks3-channel-row"
+                        on:click=move |_| open.set(Some("sticks3".into()))>
+                        <div class="settings-list-main">
+                            <span class="settings-list-title">
+                                {move || t(locale.get(), "channels.device.title")}
+                                " "
+                                {device_badge}
+                            </span>
+                            <span class="settings-list-sub">{move || {
+                                let device = status.get().unwrap_or_default().device;
+                                device.url.unwrap_or_else(|| {
+                                    if device.bind_ipv4.is_empty() {
+                                        t(locale.get(), "channels.device.subtitle").to_string()
+                                    } else {
+                                        format!("{}:{}", device.bind_ipv4, device.port)
+                                    }
+                                })
+                            }}</span>
+                        </div>
+                        <div class="settings-list-actions">
+                            <label class="toggle" on:click=move |ev| ev.stop_propagation()>
+                                <input type="checkbox" data-testid="sticks3-enabled"
+                                    aria-label=move || t(locale.get(), "channels.device.toggle")
+                                    prop:disabled=move || status.get().unwrap_or_default().device.bind_ipv4.is_empty()
+                                    prop:checked=move || status.get().unwrap_or_default().device.enabled
+                                    on:change=move |ev| save_device.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                             <span class="settings-list-chevron" aria-hidden="true">"›"</span>
