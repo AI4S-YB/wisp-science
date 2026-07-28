@@ -1771,8 +1771,9 @@ test("R scripts expose variables and console while only selected code can run", 
   await expect(binding).toHaveValue("ssh:gpu-server");
 
   // The AI-first source preview has no whole-file run or direct-edit action.
-  await expect(page.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  const filePreview = page.locator(".center-file-preview");
+  await expect(filePreview.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
+  await expect(filePreview.getByRole("button", { name: "Edit" })).toHaveCount(0);
 
   // The replacement control opens the bound runtime's variable rail and an
   // initially empty console without executing the file.
