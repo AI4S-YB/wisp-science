@@ -6499,6 +6499,7 @@ version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",

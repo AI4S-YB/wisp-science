@@ -8,7 +8,7 @@ use crate::{delegation_tool, AgentEvent, AppState, SessionRuntime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use wisp_core::{
     AgentDelegationResponse, AgentUsage, DelegationExecutionResult, DelegationExecutionStatus,
     DelegationStatus, DelegationStepExecution,
@@ -403,8 +403,8 @@ async fn dispatch_frame(app: AppHandle, frame_id: String) {
     }
     for delivery in &delivered {
         let result = delivery.result_json.clone().unwrap_or_default();
-        let _ = app.emit(
-            "agent",
+        crate::emit_agent_event(
+            &app,
             AgentEvent::DelegationCompleted {
                 frame_id: frame_id.clone(),
                 workflow_id: delivery.workflow_id.clone(),

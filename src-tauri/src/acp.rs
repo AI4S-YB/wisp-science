@@ -887,8 +887,8 @@ async fn run_acp_turn_with_kind(
     }
     let mut next_seq = begin_acp_turn(&state.store, frame_id, message, turn_kind).await?;
     if turn_kind == AcpTurnKind::User {
-        let _ = app.emit(
-            "agent",
+        crate::emit_agent_event(
+            app,
             AgentEvent::User {
                 frame_id: frame_id.to_string(),
                 text: message.to_string(),
@@ -916,7 +916,7 @@ async fn run_acp_turn_with_kind(
                             } else {
                                 AgentEvent::Reasoning { frame_id: frame_id.to_string(), delta: text.to_string() }
                             };
-                            let _ = app.emit("agent", event);
+                            crate::emit_agent_event(app, event);
                         }
                     } else {
                         if matches!(kind, AcpUpdateKind::ToolCall | AcpUpdateKind::ToolCallUpdate) {
@@ -935,6 +935,7 @@ async fn run_acp_turn_with_kind(
                 Some(AcpSessionEvent::Permission(request)) => {
                     state.acp_permissions.lock().await.insert(request.request_id.clone(), frame_id.to_string());
                     state.awaiting_confirm.lock().unwrap().insert(frame_id.to_string());
+                    state.device_hub.mark_needs_user(frame_id, Some(&project.id));
                     let _ = app.emit("permission-request", permission_event(frame_id, &request));
                 }
                 Some(AcpSessionEvent::Exited { error }) => return Err(error.unwrap_or_else(|| "ACP Agent exited.".into())),
@@ -960,8 +961,8 @@ async fn run_acp_turn_with_kind(
                 if let Some(text) = text_from_payload(&payload) {
                     if kind == AcpUpdateKind::AgentMessage {
                         assistant.push_str(text);
-                        let _ = app.emit(
-                            "agent",
+                        crate::emit_agent_event(
+                            app,
                             AgentEvent::Text {
                                 frame_id: frame_id.to_string(),
                                 delta: text.to_string(),
@@ -969,8 +970,8 @@ async fn run_acp_turn_with_kind(
                         );
                     } else if kind == AcpUpdateKind::AgentThought {
                         reasoning.push_str(text);
-                        let _ = app.emit(
-                            "agent",
+                        crate::emit_agent_event(
+                            app,
                             AgentEvent::Reasoning {
                                 frame_id: frame_id.to_string(),
                                 delta: text.to_string(),
@@ -1049,8 +1050,8 @@ async fn run_acp_turn_with_kind(
     )
     .await;
     if !resources.is_empty() {
-        let _ = app.emit(
-            "agent",
+        crate::emit_agent_event(
+            app,
             AgentEvent::Resources {
                 frame_id: frame_id.to_string(),
                 seq: next_seq,
@@ -1113,7 +1114,8 @@ pub(crate) async fn respond_acp_permission(
         .acp_permissions
         .lock()
         .await
-        .remove(&request_id)
+        .get(&request_id)
+        .cloned()
         .ok_or_else(|| "ACP permission request is no longer pending.".to_string())?;
     let runtime = state
         .acp_sessions
@@ -1122,10 +1124,11 @@ pub(crate) async fn respond_acp_permission(
         .get(&frame_id)
         .cloned()
         .ok_or_else(|| "ACP session is no longer active.".to_string())?;
-    let result = runtime
+    runtime
         .handle
         .respond_permission(request_id.clone(), option_id)
-        .map_err(|error| error.to_string());
+        .map_err(|error| error.to_string())?;
+    state.acp_permissions.lock().await.remove(&request_id);
     if !state
         .acp_permissions
         .lock()
@@ -1134,17 +1137,16 @@ pub(crate) async fn respond_acp_permission(
         .any(|owner| owner == &frame_id)
     {
         state.awaiting_confirm.lock().unwrap().remove(&frame_id);
+        state.device_hub.resolve_needs_user(&frame_id);
     }
-    if result.is_ok() {
-        let _ = app.emit(
-            "permission-resolved",
-            serde_json::json!({
-                "frameId": frame_id,
-                "requestId": request_id,
-            }),
-        );
-    }
-    result
+    let _ = app.emit(
+        "permission-resolved",
+        serde_json::json!({
+            "frameId": frame_id,
+            "requestId": request_id,
+        }),
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -1235,6 +1237,13 @@ pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
             handle.shutdown(Duration::from_secs(1)).await;
         });
     }
+    state
+        .acp_permissions
+        .lock()
+        .await
+        .retain(|_, owner| owner != frame_id);
+    state.awaiting_confirm.lock().unwrap().remove(frame_id);
+    state.device_hub.resolve_needs_user(frame_id);
 }
 
 pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
@@ -1255,6 +1264,7 @@ pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
         .await
         .retain(|_, owner| owner != frame_id);
     state.awaiting_confirm.lock().unwrap().remove(frame_id);
+    state.device_hub.resolve_needs_user(frame_id);
 }
 
 async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &AcpRuntime) {
@@ -1272,6 +1282,7 @@ async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &
         let _ = runtime.handle.respond_permission(request_id, None);
     }
     state.awaiting_confirm.lock().unwrap().remove(frame_id);
+    state.device_hub.resolve_needs_user(frame_id);
 }
 
 #[cfg(test)]

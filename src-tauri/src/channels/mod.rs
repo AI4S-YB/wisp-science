@@ -888,6 +888,7 @@ pub struct ChannelsStatus {
     pub weixin_bound: bool,
     pub weixin_state: String,
     pub weixin_detail: String,
+    pub device: crate::device_bridge::DeviceBridgeSettingsStatus,
 }
 
 #[tauri::command]
@@ -911,6 +912,7 @@ pub(crate) async fn channels_status(
         weixin_bound: load_weixin_binding(&state.store).await.is_some(),
         weixin_state: weixin.state,
         weixin_detail: weixin.detail,
+        device: crate::device_bridge::settings_status(&state).await,
     })
 }
 

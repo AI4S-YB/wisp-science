@@ -42,6 +42,7 @@ pulldown-cmark = { version = "0.12", default-features = false }
 same-file = { workspace = true }
 portable-pty = { workspace = true }
 async-trait = { workspace = true }
+axum = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # TIFF -> PNG transcode for OOXML preview media (browsers cannot decode TIFF).
 image = { version = "0.25", default-features = false, features = ["tiff", "png"] }

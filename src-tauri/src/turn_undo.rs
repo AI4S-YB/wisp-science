@@ -446,8 +446,8 @@ pub(super) async fn undo_turn(
         runtime.set_last_seq(target.keep_seq);
     }
     for change in applied {
-        let _ = app.emit(
-            "agent",
+        crate::emit_agent_event(
+            &app,
             AgentEvent::FileChanged {
                 frame_id: frame_id.clone(),
                 path: change.path,

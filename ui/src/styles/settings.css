@@ -769,8 +769,8 @@ body:has(.settings-page) .projects-screen { display: none; }
   line-height: 1.45;
 }
 
-/* Remote Access (IM bots) — list rows reuse the shared settings-list styles;
-   only the per-bot subpage bind row + QR layout live here. */
+/* Remote Access — list rows reuse the shared settings-list styles; per-access
+   setup surfaces (IM QR flows and StickS3 transport) live here. */
 .channels-command-list { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; vertical-align: middle; }
 .channels-command-list code {
   padding: 1px 7px;
@@ -840,9 +840,46 @@ body:has(.settings-page) .projects-screen { display: none; }
 }
 .channel-divider > span { flex: 0 0 auto; }
 .settings-footer-note { margin-right: auto; align-self: center; color: var(--text-faint); font-size: 12px; }
+.device-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.device-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+.device-mode-option.selected { border-color: var(--clay); }
+.device-mode-option.disabled { opacity: .58; }
+.device-mode-option input { margin-top: 2px; }
+.device-mode-option span { display: grid; gap: 4px; }
+.device-mode-option strong { color: var(--text); font-size: 12.5px; }
+.device-mode-option small { color: var(--text-faint); font-size: 11.5px; line-height: 1.4; }
+.device-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.device-token-row > div:first-child { min-width: 0; }
+.device-token-row strong { color: var(--text); font-size: 13px; }
+.device-token-row p { margin: 4px 0 0; color: var(--text-faint); font-size: 12px; }
+.device-token-row .row { flex: 0 0 auto; margin: 0; }
+.device-token-row .danger { color: var(--err); }
+.device-security-note { padding: 10px 12px; border-left: 3px solid var(--warn); background: var(--bg-sunken); }
+.settings-field-error { margin: 0; color: var(--err); font-size: 12px; line-height: 1.45; }
 @media (max-width: 520px) {
   .channel-bind-row { align-items: flex-start; flex-direction: column; gap: 12px; }
   .channels-qr { align-items: flex-start; flex-direction: column; }
+  .device-mode-grid { grid-template-columns: 1fr; }
+  .device-token-row { align-items: flex-start; flex-direction: column; }
 }
 .settings-list {
   display: flex;
