@@ -829,15 +829,19 @@ test("post-start send failures keep the persisted user row and hide the phase pr
   await expect(composer(page)).toHaveValue("");
 });
 
-test("automatic reviewer separates the correction and resolves its finding", async ({ page }) => {
+test("automatic reviewer resolves its finding and jumps past UI-only rows (#550)", async ({ page }) => {
   await enterApp(page);
+  await composer(page).fill("REVIEWBASE");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".msg.assistant")).toContainText("Earlier answer.");
+
   await composer(page).fill("AUTOREVIEW inspect the result");
   await page.getByRole("button", { name: "Send" }).click();
 
   const assistants = page.locator(".msg.assistant");
-  await expect(assistants).toHaveCount(2);
-  await expect(assistants.nth(0)).toContainText("5 significant genes");
-  await expect(assistants.nth(1)).toContainText("Correction: the analysis found 3 significant genes");
+  await expect(assistants).toHaveCount(3);
+  await expect(assistants.nth(1)).toContainText("5 significant genes");
+  await expect(assistants.nth(2)).toContainText("Correction: the analysis found 3 significant genes");
 
   const handoffs = page.locator(".review-transition");
   await expect(handoffs).toHaveCount(2);
@@ -853,7 +857,20 @@ test("automatic reviewer separates the correction and resolves its finding", asy
   await expect(review).toContainText("resolved");
   await expect(review).toContainText("All findings fixed and independently rechecked.");
   await expect(review.locator(".review-finding")).toHaveCount(1);
+  const scroller = page.locator("#chat-scroller");
+  await scroller.evaluate((element) => {
+    element.style.height = "180px";
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(assistants.nth(1)).not.toBeInViewport();
   await review.getByRole("button", { name: "Go to transcript" }).click();
+  await expect.poll(async () => {
+    const [target, viewport] = await Promise.all([
+      assistants.nth(1).boundingBox(),
+      scroller.boundingBox(),
+    ]);
+    return target && viewport ? Math.abs(target.y - viewport.y) : Number.POSITIVE_INFINITY;
+  }).toBeLessThan(4);
 });
 
 test("automatic reviewer visibly returns a clean response without correction", async ({ page }) => {
