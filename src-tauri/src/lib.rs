@@ -19,6 +19,7 @@ use wisp_store::{LibraryStore, Store};
 
 mod acp;
 mod app_commands;
+mod app_updates;
 mod approval_commands;
 mod artifact_commands;
 mod browser_bridge;
@@ -5785,47 +5786,6 @@ async fn build_project_info(state: &AppState, label: &str) -> ProjectInfo {
     }
 }
 
-#[derive(Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    html_url: String,
-    #[serde(default)]
-    body: String,
-}
-
-#[derive(Serialize)]
-struct UpdateCheck {
-    current_version: String,
-    latest_version: String,
-    update_available: bool,
-    release_url: String,
-    /// Release notes / changelog markdown from the GitHub release body.
-    notes: String,
-}
-
-fn update_check_from_release(
-    current_version: &str,
-    release: GithubRelease,
-) -> Result<UpdateCheck, String> {
-    let current = semver::Version::parse(current_version)
-        .map_err(|error| format!("Invalid current version {current_version}: {error}"))?;
-    let latest_text = release.tag_name.trim_start_matches(['v', 'V']);
-    let latest = semver::Version::parse(latest_text).map_err(|error| {
-        format!(
-            "Invalid GitHub release version {}: {error}",
-            release.tag_name
-        )
-    })?;
-
-    Ok(UpdateCheck {
-        current_version: current.to_string(),
-        latest_version: latest.to_string(),
-        update_available: latest > current,
-        release_url: release.html_url,
-        notes: release.body,
-    })
-}
-
 /// Tell the webview whether we're in dev (keep native context menu / DevTools).
 fn set_dev_flag(app: &tauri::AppHandle) {
     let dev = cfg!(debug_assertions);
@@ -5955,6 +5915,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::Focused(focused) => {
                 record_window_focus(window.label(), *focused);
@@ -6125,6 +6086,7 @@ pub fn run() {
                     .is_some_and(|value| value == "true")
             });
             app.manage(state);
+            app.manage(app_updates::PendingAppUpdate::default());
             app.manage(terminal_sessions::TerminalManager::new());
             app.manage(channels::ChannelManager::new());
             delegation_completion::start_dispatcher(app.handle());
@@ -6401,7 +6363,9 @@ pub fn run() {
             app_commands::get_onboarding_state,
             app_commands::dismiss_onboarding,
             app_commands::get_bootstrap_status,
-            app_commands::check_for_updates,
+            app_updates::check_for_updates,
+            app_updates::download_update,
+            app_updates::install_update,
             app_commands::open_external_url,
             app_commands::reveal_in_file_manager,
             connector_commands::list_mcp_connections,

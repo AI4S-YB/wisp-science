@@ -112,6 +112,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: src-tauri
           tauriScript: cargo tauri
@@ -120,9 +122,9 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
-          uploadUpdaterJson: false
-          uploadUpdaterSignatures: false
-          args: --target ${{ matrix.target }} --bundles app,dmg
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          args: --config tauri.updater.conf.json --target ${{ matrix.target }} --bundles app,dmg
 
       - name: Clean up keychain
         if: always()
@@ -130,3 +132,27 @@ jobs:
           if [ -n "${CODESIGN_KEYCHAIN:-}" ] && [ -f "${CODESIGN_KEYCHAIN}" ]; then
             security delete-keychain "${CODESIGN_KEYCHAIN}" || true
           fi
+
+  verify-updater-assets:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Verify updater manifest and both macOS architectures
+        run: |
+          set -euo pipefail
+          manifest_dir="${RUNNER_TEMP}/wisp-updater-manifest"
+          mkdir -p "${manifest_dir}"
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern latest.json \
+            --dir "${manifest_dir}"
+          jq -e '
+            (.version | type == "string") and
+            (.platforms["darwin-aarch64"].url | endswith(".app.tar.gz")) and
+            (.platforms["darwin-aarch64"].signature | length > 0) and
+            (.platforms["darwin-x86_64"].url | endswith(".app.tar.gz")) and
+            (.platforms["darwin-x86_64"].signature | length > 0)
+          ' "${manifest_dir}/latest.json"

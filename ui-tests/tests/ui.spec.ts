@@ -193,6 +193,33 @@ async function resolveMockUpdateCheck(page: Page) {
   });
 }
 
+async function setMockUpdateCheckError(page: Page, error: string) {
+  await page.evaluate((message) => {
+    (window as any).__setMockUpdateCheckError(message);
+  }, error);
+}
+
+async function setMockUpdateDownload(
+  page: Page,
+  value: { pending?: boolean; error?: string | null },
+) {
+  await page.evaluate((options) => {
+    (window as any).__setMockUpdateDownload(options);
+  }, value);
+}
+
+async function resolveMockUpdateDownload(page: Page) {
+  await page.evaluate(() => {
+    (window as any).__resolveMockUpdateDownload();
+  });
+}
+
+async function setMockInstallUpdateError(page: Page, error: string) {
+  await page.evaluate((message) => {
+    (window as any).__setMockInstallUpdateError(message);
+  }, error);
+}
+
 test.beforeEach(async ({ page }) => {
   // Install the Tauri bridge mock before the page's wasm runs.
   await page.addInitScript(tauriMock, officeFixtures);
@@ -4071,6 +4098,127 @@ test("check for updates shows an available-update modal before opening releases"
   await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({
     url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v1.2.3",
   });
+});
+
+test("macOS update download is verified before a separate install confirmation", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await setMockUpdateCheck(page, {
+    current_version: "0.27.0",
+    latest_version: "0.28.0",
+    update_available: true,
+    release_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.28.0",
+    notes: "Signed macOS update",
+    install_supported: true,
+  });
+  await setMockUpdateDownload(page, { pending: true });
+
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  const modal = page.getByTestId("update-check-modal");
+  await expect(modal.getByRole("button", { name: "Download update" })).toBeVisible();
+  await expect(await lastInvokeArgs(page, "install_update")).toBeNull();
+
+  await modal.getByRole("button", { name: "Download update" }).click();
+  await expect(modal).toContainText("Downloading Wisp 0.28.0");
+  await expect(modal).toContainText("25 B / 100 B");
+
+  // An in-flight update owns the top of the Escape stack and keeps Settings open.
+  await page.keyboard.press("Escape");
+  await expect(modal).toBeVisible();
+  await expect(page.locator(".settings-page")).toBeVisible();
+
+  await resolveMockUpdateDownload(page);
+  await expect(modal).toContainText("Ready to install");
+  await expect(modal).toContainText("signature verified");
+  await expect(await lastInvokeArgs(page, "install_update")).toBeNull();
+
+  await modal.getByRole("button", { name: "Install and restart" }).click();
+  await expect(modal).toContainText("Installing Wisp 0.28.0");
+  await expect.poll(() => page.evaluate(() => (window as any).__mockUpdateInstalled)).toBe(true);
+});
+
+test("update signature failure keeps the current app and offers Releases", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  const releaseUrl =
+    "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.28.0";
+  await setMockUpdateCheck(page, {
+    latest_version: "0.28.0",
+    update_available: true,
+    release_url: releaseUrl,
+    install_supported: true,
+  });
+  await setMockUpdateDownload(page, {
+    error: "Update download or signature verification failed: signature verification failed",
+  });
+
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  const modal = page.getByTestId("update-check-modal");
+  await modal.getByRole("button", { name: "Download update" }).click();
+  await expect(modal).toContainText("signature verification failed");
+  expect(await page.evaluate(() => (window as any).__mockUpdateInstalled)).toBe(false);
+
+  await modal.getByTestId("update-check-open-releases").click();
+  await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({
+    url: releaseUrl,
+  });
+});
+
+test("update check failure offers the Releases fallback", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await setMockUpdateCheckError(
+    page,
+    "Failed to check for a signed update: no matching macOS architecture",
+  );
+
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  const modal = page.getByTestId("update-check-modal");
+  await expect(modal).toContainText("no matching macOS architecture");
+  await expect(modal.getByTestId("update-check-open-releases")).toBeVisible();
+});
+
+test("install is blocked while a task is active", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await setMockUpdateCheck(page, {
+    latest_version: "0.28.0",
+    update_available: true,
+    release_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.28.0",
+    install_supported: true,
+  });
+
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  const modal = page.getByTestId("update-check-modal");
+  await modal.getByRole("button", { name: "Download update" }).click();
+  await expect(modal).toContainText("Ready to install");
+  await setMockInstallUpdateError(
+    page,
+    "Wait for every task and run to finish before installing the update.",
+  );
+
+  await modal.getByRole("button", { name: "Install and restart" }).click();
+  await expect(modal).toContainText(
+    "Wait for every task and run to finish before installing the update.",
+  );
+  expect(await page.evaluate(() => (window as any).__mockUpdateInstalled)).toBe(false);
+});
+
+test("Escape closes only the available-update modal above Settings", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await setMockUpdateCheck(page, {
+    latest_version: "0.28.0",
+    update_available: true,
+    install_supported: true,
+  });
+
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  await expect(page.getByTestId("update-check-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByTestId("update-check-modal")).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
 });
 
 test("stale update card refreshes to the latest release before opening it (#521)", async ({ page }) => {
