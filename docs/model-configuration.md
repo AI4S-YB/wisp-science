@@ -55,9 +55,11 @@ and a non-visual chat model. Configure a chat/Responses profile with **Supports
 image input** and **Use for image analysis** for that role; it may use the same
 provider credentials, but it remains a separate API capability.
 
-The **Valid** action checks `gpt-image-2` access through OpenAI's model metadata
-endpoint. It does not send the image-only model to Responses/Chat Completions
-and does not generate a billable validation image.
+The **Validate** action checks `gpt-image-2` access through OpenAI's model
+metadata endpoint. If a compatible gateway does not implement the single-model
+route and returns `404` or `405`, Wisp checks its model-list endpoint instead.
+It does not send the image-only model to Responses/Chat Completions and does not
+generate a billable validation image.
 
 ## API providers
 
