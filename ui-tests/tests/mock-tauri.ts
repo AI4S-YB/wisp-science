@@ -1781,7 +1781,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "list_plugins":
             return plugins;
           case "pick_plugin_source":
-            return null;
+            return query.get("mockPluginImport") === "1"
+              ? "/downloads/motif-update.zip"
+              : null;
           case "install_plugin":
           case "install_plugin_url":
             return plugins[0] ?? null;

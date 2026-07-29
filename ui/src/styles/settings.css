@@ -306,6 +306,9 @@ body:has(.settings-page) .projects-screen { display: none; }
 .plugin-install-modes button { padding: 7px 13px; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12.5px; cursor: pointer; }
 .plugin-install-modes button.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 .plugin-install-fields { display: grid; gap: 12px; }
+.plugin-local-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.plugin-local-source button { padding: 9px 13px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.plugin-local-source button:hover { border-color: var(--text-faint); }
 .plugin-install-fields > button { justify-self: end; padding: 9px 15px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--clay); color: var(--on-clay); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
 .plugin-install-fields > button:hover:not(:disabled) { background: var(--clay-strong); }
 .plugin-install-fields > button:disabled { opacity: .48; cursor: not-allowed; }

@@ -2,7 +2,8 @@ use super::{PluginInstallation, ProjectPlugin, Store};
 use anyhow::Result;
 
 impl Store {
-    pub async fn upsert_plugin_installation(&self, plugin: &PluginInstallation) -> Result<()> {
+    pub async fn replace_plugin_installation(&self, plugin: &PluginInstallation) -> Result<()> {
+        let mut tx = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO plugin_installations(\
                 plugin_id,version,display_name,description,author,license,source_uri,\
@@ -28,8 +29,20 @@ impl Store {
         .bind(&plugin.trust_state)
         .bind(plugin.installed_at)
         .bind(plugin.updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        sqlx::query("UPDATE project_plugins SET version=?,updated_at=? WHERE plugin_id=?")
+            .bind(&plugin.version)
+            .bind(plugin.updated_at)
+            .bind(&plugin.plugin_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM plugin_installations WHERE plugin_id=? AND version<>?")
+            .bind(&plugin.plugin_id)
+            .bind(&plugin.version)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -292,7 +305,7 @@ mod tests {
             .await
             .unwrap();
         let plugin = fixture("/plugins/motif/0.2.1");
-        store.upsert_plugin_installation(&plugin).await.unwrap();
+        store.replace_plugin_installation(&plugin).await.unwrap();
         store
             .set_project_plugin(
                 "project",
@@ -317,8 +330,37 @@ mod tests {
             .unwrap();
         assert_eq!(enabled, vec![plugin.clone()]);
 
+        let mut replacement = fixture("/plugins/motif/0.3.0");
+        replacement.version = "0.3.0".into();
+        replacement.description = "Updated workbench".into();
+        store
+            .replace_plugin_installation(&replacement)
+            .await
+            .unwrap();
+        let bindings = store.list_project_plugins("project").await.unwrap();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].version, replacement.version);
+        assert!(bindings[0].enabled);
+        assert_eq!(bindings[0].grants_json, r#"{"tools":"ask"}"#);
         assert!(store
-            .set_project_plugin_enabled("project", &plugin.plugin_id, false)
+            .get_plugin_installation(&plugin.plugin_id, &plugin.version)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store.list_plugin_installations().await.unwrap(),
+            vec![replacement.clone()]
+        );
+        assert_eq!(
+            store
+                .list_enabled_plugin_installations("project")
+                .await
+                .unwrap(),
+            vec![replacement.clone()]
+        );
+
+        assert!(store
+            .set_project_plugin_enabled("project", &replacement.plugin_id, false)
             .await
             .unwrap());
         assert!(store
@@ -328,7 +370,7 @@ mod tests {
             .is_empty());
 
         store
-            .delete_plugin_installation(&plugin.plugin_id, &plugin.version)
+            .delete_plugin_installation(&replacement.plugin_id, &replacement.version)
             .await
             .unwrap();
         assert!(store
