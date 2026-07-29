@@ -3983,6 +3983,19 @@ test("editing API URL keeps provider state and display aligned", async ({ page }
   await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
+test("model API URL explains that endpoint paths are added automatically", async ({ page }) => {
+  await enterApp(page);
+  await openModelsSettings(page);
+
+  await expect(page.getByTestId("model-api-url-hint")).toHaveText(
+    "Enter the provider's API base URL. You do not need to append /chat/completions, /responses, or /v1/messages; Wisp adds the matching request path automatically.",
+  );
+  await expect(page.getByLabel("API URL")).toHaveAttribute(
+    "aria-describedby",
+    "model-api-url-hint",
+  );
+});
+
 test("settings can validate current API config", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);

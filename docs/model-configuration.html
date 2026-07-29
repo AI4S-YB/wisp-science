@@ -116,7 +116,7 @@
               <tr>
                 <td>API URL / API key</td>
                 <td>API provider</td>
-                <td>远程 API 的 base URL 和密钥。桌面版密钥不写入 SQLite。</td>
+                <td>远程 API 的 base URL 和密钥。无需追加 <code>/chat/completions</code>、<code>/responses</code> 或 <code>/v1/messages</code>，Wisp 会根据 provider 自动补全请求路径。桌面版密钥不写入 SQLite。</td>
               </tr>
             </tbody>
           </table>

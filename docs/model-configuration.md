@@ -67,6 +67,10 @@ and does not generate a billable validation image.
 | OpenAI (Responses API) | OpenAI reasoning/tool-call models through `/v1/responses` | API URL, Model ID, API key |
 | Anthropic | Claude API through `/v1/messages` | API URL, Model ID, API key |
 
+Enter the provider's API base URL. Do not append `/chat/completions`,
+`/responses`, or `/v1/messages`; Wisp adds the matching request path for the
+selected provider.
+
 OpenAI-compatible reasoning streams are normalized into one reasoning channel.
 Empty `content` placeholders sent alongside Alibaba/DashScope
 `reasoning_content` chunks are ignored, so a continuous thought process remains

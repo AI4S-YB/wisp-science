@@ -1524,8 +1524,12 @@ pub(super) fn SettingsView(
                                             </select>
                                         </label>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_url")}
-                                            <input prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
+                                            <input aria-describedby="model-api-url-hint"
+                                                prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
                                                 on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
+                                        <span id="model-api-url-hint" class="hint span-2" data-testid="model-api-url-hint">
+                                            {move || t(locale.get(), "settings.tip")}
+                                        </span>
                                         <label>{move || t(locale.get(), "settings.label")}
                                             <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
                                                 placeholder=move || t(locale.get(), "settings.label_ph")
@@ -1651,7 +1655,6 @@ pub(super) fn SettingsView(
                                                 autocomplete="new-password"
                                                 on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
                                     </div>
-                                    <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
                                     {move || model_form_msg.get().map(|(ok, text)| view! {
                                         <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                                     })}
