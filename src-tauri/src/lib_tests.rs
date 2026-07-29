@@ -12,7 +12,7 @@ use super::{
     AgentEvent, ComposerReferenceArg, McpConnection, McpHttpAuth, McpTransport, QueuedItem,
     SessionRuntime, MAX_PENDING_UI_EVENT_BYTES,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
 
@@ -1294,6 +1294,54 @@ fn pending_notify_target_fires_once_per_window() {
     assert!(super::claim_notify_activation("proj-434", true));
     assert!(!super::claim_notify_activation("proj-434", true));
     assert!(super::claim_notify_activation("unresolved-project", false));
+}
+
+#[test]
+fn session_notification_stays_in_its_origin_window_with_same_project_peers() {
+    let active_projects = HashMap::from([
+        ("main".to_string(), "workspace".to_string()),
+        ("proj-workspace".to_string(), "workspace".to_string()),
+    ]);
+    let active_frames = HashMap::from([
+        ("main".to_string(), "session-a".to_string()),
+        ("proj-workspace".to_string(), "session-b".to_string()),
+    ]);
+
+    assert_eq!(
+        super::select_notification_window(
+            Some("proj-workspace"),
+            "session-b",
+            Some("workspace"),
+            &active_projects,
+            &active_frames,
+        )
+        .as_deref(),
+        Some("proj-workspace"),
+    );
+}
+
+#[test]
+fn session_notification_falls_back_to_the_window_viewing_the_session() {
+    let active_projects = HashMap::from([
+        ("main".to_string(), "workspace".to_string()),
+        ("proj-workspace".to_string(), "workspace".to_string()),
+    ]);
+    let active_frames = HashMap::from([
+        ("main".to_string(), "session-a".to_string()),
+        ("proj-workspace".to_string(), "session-b".to_string()),
+    ]);
+
+    assert_eq!(
+        super::select_notification_window(
+            Some("closed-window"),
+            "session-b",
+            Some("workspace"),
+            &active_projects,
+            &active_frames,
+        )
+        .as_deref(),
+        Some("proj-workspace"),
+    );
 }
 
 // Queue (#433): the enqueue/driver protocol must (a) claim exactly one driver,

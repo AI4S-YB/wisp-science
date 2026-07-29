@@ -111,21 +111,21 @@ pub(super) async fn notify_user(
         return Ok(());
     }
     // The done/attention agent events are broadcast to every window, so every
-    // window calls this command for every session. Only the window whose active
-    // project owns the session may notify and arm click-to-open — otherwise
-    // each unrelated window queues this session and navigates to it on its next
-    // focus, hijacking windows that were viewing other sessions, and N windows
-    // show N duplicate notifications.
+    // window calls this command for every session. Select one exact owner,
+    // rather than only checking the project: two windows may legitimately show
+    // different conversations from the same project.
     let project_id = state
         .store
         .frame_project_id(&session_id)
         .await
         .ok()
         .flatten();
-    if let Some(project_id) = &project_id {
-        if state.active(window.label()).id != *project_id {
-            return Ok(());
-        }
+    if state
+        .preferred_notification_window(&session_id, project_id.as_deref())
+        .as_deref()
+        != Some(window.label())
+    {
+        return Ok(());
     }
     // Arm click-to-open before showing: on this window's next focus it jumps to
     // the session. Skipped if the session's project can't be resolved (the

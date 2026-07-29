@@ -346,6 +346,7 @@ pub(super) async fn delete_session(
     };
     acp::close_frame(&state, &id).await;
     state.sessions.lock().await.remove(&id);
+    state.remove_notification_window(&id);
     if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
         state.set_active_frame(window.label(), None);
     }
