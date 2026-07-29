@@ -57,6 +57,10 @@ impl GenerateImageTool {
         )
     }
 
+    fn models_endpoint(&self) -> String {
+        format!("{}/models", self.api_root().trim_end_matches('/'))
+    }
+
     fn client(&self) -> Result<reqwest::Client, String> {
         let mut builder = reqwest::Client::builder()
             .user_agent("wisp-science")
@@ -172,53 +176,85 @@ impl GenerateImageTool {
         if self.api_key.trim().is_empty() {
             return Err("the assigned image-generation model has no API key".into());
         }
-        let mut response = self
-            .client()?
-            .get(self.model_endpoint())
-            .bearer_auth(self.api_key.trim())
-            .send()
-            .await
-            .map_err(|error| format!("image-generation validation failed: {error}"))?;
-        let status = response.status();
-        let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| format!("image-generation validation response failed: {error}"))?
-        {
-            if body.len().saturating_add(chunk.len()) > MAX_ERROR_BYTES {
-                return Err("image-generation validation response is too large".into());
+        let client = self.client()?;
+        for list_fallback in [false, true] {
+            let endpoint = if list_fallback {
+                self.models_endpoint()
+            } else {
+                self.model_endpoint()
+            };
+            let mut response = client
+                .get(endpoint)
+                .bearer_auth(self.api_key.trim())
+                .send()
+                .await
+                .map_err(|error| format!("image-generation validation failed: {error}"))?;
+            let status = response.status();
+            let mut body = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| format!("image-generation validation response failed: {error}"))?
+            {
+                if body.len().saturating_add(chunk.len()) > MAX_ERROR_BYTES {
+                    return Err("image-generation validation response is too large".into());
+                }
+                body.extend_from_slice(&chunk);
             }
-            body.extend_from_slice(&chunk);
+            if !status.is_success() {
+                if !list_fallback
+                    && matches!(
+                        status,
+                        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+                    )
+                {
+                    continue;
+                }
+                let message = serde_json::from_slice::<Value>(&body)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .pointer("/error/message")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_else(|| {
+                        String::from_utf8_lossy(&body[..body.len().min(2_048)]).into()
+                    });
+                return Err(format!(
+                    "OpenAI model API returned {}: {message}",
+                    status.as_u16()
+                ));
+            }
+            let value: Value = serde_json::from_slice(&body)
+                .map_err(|error| format!("invalid OpenAI model response: {error}"))?;
+            if list_fallback {
+                let found = value
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .is_some_and(|models| {
+                        models.iter().any(|model| {
+                            model
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .is_some_and(|id| id.eq_ignore_ascii_case("gpt-image-2"))
+                        })
+                    });
+                if !found {
+                    return Err("OpenAI model list does not include gpt-image-2".into());
+                }
+            } else {
+                let id = value.get("id").and_then(Value::as_str).unwrap_or_default();
+                if !id.eq_ignore_ascii_case("gpt-image-2") {
+                    return Err(format!(
+                        "OpenAI returned model '{}' while validating gpt-image-2",
+                        if id.is_empty() { "(missing)" } else { id }
+                    ));
+                }
+            }
+            return Ok(());
         }
-        if !status.is_success() {
-            let message = serde_json::from_slice::<Value>(&body)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .pointer("/error/message")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or_else(|| String::from_utf8_lossy(&body[..body.len().min(2_048)]).into());
-            return Err(format!(
-                "OpenAI model API returned {}: {message}",
-                status.as_u16()
-            ));
-        }
-        let id = serde_json::from_slice::<Value>(&body)
-            .map_err(|error| format!("invalid OpenAI model response: {error}"))?
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if !id.eq_ignore_ascii_case("gpt-image-2") {
-            return Err(format!(
-                "OpenAI returned model '{}' while validating gpt-image-2",
-                if id.is_empty() { "(missing)" } else { &id }
-            ));
-        }
-        Ok(())
+        unreachable!("model validation always returns from one of its two probes")
     }
 }
 
@@ -420,6 +456,38 @@ mod tests {
         (format!("http://{address}/v1"), handle)
     }
 
+    async fn serve_model_fallback(
+        response_body: String,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let mut requests = Vec::with_capacity(2);
+            for (status, body) in [(404, "404 page not found".into()), (200, response_body)] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0u8; 4096];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                requests.push(String::from_utf8(request).unwrap());
+            }
+            requests
+        });
+        (format!("http://{address}/v1"), handle)
+    }
+
     #[tokio::test]
     async fn generates_png_with_the_openai_image_endpoint() {
         let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -487,6 +555,34 @@ mod tests {
             .contains("authorization: bearer sk-test"));
         assert!(!request.contains("/responses"));
         assert!(!request.contains("/chat/completions"));
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_the_model_list_when_model_lookup_is_missing() {
+        let response = json!({
+            "object": "list",
+            "data": [{"id": "gpt-image-2", "object": "model"}]
+        })
+        .to_string();
+        let (api_url, requests) = serve_model_fallback(response).await;
+
+        GenerateImageTool::new(
+            api_url,
+            "sk-test".into(),
+            "gpt-image-2".into(),
+            Some("none".into()),
+        )
+        .validate_model_access()
+        .await
+        .unwrap();
+
+        let requests = requests.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /v1/models/gpt-image-2 HTTP/1.1"));
+        assert!(requests[1].starts_with("GET /v1/models HTTP/1.1"));
+        assert!(requests.iter().all(|request| request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer sk-test")));
     }
 
     #[tokio::test]
