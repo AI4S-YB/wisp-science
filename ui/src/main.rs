@@ -11223,6 +11223,7 @@ fn App() -> impl IntoView {
                 .filter(|project| project.id != active_project_id)
                 .collect::<Vec<_>>();
             let has_target = !targets.is_empty() && !transfer.target_project_id.is_empty();
+            let target_project_id = transfer.target_project_id.clone();
             let title_key = if transfer.mode == SessionTransferMode::Copy {
                 "session.copy_title"
             } else {
@@ -11241,7 +11242,6 @@ fn App() -> impl IntoView {
                     <label>
                         {move || t(locale.get(), "session.target_project")}
                         <select
-                            prop:value=transfer.target_project_id
                             disabled=move || session_transfer_busy.get()
                             on:change=move |ev| {
                                 let value = event_target_value(&ev);
@@ -11251,8 +11251,11 @@ fn App() -> impl IntoView {
                                     }
                                 });
                             }>
-                            {targets.into_iter().map(|project| view! {
-                                <option value=project.id>{project.name}</option>
+                            {targets.into_iter().map(|project| {
+                                let selected = project.id == target_project_id;
+                                view! {
+                                    <option value=project.id prop:selected=selected>{project.name}</option>
+                                }
                             }).collect_view()}
                         </select>
                     </label>
