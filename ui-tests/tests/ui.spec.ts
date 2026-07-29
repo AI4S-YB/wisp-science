@@ -4427,7 +4427,7 @@ test("skill manager updates and deletes user-added skills", async ({ page }) => 
 });
 
 test("plugin settings diagnose, launch, install, and remove a feature plugin", async ({ page }) => {
-  await enterApp(page);
+  await enterApp(page, "/?mockPluginImport=1");
   await openSettingsSection(page, "Plugins");
 
   const row = page.locator('[data-plugin-id="motif-for-claude-science"]');
@@ -4474,10 +4474,34 @@ test("plugin settings diagnose, launch, install, and remove a feature plugin", a
   const enabledToggle = enabledRow.locator('input[type="checkbox"]');
   await expect(enabledToggle).toBeChecked();
 
-  // Installation is a dedicated plugin workflow. Remote releases require a
-  // full checksum before the action becomes available.
+  // The install dialog is above Settings in the Escape stack.
   await page.getByRole("button", { name: "Install plugin", exact: true }).click();
-  const section = page.getByTestId("plugin-settings");
+  let section = page.getByTestId("plugin-settings");
+  await page.keyboard.press("Escape");
+  await expect(section).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
+
+  // A local install first records the selected ZIP, then requires a separate
+  // install action.
+  await page.getByRole("button", { name: "Install plugin", exact: true }).click();
+  section = page.getByTestId("plugin-settings");
+  const localInstall = section.getByRole("button", { name: "Install plugin", exact: true });
+  await expect(localInstall).toBeDisabled();
+  await section.getByRole("button", { name: "Choose ZIP", exact: true }).click();
+  await expect(section.getByRole("textbox", { name: "Plugin ZIP" }))
+    .toHaveValue("/downloads/motif-update.zip");
+  await expect.poll(() => lastInvokeArgs(page, "install_plugin")).toBeNull();
+  await expect(localInstall).toBeEnabled();
+  await localInstall.click();
+  await expect.poll(() => lastInvokeArgs(page, "install_plugin")).toMatchObject({
+    srcPath: "/downloads/motif-update.zip",
+    expectedSha256: undefined,
+  });
+  await expect(section).toHaveCount(0);
+
+  // Remote releases still require a full checksum before install is enabled.
+  await page.getByRole("button", { name: "Install plugin", exact: true }).click();
+  section = page.getByTestId("plugin-settings");
   await section.getByRole("tab", { name: "Release URL" }).click();
   await section.locator('input[type="url"]').fill("https://example.test/motif.zip");
   await section.locator('input[placeholder*="64 hexadecimal"]').fill("b".repeat(64));

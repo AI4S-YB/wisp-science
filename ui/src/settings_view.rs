@@ -534,6 +534,7 @@ pub(super) fn SettingsView(
     let join_busy = create_rw_signal(false);
     let join_error = create_rw_signal(None::<String>);
     let plugin_checksum = create_rw_signal(String::new());
+    let plugin_source = create_rw_signal(String::new());
     let plugin_url = create_rw_signal(String::new());
     let plugin_install_mode = create_rw_signal("local".to_string());
     let plugin_search = create_rw_signal(String::new());
@@ -2578,6 +2579,24 @@ pub(super) fn SettingsView(
                                     {move || if plugin_install_mode.get() == "local" {
                                         view! {
                                             <div class="plugin-install-fields">
+                                                <div class="settings-field-wide">
+                                                    <span>{move || t(locale.get(), "plugins.zip_file")}</span>
+                                                    <div class="plugin-local-source">
+                                                        <input type="text" readonly
+                                                            aria-label=move || t(locale.get(), "plugins.zip_file")
+                                                            placeholder=move || t(locale.get(), "plugins.no_zip_selected")
+                                                            prop:value=move || plugin_source.get() />
+                                                        <button type="button" data-testid="choose-plugin-zip"
+                                                            on:click=move |_| spawn_local(async move {
+                                                                let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
+                                                                if let Some(path) = picked.as_string() {
+                                                                    plugin_source.set(path);
+                                                                }
+                                                            })>
+                                                            {move || t(locale.get(), "plugins.choose_zip")}
+                                                        </button>
+                                                    </div>
+                                                </div>
                                                 <label class="settings-field-wide">
                                                     <span>{move || t(locale.get(), "plugins.sha256_optional")}</span>
                                                     <input type="text" autocomplete="off" spellcheck="false"
@@ -2588,20 +2607,18 @@ pub(super) fn SettingsView(
                                                 <button type="button" class="primary" data-testid="install-plugin"
                                                     disabled=move || {
                                                         let checksum = plugin_checksum.get();
-                                                        !checksum.trim().is_empty() && !valid_sha256(&checksum)
+                                                        plugin_source.get().is_empty()
+                                                            || (!checksum.trim().is_empty() && !valid_sha256(&checksum))
                                                     }
                                                     on:click=move |_| {
-                                                    let expected = plugin_checksum.get().trim().to_string();
-                                                    spawn_local(async move {
-                                                        let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
-                                                        if let Some(path) = picked.as_string() {
-                                                            install_plugin_from.call((
-                                                                path,
-                                                                (!expected.is_empty()).then_some(expected),
-                                                            ));
-                                                        }
-                                                    });
-                                                }>{move || t(locale.get(), "plugins.choose_zip")}</button>
+                                                        let expected = plugin_checksum.get().trim().to_string();
+                                                        install_plugin_from.call((
+                                                            plugin_source.get(),
+                                                            (!expected.is_empty()).then_some(expected),
+                                                        ));
+                                                    }>
+                                                    {move || t(locale.get(), "plugins.install_action")}
+                                                </button>
                                             </div>
                                         }.into_view()
                                     } else {
@@ -2651,6 +2668,7 @@ pub(super) fn SettingsView(
                                 on:input=move |event| plugin_search.set(event_target_input(&event).value()) />
                             <button type="button" class="primary" on:click=move |_| {
                                 plugin_checksum.set(String::new());
+                                plugin_source.set(String::new());
                                 plugin_url.set(String::new());
                                 plugin_install_mode.set("local".into());
                                 plugin_install_open.set(true);

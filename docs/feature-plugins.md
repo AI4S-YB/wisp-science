@@ -27,9 +27,17 @@ without a command shell.
 Open **Settings → Plugins**. The install dialog keeps local ZIPs and HTTPS
 release assets as separate choices. For remote installs, the release SHA-256 is
 required before installation can start. A local ZIP may be installed without
-one, but is marked `unverified`. The dialog closes after a successful install
-and stays open with the entered values when installation fails. Removing an
-installed plugin always requires confirmation.
+one, but is marked `unverified`. For a local install, choose the ZIP first,
+review the selected path and optional checksum, then select **Install plugin**.
+Choosing a file does not start installation. The dialog closes after a
+successful install and stays open with the entered values when installation
+fails. Removing an installed plugin always requires confirmation.
+
+The manifest `id` is the plugin identity. Installing another valid package with
+the same ID replaces the existing files and installation record, including
+when the version changes. Existing per-project enabled state and permission
+grants follow the replacement version. Wisp validates and stages the new
+package before moving the previous files aside.
 
 Review the displayed MCP command and runtime status, then enable the plugin for
 the current project. **Enable & use** both enables a disabled plugin and starts

@@ -136,6 +136,14 @@ struct PreparedPlugin {
     staging_root: PathBuf,
 }
 
+#[derive(Debug)]
+struct PluginFileCommit {
+    plugin_root: PathBuf,
+    previous_root: Option<PathBuf>,
+    staging_root: PathBuf,
+    installation: wisp_store::PluginInstallation,
+}
+
 fn validate_plugin_id(value: &str) -> Result<(), String> {
     let valid = !value.is_empty()
         && value.len() <= 96
@@ -628,24 +636,9 @@ fn prepare_plugin(
 fn install_prepared(
     prepared: &PreparedPlugin,
     app_data: &Path,
-) -> Result<(PathBuf, wisp_store::PluginInstallation), String> {
-    let install_root = app_data
-        .join("plugins")
-        .join(&prepared.manifest.id)
-        .join(&prepared.manifest.version);
-    if install_root.exists() {
-        return Err(format!(
-            "plugin '{} {}' is already installed",
-            prepared.manifest.id, prepared.manifest.version
-        ));
-    }
-    let parent = install_root
-        .parent()
-        .ok_or_else(|| "plugin install directory has no parent".to_string())?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("create plugin install directory: {error}"))?;
-    std::fs::rename(&prepared.package_root, &install_root)
-        .map_err(|error| format!("commit plugin installation: {error}"))?;
+) -> Result<PluginFileCommit, String> {
+    let plugin_root = app_data.join("plugins").join(&prepared.manifest.id);
+    let install_root = plugin_root.join(&prepared.manifest.version);
     let now = chrono::Utc::now().timestamp();
     let installation = wisp_store::PluginInstallation {
         plugin_id: prepared.manifest.id.clone(),
@@ -663,7 +656,53 @@ fn install_prepared(
         installed_at: now,
         updated_at: now,
     };
-    Ok((install_root, installation))
+    let previous_root = if plugin_root.exists() {
+        let previous_root = prepared.staging_root.join("previous");
+        if let Err(error) = std::fs::rename(&plugin_root, &previous_root) {
+            let _ = std::fs::remove_dir_all(&prepared.staging_root);
+            return Err(format!("prepare plugin replacement: {error}"));
+        }
+        Some(previous_root)
+    } else {
+        None
+    };
+    let commit = (|| {
+        std::fs::create_dir_all(&plugin_root)
+            .map_err(|error| format!("create plugin install directory: {error}"))?;
+        std::fs::rename(&prepared.package_root, &install_root)
+            .map_err(|error| format!("commit plugin installation: {error}"))
+    })();
+    if let Err(error) = commit {
+        let rollback = restore_plugin_files(&plugin_root, previous_root.as_deref());
+        return Err(match rollback {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(&prepared.staging_root);
+                error
+            }
+            Err(rollback_error) => format!(
+                "{error}; restore previous plugin: {rollback_error}. Recovery files remain at '{}'",
+                prepared.staging_root.display()
+            ),
+        });
+    }
+    Ok(PluginFileCommit {
+        plugin_root,
+        previous_root,
+        staging_root: prepared.staging_root.clone(),
+        installation,
+    })
+}
+
+fn restore_plugin_files(plugin_root: &Path, previous_root: Option<&Path>) -> Result<(), String> {
+    if plugin_root.exists() {
+        std::fs::remove_dir_all(plugin_root)
+            .map_err(|error| format!("remove replacement files: {error}"))?;
+    }
+    if let Some(previous_root) = previous_root.filter(|path| path.exists()) {
+        std::fs::rename(previous_root, plugin_root)
+            .map_err(|error| format!("restore previous files: {error}"))?;
+    }
+    Ok(())
 }
 
 fn plugin_view(
@@ -914,21 +953,38 @@ async fn install_plugin_path(
     })
     .await
     .map_err(|error| format!("plugin installer task failed: {error}"))??;
+    clear_idle_agents(state).await;
     let app_data = state.app_data.clone();
     let prepared_for_commit = prepared;
-    let (install_root, installation, staging_root) = tokio::task::spawn_blocking(move || {
-        let (install_root, installation) = install_prepared(&prepared_for_commit, &app_data)?;
-        Ok::<_, String>((install_root, installation, prepared_for_commit.staging_root))
-    })
-    .await
-    .map_err(|error| format!("plugin commit task failed: {error}"))??;
-    if let Err(error) = state.store.upsert_plugin_installation(&installation).await {
-        let _ = tokio::fs::remove_dir_all(&install_root).await;
-        let _ = tokio::fs::remove_dir_all(&staging_root).await;
-        return Err(format!("save plugin installation: {error}"));
+    let commit =
+        tokio::task::spawn_blocking(move || install_prepared(&prepared_for_commit, &app_data))
+            .await
+            .map_err(|error| format!("plugin commit task failed: {error}"))??;
+    if let Err(error) = state
+        .store
+        .replace_plugin_installation(&commit.installation)
+        .await
+    {
+        let recovery_root = commit.staging_root.clone();
+        let rollback = tokio::task::spawn_blocking(move || {
+            let result = restore_plugin_files(&commit.plugin_root, commit.previous_root.as_deref());
+            if result.is_ok() {
+                let _ = std::fs::remove_dir_all(&commit.staging_root);
+            }
+            result
+        })
+        .await
+        .map_err(|join_error| format!("plugin rollback task failed: {join_error}"))?;
+        return Err(match rollback {
+            Ok(()) => format!("save plugin installation: {error}"),
+            Err(rollback_error) => format!(
+                "save plugin installation: {error}; {rollback_error}. Recovery files remain at '{}'",
+                recovery_root.display()
+            ),
+        });
     }
-    let _ = tokio::fs::remove_dir_all(&staging_root).await;
-    plugin_view(installation, false)
+    let _ = tokio::fs::remove_dir_all(&commit.staging_root).await;
+    plugin_view(commit.installation, false)
 }
 
 #[tauri::command]
@@ -1291,6 +1347,65 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn same_id_install_replaces_files_and_can_roll_back() {
+        let root =
+            std::env::temp_dir().join(format!("wisp-plugin-replace-{}", uuid::Uuid::new_v4()));
+        let app_data = root.join("app-data");
+        let first_source = root.join("first");
+        fixture(&first_source);
+        std::fs::write(first_source.join("server/server.mjs"), "// first").unwrap();
+        let first = prepare_plugin(
+            &first_source,
+            None,
+            &app_data,
+            first_source.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        let first_commit = install_prepared(&first, &app_data).unwrap();
+        let first_root = PathBuf::from(&first_commit.installation.install_root);
+        assert_eq!(
+            std::fs::read_to_string(first_root.join("server/server.mjs")).unwrap(),
+            "// first"
+        );
+        std::fs::remove_dir_all(&first_commit.staging_root).unwrap();
+
+        let second_source = root.join("second");
+        fixture(&second_source);
+        std::fs::write(
+            second_source.join(".claude-plugin/plugin.json"),
+            r#"{"name":"motif","displayName":"Motif","version":"0.3.0","description":"Workbench","author":{"name":"Test"},"license":"MIT"}"#,
+        )
+        .unwrap();
+        std::fs::write(second_source.join("server/server.mjs"), "// second").unwrap();
+        let second = prepare_plugin(
+            &second_source,
+            None,
+            &app_data,
+            second_source.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        let second_commit = install_prepared(&second, &app_data).unwrap();
+        let second_root = PathBuf::from(&second_commit.installation.install_root);
+        assert!(!first_root.exists());
+        assert_eq!(
+            std::fs::read_to_string(second_root.join("server/server.mjs")).unwrap(),
+            "// second"
+        );
+
+        restore_plugin_files(
+            &second_commit.plugin_root,
+            second_commit.previous_root.as_deref(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first_root.join("server/server.mjs")).unwrap(),
+            "// first"
+        );
+        assert!(!second_root.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// Opt-in real-package acceptance. Normal CI skips when the two variables
     /// are absent; release verification points them at Motif's built ZIP and
     /// published archive checksum.
@@ -1316,7 +1431,7 @@ mod tests {
         .unwrap();
         assert_eq!(prepared.manifest.id, "motif-for-claude-science");
         assert_eq!(prepared.trust_state, "checksum_verified");
-        let (_, installation) = install_prepared(&prepared, &app_data).unwrap();
+        let installation = install_prepared(&prepared, &app_data).unwrap().installation;
 
         let store = wisp_store::Store::open(&app_data.join("wisp.sqlite"))
             .await
@@ -1326,7 +1441,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .upsert_plugin_installation(&installation)
+            .replace_plugin_installation(&installation)
             .await
             .unwrap();
         store
