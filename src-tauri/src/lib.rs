@@ -1773,6 +1773,11 @@ struct AppState {
     /// window's uploads at the wrong frame (#194) — turns carry their own
     /// frame id explicitly (`TauriOutput.frame_id`).
     active_frame: std::sync::RwLock<HashMap<String, String>>,
+    /// Window that most recently submitted a user-routed turn for each session.
+    /// Agent events are process-wide, so every frontend window asks for the
+    /// same desktop notification. This origin lets the backend choose exactly
+    /// one window without conflating two conversations in the same project.
+    notification_window: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
     confirms: ConfirmMap,
     /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
@@ -1833,6 +1838,80 @@ impl AppState {
             }
         }
     }
+    fn set_notification_window(&self, frame_id: &str, label: &str) {
+        self.notification_window
+            .write()
+            .unwrap()
+            .insert(frame_id.to_string(), label.to_string());
+    }
+    fn remove_notification_window(&self, frame_id: &str) {
+        self.notification_window.write().unwrap().remove(frame_id);
+    }
+    fn preferred_notification_window(
+        &self,
+        frame_id: &str,
+        project_id: Option<&str>,
+    ) -> Option<String> {
+        let active = self.active.read().unwrap();
+        let active_projects = active
+            .iter()
+            .map(|(label, project)| (label.clone(), project.id.clone()))
+            .collect::<HashMap<_, _>>();
+        let active_frames = self.active_frame.read().unwrap();
+        let origin = self.notification_window.read().unwrap();
+        select_notification_window(
+            origin.get(frame_id).map(String::as_str),
+            frame_id,
+            project_id,
+            &active_projects,
+            &active_frames,
+        )
+    }
+}
+
+/// Pick one frontend window to own a session notification.
+///
+/// The originating window wins even if it has since navigated elsewhere. If it
+/// was closed, prefer a surviving window already showing the session, then one
+/// window from the owning project. Sorting makes all concurrent `notify_user`
+/// calls reach the same answer.
+fn select_notification_window(
+    origin: Option<&str>,
+    frame_id: &str,
+    project_id: Option<&str>,
+    active_projects: &HashMap<String, String>,
+    active_frames: &HashMap<String, String>,
+) -> Option<String> {
+    if let Some(origin) = origin.filter(|label| active_projects.contains_key(*label)) {
+        return Some(origin.to_string());
+    }
+
+    let mut viewing = active_frames
+        .iter()
+        .filter(|(label, viewed)| {
+            viewed.as_str() == frame_id && active_projects.contains_key(label.as_str())
+        })
+        .map(|(label, _)| label.clone())
+        .collect::<Vec<_>>();
+    viewing.sort();
+    if let Some(label) = viewing.into_iter().next() {
+        return Some(label);
+    }
+
+    let mut project_windows = active_projects
+        .iter()
+        .filter(|(label, active_project)| {
+            label.as_str() != "pet"
+                && project_id.is_some_and(|project_id| active_project.as_str() == project_id)
+        })
+        .map(|(label, _)| label.clone())
+        .collect::<Vec<_>>();
+    project_windows.sort_by_key(|label| (label != "main", label.clone()));
+    project_windows.into_iter().next().or_else(|| {
+        active_projects
+            .contains_key("main")
+            .then(|| "main".to_string())
+    })
 }
 
 #[tauri::command]
@@ -4025,6 +4104,10 @@ async fn send_message_inner(
     mut workflow_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
 ) -> Result<String, String> {
     let resume = resume.unwrap_or(false);
+    // Automatic delegation resume carries an owned workflow guard and uses the
+    // synthetic "main" route. It must preserve the window that launched the
+    // parent task; every direct/queued user turn may claim its actual window.
+    let user_routed_turn = !resume || workflow_guard.is_none();
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
@@ -4078,6 +4161,9 @@ async fn send_message_inner(
             }
             None => create_session_frame(&state.store, &ap.id).await?,
         };
+        if user_routed_turn {
+            state.set_notification_window(&frame_id, window_label);
+        }
         // Register cancellation before Reader fan-out so Stop can interrupt the
         // retrieval phase as well as the ACP turn that follows it.
         let runtime = {
@@ -4239,6 +4325,9 @@ async fn send_message_inner(
         }
         None => create_session_frame(&state.store, &ap.id).await?,
     };
+    if user_routed_turn {
+        state.set_notification_window(&frame_id, window_label);
+    }
     // Deliberately no set_active_frame here: see the `AppState::active_frame`
     // doc — a turn writing view state races the user's session/project switch.
 
@@ -6068,6 +6157,7 @@ pub fn run() {
                 completion_dispatches: tokio::sync::Mutex::new(HashSet::new()),
                 project_activity: StdMutex::new(HashMap::new()),
                 active_frame: std::sync::RwLock::new(HashMap::new()),
+                notification_window: std::sync::RwLock::new(HashMap::new()),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
                 awaiting_confirm: Arc::new(StdMutex::new(HashSet::new())),
                 approvals,
