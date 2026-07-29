@@ -441,29 +441,6 @@ pub(super) fn reveal_in_file_manager(
 }
 
 #[tauri::command]
-pub(super) async fn check_for_updates() -> Result<UpdateCheck, String> {
-    const LATEST_RELEASE_API: &str =
-        "https://api.github.com/repos/xuzhougeng/wisp-science/releases/latest";
-
-    let release = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|error| format!("Failed to create update client: {error}"))?
-        .get(LATEST_RELEASE_API)
-        .header(reqwest::header::USER_AGENT, "wisp-science-update-check")
-        .send()
-        .await
-        .map_err(|error| format!("Failed to check GitHub Releases: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("GitHub Releases returned an error: {error}"))?
-        .json::<GithubRelease>()
-        .await
-        .map_err(|error| format!("Invalid response from GitHub Releases: {error}"))?;
-
-    update_check_from_release(env!("CARGO_PKG_VERSION"), release)
-}
-
-#[tauri::command]
 pub(super) async fn dismiss_onboarding(state: State<'_, AppState>) -> Result<(), String> {
     state
         .store

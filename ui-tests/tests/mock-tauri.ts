@@ -102,8 +102,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     latest_version: "0.9.0",
     update_available: false,
     release_url: "https://github.com/xuzhougeng/wisp-science/releases",
+    notes: "",
+    install_supported: false,
+    downloaded: false,
+    downloading: false,
   };
   let mockUpdateCheckPending = false;
+  let mockUpdateCheckError: string | null = null;
+  let mockUpdateDownloadPending = false;
+  let mockUpdateDownloadError: string | null = null;
+  let resolveMockUpdateDownload: (() => void) | null = null;
+  let mockInstallUpdateError: string | null = null;
+  (window as any).__mockUpdateInstalled = false;
   let resolveMockOAuth: (() => void) | null = null;
   let mockPetEnabled = new URLSearchParams(window.location.search).get("mockPet") === "1";
   let mockPetDirectory = mockPetEnabled ? "C:\\Users\\tester\\.codex\\pets\\wispy" : "";
@@ -131,6 +141,22 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   };
   (window as any).__setMockUpdateCheckPending = (pending: boolean) => {
     mockUpdateCheckPending = Boolean(pending);
+  };
+  (window as any).__setMockUpdateCheckError = (error: string | null) => {
+    mockUpdateCheckError = error == null ? null : String(error);
+  };
+  (window as any).__setMockUpdateDownload = (
+    value: { pending?: boolean; error?: string | null },
+  ) => {
+    mockUpdateDownloadPending = Boolean(value?.pending);
+    mockUpdateDownloadError = value?.error == null ? null : String(value.error);
+  };
+  (window as any).__resolveMockUpdateDownload = () => {
+    resolveMockUpdateDownload?.();
+    resolveMockUpdateDownload = null;
+  };
+  (window as any).__setMockInstallUpdateError = (error: string | null) => {
+    mockInstallUpdateError = error == null ? null : String(error);
   };
   (window as any).__resolveMockUpdateCheck = () => {
     resolveMockUpdateCheck?.();
@@ -2193,7 +2219,48 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               });
               mockUpdateCheckPending = false;
             }
+            if (mockUpdateCheckError) {
+              const error = mockUpdateCheckError;
+              mockUpdateCheckError = null;
+              throw error;
+            }
             return mockUpdateCheck;
+          case "download_update": {
+            const onEvent = arg("onEvent") as Channel | undefined;
+            onEvent?.onmessage?.({
+              event: "started",
+              data: { content_length: 100 },
+            });
+            onEvent?.onmessage?.({
+              event: "progress",
+              data: { chunk_length: 25 },
+            });
+            if (mockUpdateDownloadPending) {
+              await new Promise<void>((resolve) => {
+                resolveMockUpdateDownload = resolve;
+              });
+              mockUpdateDownloadPending = false;
+            }
+            if (mockUpdateDownloadError) {
+              const error = mockUpdateDownloadError;
+              mockUpdateDownloadError = null;
+              throw error;
+            }
+            onEvent?.onmessage?.({
+              event: "progress",
+              data: { chunk_length: 75 },
+            });
+            onEvent?.onmessage?.({ event: "verified" });
+            return null;
+          }
+          case "install_update":
+            if (mockInstallUpdateError) {
+              const error = mockInstallUpdateError;
+              mockInstallUpdateError = null;
+              throw error;
+            }
+            (window as any).__mockUpdateInstalled = true;
+            return null;
           case "validate_settings": {
             const validationSettings = plain(arg("settings") ?? {});
             return String(validationSettings.model ?? "") === "gpt-image-2"

@@ -357,7 +357,12 @@ including project navigation, new-session commands, edit shortcuts, and
 their rows. The same update check is also available from the Settings page and
 the Windows in-window Help menu. It
 now reports the result in an in-app dialog, including whether you are already
-up to date or a newer release is available on GitHub Releases.
+up to date or a newer release is available. On macOS, Wisp can download the
+matching Apple Silicon or Intel package, verify its updater signature, and then
+ask separately before installing and restarting. Active agent tasks and managed
+runs block installation. Other platforms, and any failed update, retain the
+**Open Releases** fallback. See [App updates](docs/app-updates.md) for release,
+recovery, and smoke-test details.
 
 ### Bundled demos
 

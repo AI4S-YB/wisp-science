@@ -443,13 +443,34 @@ pub(super) enum UpdateCheckModal {
         version: String,
         notes: String,
         release_url: String,
+        install_supported: bool,
+        downloading: bool,
+    },
+    Downloading {
+        version: String,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    ReadyToInstall {
+        version: String,
+        release_url: String,
+    },
+    Installing {
+        version: String,
     },
     UpToDate {
         version: String,
     },
     Failed {
         message: String,
+        release_url: Option<String>,
     },
+}
+
+impl UpdateCheckModal {
+    pub(super) fn dismissible(&self) -> bool {
+        !matches!(self, Self::Downloading { .. } | Self::Installing { .. })
+    }
 }
 
 /// A newer release found by the auto-check, surfaced as the sidebar prompt card.

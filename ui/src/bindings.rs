@@ -35,6 +35,10 @@ extern "C" {
         args: JsValue,
         timeout_ms: u32,
     ) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(catch, js_name = download_app_update)]
+    pub(crate) async fn download_app_update(
+        callback: &js_sys::Function,
+    ) -> Result<JsValue, JsValue>;
     pub(crate) async fn listen(event: &str, cb: &js_sys::Function) -> JsValue;
     #[wasm_bindgen(js_name = listen_native_file_drop)]
     pub(crate) async fn listen_native_file_drop(cb: &js_sys::Function) -> JsValue;

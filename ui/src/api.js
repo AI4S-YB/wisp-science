@@ -66,6 +66,16 @@ export async function invoke_timeout(cmd, args, timeoutMs) {
   }
 }
 
+export async function download_app_update(callback) {
+  const core = tauriCore();
+  if (!core?.Channel) {
+    throw missingBridgeError("download_update");
+  }
+  const onEvent = new core.Channel();
+  onEvent.onmessage = callback;
+  return core.invoke("download_update", { onEvent });
+}
+
 function fileToBase64(file) {
   // Keep in sync with MAX_UPLOAD_BYTES in src-tauri/src/artifact_commands.rs.
   const maxBytes = 100 * 1024 * 1024;

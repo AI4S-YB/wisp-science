@@ -1995,6 +1995,20 @@ pub(crate) struct UpdateCheck {
     pub(crate) release_url: String,
     #[serde(default)]
     pub(crate) notes: String,
+    #[serde(default)]
+    pub(crate) install_supported: bool,
+    #[serde(default)]
+    pub(crate) downloaded: bool,
+    #[serde(default)]
+    pub(crate) downloading: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "event", content = "data", rename_all = "snake_case")]
+pub(crate) enum UpdateDownloadEvent {
+    Started { content_length: Option<u64> },
+    Progress { chunk_length: u64 },
+    Verified,
 }
 
 #[derive(Deserialize, Clone)]

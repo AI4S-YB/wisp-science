@@ -19,12 +19,13 @@ use agent_workflows::{
     agent_workflows_panel, refresh_agent_resources, refresh_agent_workflows, AgentPanelState,
 };
 use bindings::{
-    attach_chat_autoscroll, clear_selection, close_mcp_app, force_chat_bottom, invoke,
-    invoke_checked, invoke_timeout, is_mac, is_windows, jump_chat_to_item, jump_chat_to_last_user,
-    jump_chat_to_user, listen, listen_native_file_drop, mount_mcp_app, mount_terminal,
-    native_drop_in_composer, open_external_url, park_mcp_app, pasted_image_count,
-    preserve_chat_prepend_position, preview_selection, schedule_chat_follow, set_saved_marks,
-    set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    attach_chat_autoscroll, clear_selection, close_mcp_app, download_app_update,
+    force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac, is_windows,
+    jump_chat_to_item, jump_chat_to_last_user, jump_chat_to_user, listen,
+    listen_native_file_drop, mount_mcp_app, mount_terminal, native_drop_in_composer,
+    open_external_url, park_mcp_app, pasted_image_count, preserve_chat_prepend_position,
+    preview_selection, schedule_chat_follow, set_saved_marks, set_terminal_active,
+    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -3569,11 +3570,26 @@ fn App() -> impl IntoView {
                         );
                         msg.set(Some((true, text.clone())));
                         status_msg.set(text);
-                        modal.set(Some(UpdateCheckModal::Available {
-                            version: update.latest_version,
-                            notes: update.notes,
-                            release_url: update.release_url,
-                        }));
+                        let next = if update.downloaded {
+                            UpdateCheckModal::ReadyToInstall {
+                                version: update.latest_version,
+                                release_url: update.release_url,
+                            }
+                        } else {
+                            UpdateCheckModal::Available {
+                                version: update.latest_version,
+                                notes: update.notes,
+                                release_url: update.release_url,
+                                install_supported: update.install_supported,
+                                downloading: update.downloading,
+                            }
+                        };
+                        if matches!(
+                            modal.get_untracked(),
+                            Some(UpdateCheckModal::Checking)
+                        ) {
+                            modal.set(Some(next));
+                        }
                     }
                     Ok(update) => {
                         banner.set(None);
@@ -3584,22 +3600,47 @@ fn App() -> impl IntoView {
                         );
                         msg.set(Some((true, text.clone())));
                         status_msg.set(text);
-                        modal.set(Some(UpdateCheckModal::UpToDate {
-                            version: update.current_version,
-                        }));
+                        if matches!(
+                            modal.get_untracked(),
+                            Some(UpdateCheckModal::Checking)
+                        ) {
+                            modal.set(Some(UpdateCheckModal::UpToDate {
+                                version: update.current_version,
+                            }));
+                        }
                     }
                     Err(_) => {
                         let text = t(loc.get(), "status.update_check_complete").to_string();
                         msg.set(Some((true, text.clone())));
                         status_msg.set(text.clone());
-                        modal.set(Some(UpdateCheckModal::Failed { message: text }));
+                        if matches!(
+                            modal.get_untracked(),
+                            Some(UpdateCheckModal::Checking)
+                        ) {
+                            modal.set(Some(UpdateCheckModal::Failed {
+                                message: text,
+                                release_url: Some(
+                                    "https://github.com/xuzhougeng/wisp-science/releases".into(),
+                                ),
+                            }));
+                        }
                     }
                 },
                 Err(err) => {
                     let text = localize_backend(loc.get(), &js_error_text(err));
                     msg.set(Some((false, text.clone())));
                     status_msg.set(text.clone());
-                    modal.set(Some(UpdateCheckModal::Failed { message: text }));
+                    if matches!(
+                        modal.get_untracked(),
+                        Some(UpdateCheckModal::Checking)
+                    ) {
+                        modal.set(Some(UpdateCheckModal::Failed {
+                            message: text,
+                            release_url: Some(
+                                "https://github.com/xuzhougeng/wisp-science/releases".into(),
+                            ),
+                        }));
+                    }
                 }
             }
             busy.set(false);
@@ -6058,9 +6099,11 @@ fn App() -> impl IntoView {
             ctx_menu.set(None);
             return;
         }
-        if update_check_modal.get().is_some() {
+        if let Some(modal) = update_check_modal.get() {
             ev.prevent_default();
-            update_check_modal.set(None);
+            if modal.dismissible() {
+                update_check_modal.set(None);
+            }
             return;
         }
         if show_session_import.get().is_some() {
@@ -7465,9 +7508,18 @@ fn App() -> impl IntoView {
                 </div>
             }
             .into_view(),
-            UpdateCheckModal::Available { version, notes, release_url } => {
+            UpdateCheckModal::Available {
+                version,
+                notes,
+                release_url,
+                install_supported,
+                downloading,
+            } => {
                 let body = tf(locale.get(), "update_modal.available_body", &[("version", &version)]);
                 let notes_html = (!notes.trim().is_empty()).then(|| md_to_html(&notes));
+                let release_for_open = release_url.clone();
+                let version_for_download = version.clone();
+                let release_for_download = release_url.clone();
                 view! {
                     <div class="overlay">
                         <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
@@ -7501,16 +7553,203 @@ fn App() -> impl IntoView {
                                 </button>
                                 <button
                                     type="button"
-                                    class="primary"
+                                    class:primary=move || !install_supported
                                     data-testid="update-check-open-releases"
                                     on:click=move |_| {
-                                        open_external_url(release_url.clone());
+                                        open_external_url(release_for_open.clone());
                                         update_check_modal.set(None);
                                     }
                                 >
                                     {move || t(locale.get(), "update_modal.open_releases")}
                                 </button>
+                                {install_supported.then(|| view! {
+                                    <button
+                                        type="button"
+                                        class="primary"
+                                        data-testid="update-check-download"
+                                        prop:disabled=downloading
+                                        on:click=move |_| {
+                                            let version = version_for_download.clone();
+                                            let release_url = release_for_download.clone();
+                                            update_check_modal.set(Some(UpdateCheckModal::Downloading {
+                                                version: version.clone(),
+                                                downloaded_bytes: 0,
+                                                total_bytes: None,
+                                            }));
+                                            spawn_local(async move {
+                                                let downloaded = Rc::new(Cell::new(0_u64));
+                                                let total = Rc::new(Cell::new(None::<u64>));
+                                                let event_downloaded = downloaded.clone();
+                                                let event_total = total.clone();
+                                                let event_version = version.clone();
+                                                let callback = Closure::<dyn FnMut(JsValue)>::wrap(Box::new(
+                                                    move |value: JsValue| {
+                                                        let Ok(event) = serde_wasm_bindgen::from_value::<UpdateDownloadEvent>(value) else {
+                                                            return;
+                                                        };
+                                                        match event {
+                                                            UpdateDownloadEvent::Started { content_length } => {
+                                                                event_total.set(content_length);
+                                                            }
+                                                            UpdateDownloadEvent::Progress { chunk_length } => {
+                                                                event_downloaded.set(
+                                                                    event_downloaded.get().saturating_add(chunk_length),
+                                                                );
+                                                            }
+                                                            UpdateDownloadEvent::Verified => {}
+                                                        }
+                                                        update_check_modal.set(Some(UpdateCheckModal::Downloading {
+                                                            version: event_version.clone(),
+                                                            downloaded_bytes: event_downloaded.get(),
+                                                            total_bytes: event_total.get(),
+                                                        }));
+                                                    },
+                                                ));
+                                                let result = download_app_update(
+                                                    callback.as_ref().unchecked_ref(),
+                                                ).await;
+                                                drop(callback);
+                                                match result {
+                                                    Ok(_) => update_check_modal.set(Some(
+                                                        UpdateCheckModal::ReadyToInstall {
+                                                            version,
+                                                            release_url,
+                                                        },
+                                                    )),
+                                                    Err(error) => update_check_modal.set(Some(
+                                                        UpdateCheckModal::Failed {
+                                                            message: localize_backend(
+                                                                locale.get_untracked(),
+                                                                &js_error_text(error),
+                                                            ),
+                                                            release_url: Some(release_url),
+                                                        },
+                                                    )),
+                                                }
+                                            });
+                                        }
+                                    >
+                                        {move || if downloading {
+                                            t(locale.get(), "transfer.downloading")
+                                        } else {
+                                            t(locale.get(), "update_modal.download")
+                                        }}
+                                    </button>
+                                })}
                             </div>
+                        </div>
+                    </div>
+                }
+                .into_view()
+            }
+            UpdateCheckModal::Downloading {
+                version,
+                downloaded_bytes,
+                total_bytes,
+            } => {
+                let title = tf(
+                    locale.get(),
+                    "update_modal.downloading_title",
+                    &[("version", &version)],
+                );
+                let progress = if let Some(total) = total_bytes {
+                    format!("{} / {}", format_bytes(downloaded_bytes), format_bytes(total))
+                } else {
+                    format_bytes(downloaded_bytes)
+                };
+                view! {
+                    <div class="overlay">
+                        <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
+                            <h2>{title}</h2>
+                            <div class="hint">{move || t(locale.get(), "update_modal.downloading_body")}</div>
+                            <div class="update-download-progress" role="status" aria-live="polite">
+                                <progress
+                                    max=total_bytes.unwrap_or(1).to_string()
+                                    value=total_bytes.map(|_| downloaded_bytes.to_string())
+                                ></progress>
+                                <span>{progress}</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+                .into_view()
+            }
+            UpdateCheckModal::ReadyToInstall { version, release_url } => {
+                let body = tf(
+                    locale.get(),
+                    "update_modal.ready_body",
+                    &[("version", &version)],
+                );
+                let release_for_open = release_url.clone();
+                let version_for_install = version.clone();
+                let release_for_install = release_url.clone();
+                view! {
+                    <div class="overlay">
+                        <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
+                            <h2>{move || t(locale.get(), "update_modal.ready_title")}</h2>
+                            <div class="hint">{body}</div>
+                            <div class="row">
+                                <button
+                                    type="button"
+                                    on:click=move |_| update_check_modal.set(None)
+                                >
+                                    {move || t(locale.get(), "update_modal.later")}
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="update-check-open-releases"
+                                    on:click=move |_| {
+                                        open_external_url(release_for_open.clone());
+                                        update_check_modal.set(None);
+                                    }
+                                >
+                                    {move || t(locale.get(), "update_modal.open_releases")}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="primary"
+                                    data-testid="update-check-install"
+                                    on:click=move |_| {
+                                        let version = version_for_install.clone();
+                                        let release_url = release_for_install.clone();
+                                        update_check_modal.set(Some(UpdateCheckModal::Installing {
+                                            version: version.clone(),
+                                        }));
+                                        spawn_local(async move {
+                                            if let Err(error) = invoke_checked(
+                                                "install_update",
+                                                JsValue::UNDEFINED,
+                                            ).await {
+                                                update_check_modal.set(Some(UpdateCheckModal::Failed {
+                                                    message: localize_backend(
+                                                        locale.get_untracked(),
+                                                        &js_error_text(error),
+                                                    ),
+                                                    release_url: Some(release_url),
+                                                }));
+                                            }
+                                        });
+                                    }
+                                >
+                                    {move || t(locale.get(), "update_modal.install")}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+                .into_view()
+            }
+            UpdateCheckModal::Installing { version } => {
+                let title = tf(
+                    locale.get(),
+                    "update_modal.installing_title",
+                    &[("version", &version)],
+                );
+                view! {
+                    <div class="overlay">
+                        <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
+                            <h2>{title}</h2>
+                            <div class="hint">{move || t(locale.get(), "update_modal.installing_body")}</div>
                         </div>
                     </div>
                 }
@@ -7537,24 +7776,40 @@ fn App() -> impl IntoView {
                 }
                 .into_view()
             }
-            UpdateCheckModal::Failed { message } => view! {
-                <div class="overlay">
-                    <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
-                        <h2>{move || t(locale.get(), "update_modal.failed_title")}</h2>
-                        <div class="hint">{message}</div>
-                        <div class="row">
-                            <button
-                                type="button"
-                                class="primary"
-                                on:click=move |_| update_check_modal.set(None)
-                            >
-                                {move || t(locale.get(), "update_modal.ok")}
-                            </button>
+            UpdateCheckModal::Failed { message, release_url } => {
+                let has_release = release_url.is_some();
+                view! {
+                    <div class="overlay">
+                        <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
+                            <h2>{move || t(locale.get(), "update_modal.failed_title")}</h2>
+                            <div class="hint" role="alert">{message}</div>
+                            <div class="row">
+                                <button
+                                    type="button"
+                                    class:primary=move || !has_release
+                                    on:click=move |_| update_check_modal.set(None)
+                                >
+                                    {move || t(locale.get(), "update_modal.ok")}
+                                </button>
+                                {release_url.map(|url| view! {
+                                    <button
+                                        type="button"
+                                        class="primary"
+                                        data-testid="update-check-open-releases"
+                                        on:click=move |_| {
+                                            open_external_url(url.clone());
+                                            update_check_modal.set(None);
+                                        }
+                                    >
+                                        {move || t(locale.get(), "update_modal.open_releases")}
+                                    </button>
+                                })}
+                            </div>
                         </div>
                     </div>
-                </div>
+                }
+                .into_view()
             }
-            .into_view(),
         })}
         <div class="app"
             class:app-entering=move || app_shell_entering.get()
